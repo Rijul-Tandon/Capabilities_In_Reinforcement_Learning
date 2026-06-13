@@ -1,3 +1,8 @@
 virtual_env_dqn_reward_shaping/
 __pycache__/
 *.pyc
+
+# Artifacts
+results/
+plots/
+runs/
