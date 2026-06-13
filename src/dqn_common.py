@@ -15,6 +15,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from minigrid.wrappers import FlatObsWrapper
 from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
 
 
 MINIGRID_ACTION_NAMES = ["left", "right", "forward", "pickup", "drop", "toggle", "done"]
@@ -42,8 +43,12 @@ class MiniGridActionSubsetWrapper(gym.ActionWrapper):
         return self.actions[int(action)]
 
 
-def make_env(env_id, seed, action_set):
-    env = gym.make(env_id)
+def make_env(env_id, seed, action_set, capture_video=False, run_name=""):
+    if capture_video:
+        env = gym.make(env_id, render_mode="rgb_array")
+        env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
+    else:
+        env = gym.make(env_id)
     action_map = minigrid_action_map(env_id, action_set)
     if action_map is not None:
         env = MiniGridActionSubsetWrapper(env, action_map)
@@ -135,6 +140,10 @@ def parse_args(default_exp_name, use_shaping):
     parser.add_argument("--stuck-penalty", type=float, default=-0.01)
     parser.add_argument("--log-interval", type=int, default=1000)
     parser.add_argument("--results-dir", type=str, default="results")
+    parser.add_argument("--track", type=lambda x: str(x).lower() == "true", default=False)
+    parser.add_argument("--wandb-project-name", type=str, default="cleanRL")
+    parser.add_argument("--wandb-entity", type=str, default=None)
+    parser.add_argument("--capture-video", type=lambda x: str(x).lower() == "true", default=False)
     args = parser.parse_args()
     args.use_shaping = use_shaping
     return args
@@ -153,7 +162,24 @@ def train(args, use_shaping):
     with open(run_dir / "config.json", "w", encoding="utf-8") as f:
         json.dump(vars(args), f, indent=2)
 
-    env = make_env(args.env_id, args.seed, args.action_set)
+    if args.track:
+        import wandb
+        wandb.init(
+            project=args.wandb_project_name,
+            entity=args.wandb_entity,
+            sync_tensorboard=True,
+            config=vars(args),
+            name=run_name,
+            monitor_gym=True,
+            save_code=True,
+        )
+    writer = SummaryWriter(f"runs/{run_name}")
+    writer.add_text(
+        "hyperparameters",
+        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
+    )
+
+    env = make_env(args.env_id, args.seed, args.action_set, args.capture_video, run_name)
     obs, _ = env.reset(seed=args.seed)
     obs_shape = env.observation_space.shape
     obs_dim = int(np.prod(obs_shape))
@@ -233,6 +259,9 @@ def train(args, use_shaping):
                     "epsilon": epsilon,
                 }
             )
+            writer.add_scalar("charts/episodic_return", episode_return, global_step)
+            writer.add_scalar("charts/episodic_length", episode_length, global_step)
+            writer.add_scalar("charts/goal_rate", goal_rate, global_step)
             episode_file.flush()
             pbar.set_postfix(
                 {
@@ -276,11 +305,15 @@ def train(args, use_shaping):
                 }
             )
             metric_file.flush()
+            writer.add_scalar("losses/td_loss", last_loss, global_step)
+            writer.add_scalar("losses/q_values", last_q, global_step)
+            writer.add_scalar("charts/epsilon", epsilon, global_step)
 
     if args.save_model:
         torch.save(q_net.state_dict(), run_dir / "q_net.pt")
 
     episode_file.close()
     metric_file.close()
+    writer.close()
     env.close()
     print(f"Done. Results: {run_dir}")
