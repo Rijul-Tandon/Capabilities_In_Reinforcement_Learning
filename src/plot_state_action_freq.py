@@ -17,6 +17,15 @@ Bottom Row: Most Frequent Action Maps
 The script automatically finds the latest trained models in the results
 directory. No need to manually specify model paths.
 
+Why only 10-20 episodes?
+  This script does NOT look at the agent's behavior during training. Instead,
+  it takes the fully trained, finished agent, drops it into a brand new
+  environment, and evaluates it. Since the agent has already finished learning
+  and its policy is locked in, running it for just 20 episodes is more than
+  enough to see what paths it prefers to take and what its favorite actions are.
+  If we ran it for thousands of episodes, the heatmap would just turn into a
+  giant solid block of color and it would take a very long time to generate!
+
 Usage:
   python plot_state_action_freq.py --env-id MiniGrid-Empty-8x8-v0
   python plot_state_action_freq.py --env-id MiniGrid-DoorKey-8x8-v0 --episodes 20
@@ -296,24 +305,33 @@ def plot_all_frequencies(env_id, results_dir, episodes=10, seed=1, hidden_size=2
         # fraction and pad control the colorbar's size and spacing
         fig.colorbar(im, ax=axes[0, col], fraction=0.046, pad=0.04)
 
-        # --- Bottom Row: Most Frequent Action Map ---
+        # --- Bottom Row: All Action Frequencies ---
         # Light blue background heatmap (just for visual context, not the main data)
         axes[1, col].imshow(visit_counts.T, origin="upper", cmap="Blues", alpha=0.3)
-        axes[1, col].set_title(f"{title}\nMost Frequent Action")
+        axes[1, col].set_title(f"{title}\nAction Counts")
 
-        # Overlay text on each cell showing the most common action and its count
+        # Map full action names to 1-letter abbreviations to save space
+        abbr_map = {"left": "L", "right": "R", "forward": "F", "pickup": "P", "drop": "D", "toggle": "T", "done": "DN"}
+
+        # Overlay text on each cell showing the count for EVERY action
         for x in range(width):
             for y in range(height):
-                if visit_counts[x, y] > 0:
-                    # argmax finds the action index with the highest count at this cell
-                    best_action_idx = int(np.argmax(state_action_counts[x, y]))
-                    best_action_name = names[best_action_idx]  # e.g., "forward"
-                    action_count = state_action_counts[x, y, best_action_idx]
-                    # Display the action name and count as centered text in each cell
-                    axes[1, col].text(
-                        x, y, f"{best_action_name}\n{action_count}",
-                        ha="center", va="center", fontsize=8, fontweight="bold"
-                    )
+                lines = []
+                for act_idx in range(num_actions):
+                    act_name = names[act_idx]
+                    abbr = abbr_map.get(act_name, act_name[:1].upper())
+                    count = state_action_counts[x, y, act_idx]
+                    lines.append(f"{abbr}: {count}")
+                
+                cell_text = "\n".join(lines)
+                
+                # Make text slightly faded for unvisited cells so it's less visually overwhelming
+                alpha_val = 1.0 if visit_counts[x, y] > 0 else 0.2
+                
+                axes[1, col].text(
+                    x, y, cell_text,
+                    ha="center", va="center", fontsize=7, fontweight="bold", alpha=alpha_val
+                )
 
         # --- Draw Grid Lines ---
         # These lines separate the individual tiles of the MiniGrid environment,
@@ -329,12 +347,31 @@ def plot_all_frequencies(env_id, results_dir, episodes=10, seed=1, hidden_size=2
             ax.set_xticks(np.arange(0, width, 1))
             ax.set_yticks(np.arange(0, height, 1))
 
+    # --- Action Abbreviation Legend ---
+    # Build a legend string showing only the abbreviations that are actually used
+    # in this environment's action set so the legend stays minimal and relevant.
+    legend_parts = []
+    for act_name in names:
+        abbr = abbr_map.get(act_name, act_name[:1].upper())
+        legend_parts.append(f"{abbr} = {act_name}")
+    legend_text = "   |   ".join(legend_parts)
+
+    # Place the legend as a centered text below all the subplots.
+    # transform=fig.transFigure means x/y are fractions of the full figure (0.0 to 1.0).
+    fig.text(
+        0.5, 0.01,
+        f"Action key:  {legend_text}",
+        ha="center", va="bottom",
+        fontsize=9, style="italic",
+        bbox=dict(boxstyle="round,pad=0.3", facecolor="#f0f0f0", edgecolor="#aaaaaa", alpha=0.8),
+    )
+
     # --- Save the Plot ---
-    # rect=[left, bottom, right, top] reserves space for the suptitle
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    # rect=[left, bottom, right, top] — bottom=0.05 reserves space for the legend text
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
     output_path = Path("plots") / f"{env_id}_state_action_freq.png"
     output_path.parent.mkdir(exist_ok=True)
-    plt.savefig(output_path)
+    plt.savefig(output_path, dpi=150)
     print(f"Plot saved to {output_path}")
 
 

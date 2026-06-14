@@ -332,47 +332,175 @@
 \end{frame}
 
 % ============================================================================
-% SLIDE 12: Experimental Setup
+% SLIDE 12: MiniGrid Environments
 % ============================================================================
-\begin{frame}{Experimental Setup: UAV Navigation Environment}
+\begin{frame}{Experimental Setup: MiniGrid Environments}
+    We validate our reward shaping approach on three MiniGrid grid-world environments of increasing difficulty:
+
+    \vspace{0.2cm}
+    \begin{table}[h]
+    \centering
+    \small
+    \begin{tabular}{p{3cm}p{1.2cm}p{3cm}p{2.5cm}p{2.5cm}}
+        \toprule
+        \textbf{Environment} & \textbf{Grid} & \textbf{Layout} & \textbf{Goal} & \textbf{Actions} \\
+        \midrule
+        Empty-8x8 & $8 \times 8$ & Fixed empty room & Fixed (corner) & 3 (navigate) \\
+        \addlinespace
+        DoorKey-8x8 & $8 \times 8$ & \textbf{Randomized}: wall, door, key & \textbf{Randomized} & 5 (+pickup, toggle) \\
+        \addlinespace
+        FourRooms & $19 \times 19$ & Fixed four rooms & \textbf{Randomized} & 3 (navigate) \\
+        \bottomrule
+    \end{tabular}
+    \end{table}
+
+    \vspace{0.2cm}
+    \textbf{Why MiniGrid?}
+    \begin{itemize}
+        \item Discrete states and actions — ideal for DQN.
+        \item Environments range from deterministic (Empty) to highly randomized (DoorKey).
+        \item Sparse reward structure forces the agent to explore efficiently.
+        \item Lightweight — experiments complete in minutes, enabling rapid iteration.
+    \end{itemize}
+\end{frame}
+
+% ============================================================================
+% SLIDE 13: Observation Pipeline
+% ============================================================================
+\begin{frame}{Observation Pipeline: From Grid to Neural Network}
+    MiniGrid's default observation is a \textbf{dictionary} with partial visibility. We transform it into a flat vector suitable for an MLP:
+
+    \vspace{0.2cm}
+    \centering
+    \begin{tikzpicture}[
+        node distance=0.4cm and 0.6cm,
+        block/.style={rectangle, draw, rounded corners, minimum height=0.9cm, minimum width=2.8cm, align=center, font=\scriptsize\bfseries},
+        arr/.style={-{Stealth[length=2.5mm]}, thick},
+    ]
+        \node[block, fill=blue!25] (raw) {Raw MiniGrid\\Dict: image 7$\times$7$\times$3\\+ direction + mission};
+        \node[block, fill=orange!30, right=of raw] (full) {FullyObsWrapper\\image $\to$ 8$\times$8$\times$3\\(entire map)};
+        \node[block, fill=green!25, right=of full] (flat) {FlatObsWrapper\\Flatten to 1D\\(192 elements)};
+        \node[block, fill=red!25, right=of flat] (dir) {+Direction\\Append dir int\\(193 elements)};
+
+        \draw[arr] (raw) -- (full);
+        \draw[arr] (full) -- (flat);
+        \draw[arr] (flat) -- (dir);
+    \end{tikzpicture}
+
+    \vspace{0.3cm}
+    \begin{itemize}
+        \item \textbf{FullyObsWrapper:} Replaces the agent's 7$\times$7 partial view with the \textbf{entire map}. Converts the POMDP into a standard MDP.
+        \item \textbf{FlatObsWrapper:} Discards ``mission'' text and direction integer. Flattens the 3D grid into a 1D array: $8 \times 8 \times 3 = 192$ categorical integers.
+        \item \textbf{FlatObsWithDirectionWrapper} (custom): Re-appends the agent's facing direction (0--3) to the flattened vector $\to$ \textbf{193 input features}.
+        \item \textbf{Note:} Observations are categorical integers (0--10), \textit{not} RGB pixels. We do \textit{not} normalize by 255.
+    \end{itemize}
+\end{frame}
+
+% ============================================================================
+% SLIDE 14: Action Space and Reward Structure
+% ============================================================================
+\begin{frame}{Action Space \& Reward Structure}
     \begin{columns}
-    \begin{column}{0.55\textwidth}
-        \textbf{Environment:} 3D UAV Grid World with atmospheric dynamics.
+    \begin{column}{0.48\textwidth}
+        \textbf{Action Space} (restricted per environment):
 
         \vspace{0.2cm}
-        \begin{itemize}
-            \item \textbf{State Space} $s \in \mathbb{R}^9$:
-            \begin{itemize}
-                \item 3D position $(x, y, z)$
-                \item Goal position $(g_x, g_y, g_z)$
-                \item Wind direction $(w_x, w_y)$
-                \item Rain indicator
-            \end{itemize}
-            \item \textbf{Action Space:} 18 discrete actions \newline (6 directions $\times$ 3 force levels)
-            \item \textbf{Physical constraints:}
-            \begin{itemize}
-                \item Wind blocks weak-force actions
-                \item Rain prevents upward movement
-                \item Map boundaries
-            \end{itemize}
-        \end{itemize}
-    \end{column}
-    \begin{column}{0.4\textwidth}
-        \small
-        \begin{table}
+        \begin{table}[h]
         \centering
-        \begin{tabular}{ll}
+        \small
+        \begin{tabular}{cl}
             \toprule
-            Grid & $10 \times 10 \times 5$ \\
-            Actions & 18 \\
-            Max Steps & 500 \\
-            Goal Reward & $+100$ \\
+            \textbf{Index} & \textbf{Action} \\
+            \midrule
+            0 & Turn left (90°) \\
+            1 & Turn right (90°) \\
+            2 & Move forward \\
+            3 & Pick up object \\
+            5 & Toggle (open door) \\
             \bottomrule
         \end{tabular}
         \end{table}
 
-        \vspace{0.3cm}
-        All elements (start, goal, wind zones, rain patches) are \textbf{procedurally randomized} on every episode reset to prevent memorization.
+        \vspace{0.1cm}
+        \small
+        \begin{itemize}
+            \item Empty/FourRooms: actions \{0, 1, 2\}
+            \item DoorKey: actions \{0, 1, 2, 3, 5\}
+        \end{itemize}
+        Irrelevant actions (drop, done) are removed to accelerate learning.
+    \end{column}
+    \begin{column}{0.48\textwidth}
+        \textbf{Reward Structure:}
+
+        \vspace{0.2cm}
+        \begin{table}[h]
+        \centering
+        \small
+        \begin{tabular}{p{2.5cm}l}
+            \toprule
+            \textbf{Event} & \textbf{Reward} \\
+            \midrule
+            Reach goal & $1 - 0.9 \cdot \frac{t}{t_{\max}}$ \\
+            Any other step & $0.0$ \\
+            Stuck penalty & $-0.01$ \\
+            \bottomrule
+        \end{tabular}
+        \end{table}
+
+        \vspace{0.1cm}
+        \small
+        \begin{itemize}
+            \item Goal reward \textit{decreases} the longer the agent takes $\to$ incentivizes shortest path.
+            \item Stuck penalty only applied to the \textbf{shaped} agent when $\|s' - s\| = 0$.
+            \item Plots use \textit{original} env reward for fair comparison.
+        \end{itemize}
+    \end{column}
+    \end{columns}
+\end{frame}
+
+% ============================================================================
+% SLIDE 15: DQN Architecture and Experimental Design
+% ============================================================================
+\begin{frame}{DQN Architecture \& Experimental Design}
+    \begin{columns}
+    \begin{column}{0.48\textwidth}
+        \textbf{Network Architecture (MLP):}
+        \begin{equation*}
+            \text{obs}_{193} \xrightarrow{\text{Linear}} 256 \xrightarrow{\text{ReLU}} 256 \xrightarrow{\text{ReLU}} |\mathcal{A}|
+        \end{equation*}
+
+        \vspace{0.1cm}
+        \textbf{Three Agents Compared:}
+        \begin{enumerate}
+            \item \textbf{Random Agent:} Uniform random actions. No learning. Performance floor.
+            \item \textbf{Baseline DQN:} Standard DQN with sparse env reward only.
+            \item \textbf{Shaped DQN:} Same DQN + stuck penalty $(-0.01)$ when observation unchanged.
+        \end{enumerate}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+        \textbf{Key Hyperparameters:}
+
+        \vspace{0.1cm}
+        \begin{table}[h]
+        \centering
+        \small
+        \begin{tabular}{ll}
+            \toprule
+            Learning rate & $2.5 \times 10^{-4}$ \\
+            Replay buffer & 100,000 \\
+            Batch size & 128 \\
+            $\gamma$ (discount) & 0.99 \\
+            Target update & Every 1000 steps \\
+            $\epsilon_{\text{start}}$ & 1.0 \\
+            $\epsilon_{\text{end}}$ & 0.3 \\
+            Exploration frac. & 0.6 \\
+            \bottomrule
+        \end{tabular}
+        \end{table}
+
+        \vspace{0.1cm}
+        \small
+        $\epsilon_{\text{end}} = 0.3$ ensures 30\% exploration is always maintained — critical for randomized environments.
     \end{column}
     \end{columns}
 \end{frame}

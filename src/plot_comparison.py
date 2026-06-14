@@ -164,10 +164,26 @@ def load_runs(results_dir, env_id):
                     }
                 )
 
+        # Also load metrics.csv which contains the per-step td_loss and q_values
+        metric_path = run_dir / "metrics.csv"
+        metric_rows = []
+        if metric_path.exists():
+            with open(metric_path, "r", encoding="utf-8") as f:
+                for row in csv.DictReader(f):
+                    loss_val = row.get("td_loss", "nan")
+                    try:
+                        loss_val = float(loss_val)
+                    except ValueError:
+                        loss_val = float("nan")
+                    metric_rows.append(
+                        {
+                            "global_step": int(row["global_step"]),
+                            "td_loss": loss_val,
+                        }
+                    )
+
         if rows:
-            # Key by exp_name (e.g., "dqn_baseline"). If a newer run exists for
-            # the same exp_name, it overwrites the older one (because we sorted).
-            runs_by_exp[config["exp_name"]] = (run_dir.name, config, rows)
+            runs_by_exp[config["exp_name"]] = (run_dir.name, config, rows, metric_rows)
 
     return list(runs_by_exp.values())
 
@@ -207,50 +223,82 @@ def main():
     Path(args.plots_dir).mkdir(parents=True, exist_ok=True)
 
     # --- Create the Figure ---
-    # plt.subplots(2, 1) creates 2 vertically stacked subplots sharing the same X-axis.
-    # figsize=(10, 8) sets the figure size in inches (width, height).
-    # sharex=True links the X-axis zoom/pan between the two panels.
-    fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    # 3 vertically stacked subplots: Return, Goal Rate, TD Loss
+    fig, axes = plt.subplots(3, 1, figsize=(10, 11), sharex=True)
 
     # --- Plot Each Agent's Data ---
-    for _, config, rows in runs:
+    for _, config, rows, metric_rows in runs:
         # Create a descriptive label for the legend (e.g., "dqn_baseline seed=1")
         label = f"{config['exp_name']} seed={config['seed']}"
 
-        # Apply rolling average smoothing to the metrics
+        # Apply rolling average smoothing to the episode metrics
+        steps = [r["global_step"] for r in rows]
         returns = rolling([r["episodic_return"] for r in rows], args.rolling_window)
         goals = rolling([r["goal_reached"] for r in rows], args.rolling_window)
 
-        # Extract the epsilon values (X-axis)
-        epsilons = [r["epsilon"] for r in rows]
+        # Plot Return vs Steps (top panel)
+        axes[0].plot(steps, returns, label=label)
 
-        # Plot Return vs Epsilon (top panel)
-        axes[0].plot(epsilons, returns, label=label)
+        # Plot Goal Rate vs Steps (middle panel)
+        axes[1].plot(steps, goals, label=label)
 
-        # Plot Goal Rate vs Epsilon (bottom panel)
-        axes[1].plot(epsilons, goals, label=label)
+        # Plot TD Loss vs Steps (bottom panel) — only for DQN agents, not random
+        if metric_rows:
+            loss_steps = [r["global_step"] for r in metric_rows]
+            loss_vals = rolling([r["td_loss"] for r in metric_rows], args.rolling_window)
+            # Filter out NaN values (steps before learning started)
+            valid = [(s, l) for s, l in zip(loss_steps, loss_vals) if not (l != l)]
+            if valid:
+                vs, vl = zip(*valid)
+                axes[2].plot(vs, vl, label=label)
 
     # --- Configure Top Panel: Episodic Return ---
-    axes[0].set_title(f"{args.env_id} episodic return vs epsilon")
+    axes[0].set_title(f"{args.env_id} — Episodic Return vs Training Steps")
     axes[0].set_ylabel("Return")
-    axes[0].grid(alpha=0.3)  # Light grid lines for readability
-
-    # --- Configure Bottom Panel: Goal Reached Rate ---
-    axes[1].set_title(f"{args.env_id} goal reached rate vs epsilon")
-    axes[1].set_ylabel("Goal rate")
-    axes[1].set_xlabel("Epsilon")
-    axes[1].set_ylim(-0.05, 1.05)  # Goal rate ranges from 0.0 to 1.0
-
-    # Invert the X-axis so that time flows left-to-right:
-    #   Left side = high epsilon (start of training, lots of exploration)
-    #   Right side = low epsilon (end of training, mostly exploitation)
-    # Without this, the plot would flow right-to-left which is counterintuitive.
-    axes[1].invert_xaxis()
-    axes[1].grid(alpha=0.3)
-
-    # Show legends on both panels so you can identify which line is which agent
+    axes[0].grid(alpha=0.3)
     axes[0].legend()
+
+    # --- Configure Middle Panel: Goal Reached Rate ---
+    axes[1].set_title(f"{args.env_id} — Goal Reached Rate vs Training Steps")
+    axes[1].set_ylabel("Goal Rate")
+    axes[1].set_ylim(-0.05, 1.05)
+    axes[1].grid(alpha=0.3)
     axes[1].legend()
+
+    # --- Configure Bottom Panel: TD Loss ---
+    axes[2].set_title(f"{args.env_id} — TD Loss vs Training Steps")
+    axes[2].set_ylabel("TD Loss")
+    axes[2].set_xlabel("Training Steps")
+    axes[2].grid(alpha=0.3)
+    axes[2].legend()
+
+    # --- Add Secondary X-Axis for Epsilon (on the bottom panel) ---
+    ax_eps = axes[2].twiny()
+    ax_eps.set_xlim(axes[2].get_xlim())
+    ax_eps.xaxis.set_ticks_position('bottom')
+    ax_eps.xaxis.set_label_position('bottom')
+    ax_eps.spines['bottom'].set_position(('outward', 40))
+    ax_eps.set_xlabel("Exploration Rate (Epsilon)")
+
+    ticks = axes[2].get_xticks()
+    ax_eps.set_xticks(ticks)
+
+    if len(runs) > 0:
+        _, config, _, _ = runs[0]
+        start_e = config.get("start_e", 1.0)
+        end_e   = config.get("end_e", 0.0)
+        frac    = config.get("exploration_fraction", 0.6)
+        total   = config.get("total_timesteps", 50000)
+        slope   = (end_e - start_e) / (frac * total)
+
+        eps_labels = []
+        for t in ticks:
+            if t < 0 or t > total:
+                eps_labels.append("")
+            else:
+                e = max(slope * t + start_e, end_e)
+                eps_labels.append(f"{e:.2f}")
+        ax_eps.set_xticklabels(eps_labels)
 
     # tight_layout() automatically adjusts spacing between subplots to prevent overlap
     fig.tight_layout()

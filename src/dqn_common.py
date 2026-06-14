@@ -96,15 +96,14 @@ import torch.nn.functional as F
 #   It adjusts the learning rate for each weight individually based on past gradients.
 import torch.optim as optim
 
-# FlatObsWrapper (from minigrid.wrappers):
+# ImgObsWrapper (from minigrid.wrappers):
 #   By default, MiniGrid returns observations as a Python dictionary containing:
 #     - "image": a 3D numpy array of shape (width, height, 3) where each cell has
 #       3 values: [object_type, color, state]. For example, a wall tile might be [2, 5, 0].
 #     - "direction": an integer (0-3) for the agent's facing direction.
 #     - "mission": a text string like "reach the goal".
-#   Neural networks cannot process dictionaries. FlatObsWrapper extracts the "image"
-#   array and flattens it into a 1D vector. For an 8x8 grid, this produces a vector
-#   of 8 * 8 * 3 = 192 numbers that can be fed directly into an MLP.
+#   Neural networks cannot process dictionaries or text easily. ImgObsWrapper extracts
+#   ONLY the "image" array and drops the text description completely.
 #
 # FullyObsWrapper (from minigrid.wrappers):
 #   By default, MiniGrid gives the agent a PARTIAL observation: a 7x7 grid of tiles
@@ -114,7 +113,7 @@ import torch.optim as optim
 #   FullyObsWrapper overrides this and gives the agent the ENTIRE map as its
 #   observation. This converts the problem into a standard MDP, making it much
 #   easier for a memoryless MLP to solve.
-from minigrid.wrappers import FlatObsWrapper, FullyObsWrapper
+from minigrid.wrappers import ImgObsWrapper, FullyObsWrapper
 
 # tqdm: Displays a progress bar in the terminal during long loops.
 #   Wrapping range() with tqdm() shows elapsed time, iterations per second,
@@ -174,9 +173,13 @@ def minigrid_action_map(env_id, action_set):
     if "Empty" in env_id or "FourRooms" in env_id:
         return [0, 1, 2]  # left, right, forward
 
-    # Interaction environments: the agent also needs to pick up keys and toggle doors
-    if "DoorKey" in env_id or "UnlockPickup" in env_id:
+    # DoorKey: The agent picks up the key, toggles the door, and walks to the goal (can hold key).
+    if "DoorKey" in env_id:
         return [0, 1, 2, 3, 5]  # left, right, forward, pickup, toggle
+
+    # UnlockPickup: The agent MUST drop the key after unlocking the door to pick up the box.
+    if "UnlockPickup" in env_id:
+        return [0, 1, 2, 3, 4, 5]  # left, right, forward, pickup, drop, toggle
 
     # Unknown environment: use all actions as a safe default
     return None
@@ -234,6 +237,34 @@ class MiniGridActionSubsetWrapper(gym.ActionWrapper):
         return self.actions[int(action)]
 
 
+class FlatImageAndDirectionWrapper(gym.ObservationWrapper):
+    """
+    A custom wrapper that takes the 3D image output from ImgObsWrapper,
+    flattens it into a 1D array, and appends the agent's current direction.
+    """
+    def __init__(self, env):
+        super().__init__(env)
+        # The environment currently returns a 3D image (width, height, 3)
+        image_shape = env.observation_space.shape
+        flat_size = int(np.prod(image_shape))
+        
+        # Expand the observation space by 1 to accommodate the direction integer
+        self.observation_space = gym.spaces.Box(
+            low=0,
+            high=255,
+            shape=(flat_size + 1,),
+            dtype=np.float32
+        )
+
+    def observation(self, obs):
+        # 'obs' is the 3D image array from ImgObsWrapper
+        flat_image = obs.flatten()
+        # We grab the current direction directly from the unwrapped environment
+        direction = np.array([self.env.unwrapped.agent_dir])
+        # Append the direction to the end of the flattened array
+        return np.concatenate([flat_image, direction]).astype(np.float32)
+
+
 def make_env(env_id, seed, action_set, capture_video=False, run_name=""):
     """
     Creates a MiniGrid environment and wraps it with all necessary wrappers.
@@ -279,9 +310,12 @@ def make_env(env_id, seed, action_set, capture_video=False, run_name=""):
     # Without this, the agent only sees a 7x7 cone in front of it (partial observability)
     env = FullyObsWrapper(env)
 
-    # Step 3: Flatten the 3D grid observation (width x height x 3) into a 1D vector
-    # This is required because our MLP neural network expects a flat input vector
-    env = FlatObsWrapper(env)
+    # Step 3: Extract ONLY the image from the observation dict, dropping the text
+    # This prevents the neural network from wasting capacity on a text string
+    env = ImgObsWrapper(env)
+    
+    # Step 3.5: Flatten the 3D image to 1D and append the agent's direction
+    env = FlatImageAndDirectionWrapper(env)
 
     # Step 4: Automatically record episode statistics (total return, episode length)
     # These are stored in the 'info' dict returned by env.step() when an episode ends
@@ -570,23 +604,23 @@ def parse_args(default_exp_name, use_shaping):
     parser.add_argument("--gamma", type=float, default=0.99)
     # --target-network-frequency: How often (in steps) to copy q_net weights to target_net.
     #   The target network provides stable Q-value targets during training.
-    parser.add_argument("--target-network-frequency", type=int, default=1000)
+    parser.add_argument("--target-network-frequency", type=int, default=200)
     # --batch-size: Number of transitions sampled from the replay buffer per training step
     parser.add_argument("--batch-size", type=int, default=128)
     # --learning-starts: Number of random steps before training begins.
     #   This seeds the replay buffer with diverse experiences before the network starts learning.
-    parser.add_argument("--learning-starts", type=int, default=5000)
+    parser.add_argument("--learning-starts", type=int, default=1000)
     # --train-frequency: Train the network every N environment steps (not every single step)
     parser.add_argument("--train-frequency", type=int, default=4)
 
     # --- Exploration Schedule ---
     # --start-e: Initial epsilon (exploration rate). 1.0 = 100% random actions at the start.
     parser.add_argument("--start-e", type=float, default=1.0)
-    # --end-e: Minimum epsilon. 0.3 = always keep at least 30% random actions.
+    # --end-e: Minimum epsilon. 0.0 = completely greedy at the end.
     #   This prevents the agent from getting stuck in local optima, especially in
     #   environments with randomized layouts (DoorKey, FourRooms) where the agent
     #   needs to keep exploring to handle new configurations.
-    parser.add_argument("--end-e", type=float, default=0.3)
+    parser.add_argument("--end-e", type=float, default=0.0)
     # --exploration-fraction: Fraction of total timesteps over which epsilon decays.
     #   0.6 means epsilon reaches end_e at 60% of training, then stays flat.
     parser.add_argument("--exploration-fraction", type=float, default=0.6)
@@ -718,7 +752,10 @@ def train(args, use_shaping):
     num_actions = env.action_space.n          # Number of available actions
     names = action_names(args.env_id, args.action_set, num_actions)
 
-    print(f"[{args.exp_name}] env={args.env_id} obs_dim={obs_dim} actions={names} device={device}")
+    print(f"[{args.exp_name}] env={args.env_id}")
+    print(f"[{args.exp_name}] State Space Size: {obs_dim} features")
+    print(f"[{args.exp_name}] Action Space Size: {num_actions} actions {names}")
+    print(f"[{args.exp_name}] device={device}")
 
     # --- Neural Networks ---
     # DQN uses TWO copies of the same network:
@@ -775,35 +812,37 @@ def train(args, use_shaping):
             global_step,
         )
 
+        was_random = False
         if random.random() < epsilon:
-            # EXPLORE: Take a completely random action
+            # Explore: pick a random action
             action = env.action_space.sample()
+            was_random = True
         else:
-            # EXPLOIT: Use the neural network to pick the best action
-            with torch.no_grad():  # Disable gradient computation (not training here)
+            # Exploit: pick the action with the highest predicted Q-value
+            with torch.no_grad():
+                # Convert the observation to a PyTorch tensor and add a batch dimension
                 obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-                # unsqueeze(0) adds a batch dimension: shape (obs_dim,) -> (1, obs_dim)
-                # argmax returns the index of the highest Q-value = the best action
-                action = int(torch.argmax(q_net(obs_tensor), dim=1).item())
+                q_values = q_net(obs_tensor)
+                action = int(torch.argmax(q_values, dim=1).item())
 
-        # ---- ENVIRONMENT STEP ----
-        # Take the action in the environment and observe the result
-        next_obs, env_reward, terminated, truncated, _ = env.step(action)
-        # terminated: True if the agent reached the goal (natural end)
-        # truncated: True if the episode hit the maximum step limit (forced end)
+        # Execute the chosen action in the environment
+        next_obs, env_reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
 
-        # ---- REWARD SHAPING (optional) ----
+        # ---- REWARD SHAPING ----
         # Compare the current and next observations to detect if the agent is "stuck"
         # (e.g., walking into a wall, where the observation doesn't change)
         no_change = bool(np.array_equal(next_obs, obs))
         # Apply a small negative penalty if shaping is enabled and the agent didn't move
-        penalty = args.stuck_penalty if use_shaping and no_change else 0.0
+        # CRUCIAL FIX: Only penalize greedy actions. If the agent bumped a wall because
+        # we forced it to take a random exploration action, we do not penalize it.
+        penalty = args.stuck_penalty if use_shaping and not was_random and no_change else 0.0
         # The reward used for training includes the penalty; the original env_reward is
         # used for tracking performance metrics (so plots show true environment reward)
         reward_for_learning = float(env_reward + penalty)
 
         recent_stuck.append(float(no_change))
+        recent_penalty.append(penalty)
         recent_penalty.append(float(penalty))
 
         # ---- STORE TRANSITION ----
@@ -861,13 +900,18 @@ def train(args, use_shaping):
             b_obs, b_next_obs, b_actions, b_rewards, b_dones = rb.sample(args.batch_size)
 
             with torch.no_grad():
-                # --- Compute TD Target ---
-                # The Temporal Difference (TD) target is what we want Q(s, a) to be:
-                #   y = r + gamma * max_a' Q_target(s', a') * (1 - done)
-                # If the episode ended (done=1), the target is just r (no future rewards).
-                # We use the TARGET network (not q_net) to compute max_a' Q(s', a')
-                # because it provides more stable targets.
-                target_max = target_net(b_next_obs).max(dim=1).values
+                # --- Double DQN Compute TD Target ---
+                # In Double DQN, we use the online network to SELECT the best action
+                # for the next state, but use the target network to EVALUATE its value.
+                # This prevents the overestimation bias present in standard DQN.
+                
+                # 1. Select best action for next state using the online network (q_net)
+                best_next_actions = q_net(b_next_obs).argmax(dim=1, keepdim=True)
+                
+                # 2. Evaluate the value of that action using the target network
+                target_max = target_net(b_next_obs).gather(1, best_next_actions).squeeze(1)
+                
+                # 3. Compute the TD target
                 td_target = b_rewards + args.gamma * target_max * (1.0 - b_dones)
 
             # --- Compute Current Q-Values ---
@@ -926,3 +970,16 @@ def train(args, use_shaping):
     writer.close()
     env.close()
     print(f"Done. Results: {run_dir}")
+
+    # --- Return final performance ---
+    # Read the episode log back and compute mean goal_reached over the last 20% of training.
+    # This is the objective Optuna will maximize.
+    import csv as _csv
+    episode_rows = []
+    with open(run_dir / "episodes.csv", newline="") as ef:
+        for row in _csv.DictReader(ef):
+            episode_rows.append(float(row["goal_reached"]))
+    if len(episode_rows) == 0:
+        return 0.0
+    cutoff = max(1, int(len(episode_rows) * 0.80))  # last 20% of episodes
+    return float(np.mean(episode_rows[cutoff:]))
