@@ -4,6 +4,7 @@ param(
     [int]$Seed = 1
 )
 
-python src\dqn_baseline.py --env-id $EnvId --total-timesteps $Timesteps --seed $Seed
-python src\dqn_reward_shaping.py --env-id $EnvId --total-timesteps $Timesteps --seed $Seed
-python src\plot_comparison.py --env-id $EnvId
+python "$PSScriptRoot\src\random_agent.py" --env-id $EnvId --total-timesteps $Timesteps --seed $Seed
+python "$PSScriptRoot\src\dqn_baseline.py" --env-id $EnvId --total-timesteps $Timesteps --seed $Seed
+python "$PSScriptRoot\src\dqn_reward_shaping.py" --env-id $EnvId --total-timesteps $Timesteps --seed $Seed
+python "$PSScriptRoot\src\plot_comparison.py" --env-id $EnvId
