@@ -1,0 +1,93 @@
+name: 1M Step Training
+
+on:
+  workflow_dispatch:  # Allows you to trigger the workflow manually from the GitHub UI
+
+jobs:
+  train:
+    name: Train (${{ matrix.agent }}, ${{ matrix.env_id }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false  # If one run fails, keep running the others
+      matrix:
+        env_id:
+          - MiniGrid-Empty-5x5-v0
+          - MiniGrid-DoorKey-5x5-v0
+          - MiniGrid-FourRooms-v0
+          - MiniGrid-MultiRoom-N2-S4-v0
+        agent:
+          - random_agent
+          - dqn_baseline
+          - dqn_reward_shaping
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        
+      - name: Run Agent (1 Million Steps)
+        # Note: --seed 1 is passed so we only do the requested 1 seed. 
+        # --end-e 0.0 decays exploration rate down to 0 for DQN
+        run: |
+          python src/${{ matrix.agent }}.py \
+            --env-id ${{ matrix.env_id }} \
+            --total-timesteps 1000000 \
+            --seed 1 \
+            --end-e 0.0
+          
+      - name: Upload Run Results
+        uses: actions/upload-artifact@v4
+        with:
+          # Unique artifact name per matrix job so they don't overwrite each other
+          name: result_${{ matrix.agent }}_${{ matrix.env_id }}
+          path: results/
+          retention-days: 14
+
+  plot:
+    name: Generate Plots
+    needs: train  # Wait for all matrix training jobs to finish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        
+      - name: Download all results
+        uses: actions/download-artifact@v4
+        with:
+          # Downloads all artifacts starting with 'result_' and extracts 
+          # them directly into the local 'results/' folder
+          pattern: result_*
+          path: results/
+          merge-multiple: true
+          
+      - name: Generate Comparison and Heatmap Plots
+        run: |
+          for env in "MiniGrid-Empty-5x5-v0" "MiniGrid-DoorKey-5x5-v0" "MiniGrid-FourRooms-v0" "MiniGrid-MultiRoom-N2-S4-v0"; do
+            echo "Plotting $env..."
+            python src/plot_comparison.py --env-id $env
+            python src/plot_state_action_freq.py --env-id $env --episodes 20
+          done
+          
+      - name: Upload Plots Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 1m_steps_final_plots
+          path: plots/
+          retention-days: 14
