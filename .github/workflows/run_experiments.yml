@@ -1,7 +1,10 @@
-name: 1M Step Training
+name: Run Experiments (100k Steps)
 
 on:
   workflow_dispatch:  # Allows you to trigger the workflow manually from the GitHub UI
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   train:
@@ -33,28 +36,27 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
         
-      - name: Run Agent (1 Million Steps)
-        # Note: --seed 1 is passed so we only do the requested 1 seed. 
-        # --end-e 0.0 decays exploration rate down to 0 for DQN
+      - name: Run Agent (100k Steps)
         run: |
           python src/${{ matrix.agent }}.py \
             --env-id ${{ matrix.env_id }} \
-            --total-timesteps 1000000 \
+            --total-timesteps 100000 \
             --seed 1 \
             --end-e 0.0
           
       - name: Upload Run Results
         uses: actions/upload-artifact@v4
         with:
-          # Unique artifact name per matrix job so they don't overwrite each other
           name: result_${{ matrix.agent }}_${{ matrix.env_id }}
           path: results/
           retention-days: 14
 
   plot:
-    name: Generate Plots
+    name: Generate Plots & Push to Repo
     needs: train  # Wait for all matrix training jobs to finish
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Needed to push commits back to the repo
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -71,8 +73,6 @@ jobs:
       - name: Download all results
         uses: actions/download-artifact@v4
         with:
-          # Downloads all artifacts starting with 'result_' and extracts 
-          # them directly into the local 'results/' folder
           pattern: result_*
           path: results/
           merge-multiple: true
@@ -85,9 +85,22 @@ jobs:
             python src/plot_state_action_freq.py --env-id $env --episodes 20
           done
           
-      - name: Upload Plots Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: 1m_steps_final_plots
-          path: plots/
-          retention-days: 14
+      - name: Commit and Push Plots
+        run: |
+          # Create timestamped plots directory inside plots/
+          TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
+          DIR_NAME="plots/plots_$TIMESTAMP"
+          mkdir -p $DIR_NAME
+          
+          # Move all generated .png files into the new directory
+          mv plots/*.png $DIR_NAME/
+          
+          # Configure git
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Pull latest changes to avoid conflicts, add plots, commit, and push
+          git pull origin main
+          git add $DIR_NAME/
+          git commit -m "Auto-generated plots for 100k steps ($TIMESTAMP)"
+          git push origin main

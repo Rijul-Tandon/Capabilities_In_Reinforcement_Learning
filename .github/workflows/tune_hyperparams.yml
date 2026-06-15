@@ -1,0 +1,54 @@
+name: Hyperparameter Tuning (FourRooms)
+
+on:
+  workflow_dispatch:  # Allows manual trigger from GitHub UI
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  tune:
+    name: Optuna Tuning
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Needed to push the CSV results back to the repo
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        
+      - name: Run Optuna Tuning (FourRooms)
+        run: |
+          # Run 50 trials, 100k timesteps each. 
+          # GitHub Actions provides 6 hours for a job.
+          python src/tune_hyperparams.py \
+            --env-id MiniGrid-FourRooms-v0 \
+            --n-trials 50 \
+            --timesteps 100000 \
+            --output results/optuna_results_fourrooms.csv
+            
+      - name: Commit and Push Results
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Ensure we have the latest before pushing
+          git pull origin main
+          git add results/optuna_results_fourrooms.csv
+          git commit -m "Auto-generated Optuna hyperparameter tuning results for FourRooms"
+          git push origin main
+          
+      - name: Upload Results Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: optuna_results
+          path: results/optuna_results_fourrooms.csv
+          retention-days: 14
