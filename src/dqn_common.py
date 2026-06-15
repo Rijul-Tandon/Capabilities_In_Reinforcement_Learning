@@ -169,9 +169,15 @@ def minigrid_action_map(env_id, action_set):
     if action_set != "task":
         raise ValueError(f"Unknown action set {action_set!r}; use 'task' or 'full'.")
 
-    # Navigation-only environments: the agent just needs to move around
+    # Navigation-only environments: the agent just needs to move around.
+    # FourRooms has open doorways (no lockable doors), just navigation.
     if "Empty" in env_id or "FourRooms" in env_id:
         return [0, 1, 2]  # left, right, forward
+
+    # MultiRoom: rooms are separated by DOORS that must be toggled open.
+    # No keys or objects to pick up — toggle is the only interaction needed.
+    if "MultiRoom" in env_id:
+        return [0, 1, 2, 5]  # left, right, forward, toggle
 
     # DoorKey: The agent picks up the key, toggles the door, and walks to the goal (can hold key).
     if "DoorKey" in env_id:

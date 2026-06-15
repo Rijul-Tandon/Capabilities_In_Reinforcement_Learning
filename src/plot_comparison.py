@@ -153,7 +153,6 @@ def load_runs(results_dir, env_id):
         # Read all episode-level metrics from the CSV file
         rows = []
         with open(episode_path, "r", encoding="utf-8") as f:
-            # csv.DictReader automatically uses the first row as column headers
             for row in csv.DictReader(f):
                 rows.append(
                     {
@@ -183,9 +182,135 @@ def load_runs(results_dir, env_id):
                     )
 
         if rows:
-            runs_by_exp[config["exp_name"]] = (run_dir.name, config, rows, metric_rows)
+            exp_name = config["exp_name"]
+            seed = int(config["seed"])
+            
+            if exp_name not in runs_by_exp:
+                runs_by_exp[exp_name] = {}
+            
+            # Keying by seed means that if we encounter a newer directory for the same
+            # seed (because Path.glob is sorted alphabetically by timestamp), it will
+            # safely overwrite the old one!
+            runs_by_exp[exp_name][seed] = (run_dir.name, config, rows, metric_rows)
 
-    return list(runs_by_exp.values())
+    # Convert the inner dicts back to lists for the rest of the script
+    for exp_name in runs_by_exp:
+        runs_by_exp[exp_name] = list(runs_by_exp[exp_name].values())
+
+    return runs_by_exp  # dict: exp_name -> list of (run_dir_name, config, rows, metric_rows)
+
+
+# ============================================================================
+# FIGURE HELPER
+# ============================================================================
+
+AGENT_COLORS = {
+    "random_agent":       "dimgray",
+    "dqn_baseline":       "steelblue",
+    "dqn_reward_shaping": "darkorange",
+}
+LINE_STYLES = ["-", "--", ":", "-."]
+
+
+def plot_figure(runs_by_exp, env_id, output_path, rolling_window, title_suffix=""):
+    """
+    Creates and saves a 3-panel comparison figure from a (possibly filtered)
+    runs_by_exp dictionary.
+
+    Parameters
+    ----------
+    runs_by_exp : dict
+        {exp_name: [(run_dir_name, config, rows, metric_rows), ...]}
+        May contain one seed or multiple seeds per agent.
+    env_id : str
+        Used for the panel titles.
+    output_path : Path
+        Where to save the PNG.
+    rolling_window : int
+        Smoothing window size.
+    title_suffix : str
+        Appended to every panel title (e.g. " | Seed 2").
+    """
+    fig, axes = plt.subplots(3, 1, figsize=(10, 11), sharex=True)
+
+    any_dqn_config = None
+
+    for exp_name, run_list in runs_by_exp.items():
+        base_color = AGENT_COLORS.get(exp_name, "black")
+
+        for i, (_, config, rows, metric_rows) in enumerate(run_list):
+            seed = config["seed"]
+            ls   = LINE_STYLES[i % len(LINE_STYLES)]
+
+            if i == 0:
+                label = f"{exp_name}  s={seed}"
+            else:
+                label = f"s={seed}"
+
+            steps   = [r["global_step"] for r in rows]
+            returns = rolling([r["episodic_return"] for r in rows], rolling_window)
+            goals   = rolling([r["goal_reached"]   for r in rows], rolling_window)
+
+            axes[0].plot(steps, returns, label=label, color=base_color, linestyle=ls, linewidth=1.5)
+            axes[1].plot(steps, goals,   label=label, color=base_color, linestyle=ls, linewidth=1.5)
+
+            if metric_rows:
+                ls_steps = [r["global_step"] for r in metric_rows]
+                lv       = rolling([r["td_loss"] for r in metric_rows], rolling_window)
+                valid    = [(s, l) for s, l in zip(ls_steps, lv) if l == l]
+                if valid:
+                    vs, vl = zip(*valid)
+                    axes[2].plot(vs, vl, label=label, color=base_color, linestyle=ls, linewidth=1.5)
+
+            if exp_name != "random_agent":
+                any_dqn_config = config
+
+    axes[0].set_title(f"{env_id} — Episodic Return{title_suffix}")
+    axes[0].set_ylabel("Return")
+    axes[0].grid(alpha=0.3)
+    axes[0].legend(fontsize=8)
+
+    axes[1].set_title(f"{env_id} — Goal Reached Rate{title_suffix}")
+    axes[1].set_ylabel("Goal Rate")
+    axes[1].set_ylim(-0.05, 1.05)
+    axes[1].grid(alpha=0.3)
+    axes[1].legend(fontsize=8)
+
+    axes[2].set_title(f"{env_id} — TD Loss{title_suffix}")
+    axes[2].set_ylabel("TD Loss")
+    axes[2].set_xlabel("Training Steps")
+    axes[2].grid(alpha=0.3)
+    axes[2].legend(fontsize=8)
+
+    # Secondary X-axis: Epsilon
+    ax_eps = axes[2].twiny()
+    ax_eps.set_xlim(axes[2].get_xlim())
+    ax_eps.xaxis.set_ticks_position("bottom")
+    ax_eps.xaxis.set_label_position("bottom")
+    ax_eps.spines["bottom"].set_position(("outward", 40))
+    ax_eps.set_xlabel("Exploration Rate (Epsilon)")
+
+    ticks = axes[2].get_xticks()
+    ax_eps.set_xticks(ticks)
+
+    if any_dqn_config:
+        start_e = any_dqn_config.get("start_e", 1.0)
+        end_e   = any_dqn_config.get("end_e", 0.0)
+        frac    = any_dqn_config.get("exploration_fraction", 0.6)
+        total   = any_dqn_config.get("total_timesteps", 50000)
+        slope   = (end_e - start_e) / (frac * total)
+        eps_labels = []
+        for t in ticks:
+            if t < 0 or t > total:
+                eps_labels.append("")
+            else:
+                eps_labels.append(f"{max(slope * t + start_e, end_e):.2f}")
+        ax_eps.set_xticklabels(eps_labels)
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=160)
+    plt.close(fig)
+    print(f"Saved {output_path}")
 
 
 # ============================================================================
@@ -194,119 +319,54 @@ def load_runs(results_dir, env_id):
 
 def main():
     """
-    Entry point: parses arguments, loads runs, and generates the comparison plot.
+    Entry point: parses arguments, loads all runs, then generates:
+      1. One comparison plot per seed  ->  {env_id}_comparison_seed{N}.png
+      2. One combined plot (all seeds) ->  {env_id}_comparison_all.png
     """
     parser = argparse.ArgumentParser()
-
-    # --env-id (required): Which environment's results to plot.
-    parser.add_argument("--env-id", type=str, required=True)
-
-    # --results-dir: Where to look for run folders (default: "results").
-    parser.add_argument("--results-dir", type=str, default="results")
-
-    # --plots-dir: Where to save the output plot image (default: "plots").
-    parser.add_argument("--plots-dir", type=str, default="plots")
-
-    # --rolling-window: How many episodes to average over for smoothing.
-    #   A window of 20 means each plotted point is the average of the last 20 episodes.
-    #   Increase this for noisier environments (e.g., DoorKey) to see clearer trends.
-    parser.add_argument("--rolling-window", type=int, default=20)
-
+    parser.add_argument("--env-id",        type=str, required=True)
+    parser.add_argument("--results-dir",   type=str, default="results")
+    parser.add_argument("--plots-dir",     type=str, default="plots")
+    parser.add_argument("--rolling-window",type=int, default=20)
     args = parser.parse_args()
 
-    # Load all latest runs for this environment
-    runs = load_runs(args.results_dir, args.env_id)
-    if not runs:
+    runs_by_exp = load_runs(args.results_dir, args.env_id)
+    if not runs_by_exp:
         raise SystemExit(f"No runs found for {args.env_id} in {args.results_dir}")
 
-    # Create the output directory if it doesn't exist
     Path(args.plots_dir).mkdir(parents=True, exist_ok=True)
+    plots_dir = Path(args.plots_dir)
 
-    # --- Create the Figure ---
-    # 3 vertically stacked subplots: Return, Goal Rate, TD Loss
-    fig, axes = plt.subplots(3, 1, figsize=(10, 11), sharex=True)
+    # --- Discover all DQN seeds present ---
+    all_seeds = set()
+    for exp_name, run_list in runs_by_exp.items():
+        if exp_name == "random_agent":
+            continue
+        for _, config, _, _ in run_list:
+            all_seeds.add(int(config["seed"]))
+    all_seeds = sorted(all_seeds)
 
-    # --- Plot Each Agent's Data ---
-    for _, config, rows, metric_rows in runs:
-        # Create a descriptive label for the legend (e.g., "dqn_baseline seed=1")
-        label = f"{config['exp_name']} seed={config['seed']}"
+    print(f"Found DQN seeds: {all_seeds} for {args.env_id}")
 
-        # Apply rolling average smoothing to the episode metrics
-        steps = [r["global_step"] for r in rows]
-        returns = rolling([r["episodic_return"] for r in rows], args.rolling_window)
-        goals = rolling([r["goal_reached"] for r in rows], args.rolling_window)
-
-        # Plot Return vs Steps (top panel)
-        axes[0].plot(steps, returns, label=label)
-
-        # Plot Goal Rate vs Steps (middle panel)
-        axes[1].plot(steps, goals, label=label)
-
-        # Plot TD Loss vs Steps (bottom panel) — only for DQN agents, not random
-        if metric_rows:
-            loss_steps = [r["global_step"] for r in metric_rows]
-            loss_vals = rolling([r["td_loss"] for r in metric_rows], args.rolling_window)
-            # Filter out NaN values (steps before learning started)
-            valid = [(s, l) for s, l in zip(loss_steps, loss_vals) if not (l != l)]
-            if valid:
-                vs, vl = zip(*valid)
-                axes[2].plot(vs, vl, label=label)
-
-    # --- Configure Top Panel: Episodic Return ---
-    axes[0].set_title(f"{args.env_id} — Episodic Return vs Training Steps")
-    axes[0].set_ylabel("Return")
-    axes[0].grid(alpha=0.3)
-    axes[0].legend()
-
-    # --- Configure Middle Panel: Goal Reached Rate ---
-    axes[1].set_title(f"{args.env_id} — Goal Reached Rate vs Training Steps")
-    axes[1].set_ylabel("Goal Rate")
-    axes[1].set_ylim(-0.05, 1.05)
-    axes[1].grid(alpha=0.3)
-    axes[1].legend()
-
-    # --- Configure Bottom Panel: TD Loss ---
-    axes[2].set_title(f"{args.env_id} — TD Loss vs Training Steps")
-    axes[2].set_ylabel("TD Loss")
-    axes[2].set_xlabel("Training Steps")
-    axes[2].grid(alpha=0.3)
-    axes[2].legend()
-
-    # --- Add Secondary X-Axis for Epsilon (on the bottom panel) ---
-    ax_eps = axes[2].twiny()
-    ax_eps.set_xlim(axes[2].get_xlim())
-    ax_eps.xaxis.set_ticks_position('bottom')
-    ax_eps.xaxis.set_label_position('bottom')
-    ax_eps.spines['bottom'].set_position(('outward', 40))
-    ax_eps.set_xlabel("Exploration Rate (Epsilon)")
-
-    ticks = axes[2].get_xticks()
-    ax_eps.set_xticks(ticks)
-
-    if len(runs) > 0:
-        _, config, _, _ = runs[0]
-        start_e = config.get("start_e", 1.0)
-        end_e   = config.get("end_e", 0.0)
-        frac    = config.get("exploration_fraction", 0.6)
-        total   = config.get("total_timesteps", 50000)
-        slope   = (end_e - start_e) / (frac * total)
-
-        eps_labels = []
-        for t in ticks:
-            if t < 0 or t > total:
-                eps_labels.append("")
+    # --- Generate One comparison plot per seed ---
+    for seed in all_seeds:
+        # Filter each agent's run list to only this seed
+        # Random agent only ran once (seed 1), so we include it in ALL plots
+        filtered = {}
+        for exp_name, run_list in runs_by_exp.items():
+            if exp_name == "random_agent":
+                filtered[exp_name] = run_list
             else:
-                e = max(slope * t + start_e, end_e)
-                eps_labels.append(f"{e:.2f}")
-        ax_eps.set_xticklabels(eps_labels)
+                seed_runs = [(d, c, r, m) for d, c, r, m in run_list if int(c["seed"]) == seed]
+                if seed_runs:
+                    filtered[exp_name] = seed_runs
 
-    # tight_layout() automatically adjusts spacing between subplots to prevent overlap
-    fig.tight_layout()
+        if not filtered:
+            continue
 
-    # --- Save the Plot ---
-    out = Path(args.plots_dir) / f"{args.env_id}_comparison.png"
-    fig.savefig(out, dpi=160)  # dpi=160 gives a high-resolution image
-    print(f"Saved {out}")
+        out = plots_dir / f"{args.env_id}_comparison_seed{seed}.png"
+        plot_figure(filtered, args.env_id, out, args.rolling_window,
+                    title_suffix=f" | Seed {seed}")
 
 
 if __name__ == "__main__":

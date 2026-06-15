@@ -91,35 +91,41 @@ from dqn_common import QNetwork, make_env, action_names
 # HELPER FUNCTIONS
 # ============================================================================
 
-def get_latest_model(results_dir, env_id, exp_name):
+def get_models_by_seed(results_dir, env_id, exp_name):
     """
-    Finds the most recently created run directory for a given experiment
-    and returns the path to its saved model weights (q_net.pt).
+    Finds all trained model files for a given experiment, grouped by seed.
 
     The directories are named like: {env_id}__{exp_name}__{seed}__{timestamp}
-    Since sorted() processes them alphabetically and the timestamp is the last
-    field, the final match will be the newest run.
+    If multiple runs exist for the same seed (re-runs), the newest timestamp wins.
 
     Parameters
     ----------
     results_dir : str
-        Path to the parent directory containing all run folders (default: "results").
+        Path to the parent directory containing all run folders.
     env_id : str
-        The gymnasium environment ID (e.g., "MiniGrid-Empty-8x8-v0").
+        The gymnasium environment ID (e.g., "MiniGrid-Empty-5x5-v0").
     exp_name : str
-        The experiment name to search for (e.g., "dqn_baseline" or "dqn_reward_shaping").
+        The experiment name (e.g., "dqn_baseline" or "dqn_reward_shaping").
 
     Returns
     -------
-    Path or None
-        The absolute path to the latest q_net.pt file, or None if no model was found.
+    dict[int, Path]
+        A dict mapping seed -> path to q_net.pt for that seed.
     """
-    latest_run = None
+    models = {}  # seed -> latest model path for that seed
     for run_dir in sorted(Path(results_dir).glob(f"{env_id}__{exp_name}__*")):
         model_path = run_dir / "q_net.pt"
-        if model_path.exists():
-            latest_run = model_path  # Overwrite with each newer match
-    return latest_run
+        if not model_path.exists():
+            continue
+        # Directory name format: env__exp__seed__timestamp
+        parts = run_dir.name.split("__")
+        try:
+            seed = int(parts[2])
+        except (IndexError, ValueError):
+            continue
+        # Overwrite with newer run (sorted order ensures newest is last)
+        models[seed] = model_path
+    return models  # {seed: Path}
 
 
 def get_agent_data(env, q_net, episodes, seed, num_actions, device):
@@ -206,31 +212,31 @@ def get_agent_data(env, q_net, episodes, seed, num_actions, device):
 # MAIN PLOTTING FUNCTION
 # ============================================================================
 
-def plot_all_frequencies(env_id, results_dir, episodes=10, seed=1, hidden_size=256, action_set="task"):
+def plot_all_frequencies(env_id, results_dir, episodes=20, seed=1, hidden_size=256, action_set="task"):
     """
-    Generates the full 2x3 comparison plot for all three agents.
+    Generates the 2x3 comparison plot for all three agents FOR A SPECIFIC SEED.
+    Saves the output as: plots/{env_id}_state_action_freq_seed{seed}.png
 
     Layout:
-      Column 0: Random Agent     | Column 1: Baseline DQN    | Column 2: Reward Shaped DQN
-      Row 0: Visit Frequencies   | (heatmaps showing where each agent goes)
-      Row 1: Most Frequent Action| (text labels showing what action each agent prefers)
+      Column 0: Random Agent  | Column 1: Baseline DQN    | Column 2: Reward Shaped DQN
+      Row 0: Visit Frequencies  (heatmaps showing where each agent goes)
+      Row 1: Action Counts      (text labels: count for every action at every cell)
 
     Parameters
     ----------
     env_id : str
-        The gymnasium environment ID (e.g., "MiniGrid-Empty-8x8-v0").
+        The gymnasium environment ID.
     results_dir : str
         Path to the directory containing run folders with trained models.
-    episodes : int, optional
-        Number of episodes to evaluate each agent for. More episodes = smoother
-        heatmaps but longer computation time. Default is 10.
-    seed : int, optional
-        Base seed for environment resets during evaluation. Default is 1.
-    hidden_size : int, optional
-        Number of neurons in the Q-Network hidden layers. Must match the value
-        used during training, otherwise loading the model weights will fail. Default is 256.
-    action_set : str, optional
-        "task" or "full" - must match the action set used during training. Default is "task".
+    episodes : int
+        Number of episodes to evaluate each agent for.
+    seed : int
+        Which trained seed to load for the DQN agents. Also used as the
+        base seed for environment resets during evaluation.
+    hidden_size : int
+        Number of neurons in the Q-Network hidden layers.
+    action_set : str
+        "task" or "full" — must match the value used during training.
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -243,12 +249,16 @@ def plot_all_frequencies(env_id, results_dir, episodes=10, seed=1, hidden_size=2
     width = env.unwrapped.width          # Grid width (e.g., 8)
     height = env.unwrapped.height        # Grid height (e.g., 8)
 
-    # --- Find Latest Trained Models ---
-    baseline_model_path = get_latest_model(results_dir, env_id, "dqn_baseline")
-    shaped_model_path = get_latest_model(results_dir, env_id, "dqn_reward_shaping")
+    # --- Find Trained Models for This Seed ---
+    baseline_models = get_models_by_seed(results_dir, env_id, "dqn_baseline")
+    shaped_models   = get_models_by_seed(results_dir, env_id, "dqn_reward_shaping")
+
+    baseline_model_path = baseline_models.get(seed)
+    shaped_model_path   = shaped_models.get(seed)
 
     # Build the list of agents to plot. Each entry is (display_name, q_net_or_None).
     # The Random Agent has no neural network, so q_net=None.
+    # Random agent is always evaluated with seed 1 regardless of the DQN seed.
     agents = [("Random Agent", None)]
 
     # --- Load Baseline DQN Model ---
@@ -279,7 +289,10 @@ def plot_all_frequencies(env_id, results_dir, episodes=10, seed=1, hidden_size=2
     # figsize=(18, 10) gives enough space for all heatmaps and text labels
     fig, axes = plt.subplots(2, 3, figsize=(18, 10))
     # suptitle adds a title above all subplots
-    fig.suptitle(f"{env_id} - State/Action Frequencies ({episodes} episodes)", fontsize=16)
+    fig.suptitle(
+        f"{env_id} - State/Action Frequencies ({episodes} episodes, DQN seed={seed})",
+        fontsize=14
+    )
 
     # --- Generate Plots for Each Agent ---
     for col, (title, q_net) in enumerate(agents):
@@ -369,9 +382,10 @@ def plot_all_frequencies(env_id, results_dir, episodes=10, seed=1, hidden_size=2
     # --- Save the Plot ---
     # rect=[left, bottom, right, top] — bottom=0.05 reserves space for the legend text
     plt.tight_layout(rect=[0, 0.05, 1, 0.95])
-    output_path = Path("plots") / f"{env_id}_state_action_freq.png"
+    output_path = Path("plots") / f"{env_id}_state_action_freq_seed{seed}.png"
     output_path.parent.mkdir(exist_ok=True)
     plt.savefig(output_path, dpi=150)
+    plt.close(fig)  # free memory before the next seed's figure
     print(f"Plot saved to {output_path}")
 
 
@@ -398,9 +412,27 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    plot_all_frequencies(
-        env_id=args.env_id,
-        results_dir=args.results_dir,
-        episodes=args.episodes,
-        action_set=args.action_set
-    )
+    # Discover which seeds are available for this environment
+    baseline_models = get_models_by_seed(args.results_dir, args.env_id, "dqn_baseline")
+    shaped_models   = get_models_by_seed(args.results_dir, args.env_id, "dqn_reward_shaping")
+
+    # Union of all seeds found across both agents
+    all_seeds = sorted(set(baseline_models.keys()) | set(shaped_models.keys()))
+
+    if not all_seeds:
+        print(f"No trained models found for {args.env_id} in {args.results_dir}")
+        raise SystemExit(1)
+
+    print(f"Found seeds: {all_seeds} for {args.env_id}")
+
+    for seed in all_seeds:
+        print(f"Generating heatmap for seed={seed} ...")
+        plot_all_frequencies(
+            env_id=args.env_id,
+            results_dir=args.results_dir,
+            episodes=args.episodes,
+            seed=seed,
+            action_set=args.action_set,
+        )
+
+    print(f"Done. {len(all_seeds)} heatmap(s) saved to plots/")
