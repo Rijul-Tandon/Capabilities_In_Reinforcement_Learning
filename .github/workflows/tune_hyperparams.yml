@@ -42,11 +42,12 @@ jobs:
           
           # Ensure we have the latest before pushing
           git pull origin main
-          git add results/optuna_results_fourrooms.csv
+          git add -f results/optuna_results_fourrooms.csv
           git commit -m "Auto-generated Optuna hyperparameter tuning results for FourRooms" || echo "No changes to commit"
           git push origin main
           
       - name: Upload Results Artifact
+        if: always()  # ALWAYS upload the CSV as an artifact even if the git commit fails!
         uses: actions/upload-artifact@v4
         with:
           name: optuna_results
