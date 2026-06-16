@@ -1,4 +1,4 @@
-﻿"""
+"""
 tune_hyperparams.py
 ====================
 Automated hyperparameter search for the Baseline Double DQN agent using Optuna.
@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import numpy as np
 import optuna
+import gc
 from optuna.samplers import TPESampler
 
 from dqn_common import train
@@ -130,6 +131,10 @@ def make_objective(base_timesteps, env_id, base_seed):
 
         # train() returns mean goal_reached rate over the last 20% of episodes
         goal_rate = train(args, use_shaping=False)
+        
+        # Force garbage collection to prevent memory leaks across 50 trials
+        gc.collect()
+        
         return goal_rate
 
     return objective

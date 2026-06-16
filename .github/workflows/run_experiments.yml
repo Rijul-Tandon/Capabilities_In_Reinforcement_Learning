@@ -102,5 +102,5 @@ jobs:
           # Pull latest changes to avoid conflicts, add plots, commit, and push
           git pull origin main
           git add $DIR_NAME/
-          git commit -m "Auto-generated plots for 100k steps ($TIMESTAMP)"
+          git commit -m "Auto-generated plots for 100k steps ($TIMESTAMP)" || echo "No changes to commit"
           git push origin main
