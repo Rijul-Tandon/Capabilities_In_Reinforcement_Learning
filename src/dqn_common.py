@@ -602,22 +602,22 @@ def parse_args(default_exp_name, use_shaping):
     # --- DQN Hyperparameters ---
     # --learning-rate: How fast the neural network adjusts its weights.
     #   Too high = unstable training. Too low = slow learning. 2.5e-4 is a good default.
-    parser.add_argument("--learning-rate", type=float, default=2.5e-4)
+    parser.add_argument("--learning-rate", type=float, default=0.00171)
     # --buffer-size: Maximum number of transitions stored in the replay buffer
-    parser.add_argument("--buffer-size", type=int, default=100000)
+    parser.add_argument("--buffer-size", type=int, default=5000)
     # --gamma: Discount factor for future rewards (0 = greedy, 1 = far-sighted).
     #   0.99 means the agent values a reward 100 steps away at 0.99^100 ≈ 0.37 of its face value.
-    parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--gamma", type=float, default=0.915)
     # --target-network-frequency: How often (in steps) to copy q_net weights to target_net.
     #   The target network provides stable Q-value targets during training.
-    parser.add_argument("--target-network-frequency", type=int, default=200)
+    parser.add_argument("--target-network-frequency", type=int, default=788)
     # --batch-size: Number of transitions sampled from the replay buffer per training step
     parser.add_argument("--batch-size", type=int, default=128)
     # --learning-starts: Number of random steps before training begins.
     #   This seeds the replay buffer with diverse experiences before the network starts learning.
-    parser.add_argument("--learning-starts", type=int, default=1000)
+    parser.add_argument("--learning-starts", type=int, default=2000)
     # --train-frequency: Train the network every N environment steps (not every single step)
-    parser.add_argument("--train-frequency", type=int, default=4)
+    parser.add_argument("--train-frequency", type=int, default=1)
 
     # --- Exploration Schedule ---
     # --start-e: Initial epsilon (exploration rate). 1.0 = 100% random actions at the start.
@@ -629,7 +629,7 @@ def parse_args(default_exp_name, use_shaping):
     parser.add_argument("--end-e", type=float, default=0.0)
     # --exploration-fraction: Fraction of total timesteps over which epsilon decays.
     #   0.6 means epsilon reaches end_e at 60% of training, then stays flat.
-    parser.add_argument("--exploration-fraction", type=float, default=0.6)
+    parser.add_argument("--exploration-fraction", type=float, default=0.642)
 
     # --- Network Architecture ---
     # --hidden-size: Number of neurons in each hidden layer of the Q-Network
