@@ -68,7 +68,7 @@ jobs:
           python "src/${script}" \
             --env-id ${{ matrix.env_id }} \
             --seed ${{ matrix.seed }} \
-            --total-timesteps 100000 \
+            --total-timesteps 500000 \
             ${extra_args}
 
       - name: Upload run results
