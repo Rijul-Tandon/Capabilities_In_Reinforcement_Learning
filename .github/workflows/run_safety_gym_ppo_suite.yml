@@ -74,7 +74,7 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install safety-gymnasium gymnasium-robotics --no-deps
-          pip install xmltodict pyyaml imageio
+          pip install xmltodict pyyaml imageio pettingzoo
 
       - name: Run benchmark
         run: |
@@ -130,7 +130,7 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install safety-gymnasium gymnasium-robotics --no-deps
-          pip install xmltodict pyyaml imageio
+          pip install xmltodict pyyaml imageio pettingzoo
 
       - name: Download all results
         uses: actions/download-artifact@v4
