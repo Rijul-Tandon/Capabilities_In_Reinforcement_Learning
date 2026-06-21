@@ -23,7 +23,6 @@ jobs:
           - InvertedPendulum-v4
           - Pusher-v4
           - Reacher-v4
-          - Swimmer-v4
           - Walker2d-v4
         agent:
           - random_mujoco_agent
