@@ -73,7 +73,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install safety-gymnasium --no-deps
+          pip install safety-gymnasium gymnasium-robotics --no-deps
           pip install xmltodict pyyaml imageio
 
       - name: Run benchmark
@@ -129,7 +129,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install safety-gymnasium --no-deps
+          pip install safety-gymnasium gymnasium-robotics --no-deps
           pip install xmltodict pyyaml imageio
 
       - name: Download all results
