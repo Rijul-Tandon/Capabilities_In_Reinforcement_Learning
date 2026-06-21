@@ -77,3 +77,51 @@ jobs:
           name: mujoco_${{ matrix.agent }}_${{ matrix.env_id }}_seed${{ matrix.seed }}
           path: results/
           retention-days: 14
+
+  plot:
+    name: Generate Plots and Push to Repo
+    needs: benchmark
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download all results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mujoco_*
+          path: results/
+          merge-multiple: true
+
+      - name: Generate plots
+        run: |
+          for env in "Ant-v4" "HalfCheetah-v4" "Hopper-v4" "Humanoid-v4" "HumanoidStandup-v4" "InvertedDoublePendulum-v4" "InvertedPendulum-v4" "Pusher-v4" "Reacher-v4" "Walker2d-v4"; do
+            echo "Plotting $env..."
+            python src/plot_benchmark_curves.py --env-id $env
+          done
+
+      - name: Commit and push plots
+        run: |
+          TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
+          DIR_NAME="plots/mujoco_ppo_suite_$TIMESTAMP"
+          mkdir -p "$DIR_NAME"
+          mv plots/*.png "$DIR_NAME/"
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git pull origin main
+          git add "$DIR_NAME/"
+          git commit -m "Auto-generated MuJoCo PPO plots ($TIMESTAMP)" || echo "No changes to commit"
+          git push origin main
