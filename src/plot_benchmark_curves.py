@@ -8,10 +8,24 @@ import numpy as np
 
 
 AGENT_COLORS = {
-    "random_mujoco_agent": "dimgray",
-    "ppo_mujoco_baseline": "seagreen",
-    "ppo_mujoco_reward_shaping": "darkorange",
+    "random_agent": "#111111",
+    "dqn_baseline": "#0072B2",
+    "dqn_reward_shaping": "#D55E00",
+    "random_mujoco_agent": "#111111",
+    "ppo_mujoco_baseline": "#009E73",
+    "ppo_mujoco_reward_shaping": "#CC79A7",
 }
+
+DEFAULT_STYLES = {
+    "random_agent": {"linestyle": "-", "linewidth": 2.2, "marker": None, "markevery": None},
+    "dqn_baseline": {"linestyle": "-", "linewidth": 2.4, "marker": None, "markevery": None},
+    "dqn_reward_shaping": {"linestyle": "-", "linewidth": 2.4, "marker": None, "markevery": None},
+    "random_mujoco_agent": {"linestyle": "-", "linewidth": 2.2, "marker": None, "markevery": None},
+    "ppo_mujoco_baseline": {"linestyle": "-", "linewidth": 2.4, "marker": None, "markevery": None},
+    "ppo_mujoco_reward_shaping": {"linestyle": "-", "linewidth": 2.4, "marker": None, "markevery": None},
+}
+
+OVERLAP_MARKERS = ["o", "s", "^", "D"]
 
 
 def rolling(values, window):
@@ -84,6 +98,32 @@ def pick_metric(runs_by_exp, candidates):
     return None
 
 
+def _series_key(values, decimals=4):
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.size == 0:
+        return tuple()
+    return tuple(np.round(arr, decimals=decimals).tolist())
+
+
+def _build_style_map(series_cache):
+    overlap_groups = {}
+    for name, series in series_cache.items():
+        overlap_groups.setdefault(_series_key(series), []).append(name)
+
+    styles = {name: dict(DEFAULT_STYLES.get(name, {"linestyle": "-", "linewidth": 2.2, "marker": None, "markevery": None})) for name in series_cache}
+
+    for group in overlap_groups.values():
+        if len(group) < 2:
+            continue
+        for idx, name in enumerate(sorted(group)):
+            styles[name]["linestyle"] = ":"
+            styles[name]["linewidth"] = 2.8
+            styles[name]["marker"] = OVERLAP_MARKERS[idx % len(OVERLAP_MARKERS)]
+            styles[name]["markevery"] = (idx % 2, 2)
+            styles[name]["markersize"] = 5
+    return styles
+
+
 def plot_curves(runs_by_exp, env_id, output_path, rolling_window):
     has_epsilon = any(
         run_list and any("epsilon" in row for _, _, rows, _ in run_list for row in rows)
@@ -94,27 +134,72 @@ def plot_curves(runs_by_exp, env_id, output_path, rolling_window):
         ["td_loss", "value_loss", "policy_loss", "approx_kl", "mean_penalty"],
     )
 
-    fig, axes = plt.subplots(3, 1, figsize=(10, 11), sharex=not has_epsilon)
+    fig, axes = plt.subplots(3, 1, figsize=(10.5, 11.5), sharex=not has_epsilon)
+
+    return_series = {}
+    success_series = {}
+    metric_series = {}
+    prepared = []
 
     for exp_name, run_list in runs_by_exp.items():
-        color = AGENT_COLORS.get(exp_name, None)
         for i, (_, config, rows, metric_rows) in enumerate(run_list):
             seed = int(config.get("seed", 1))
             label = f"{exp_name} s={seed}"
-            linestyle = ["-", "--", ":", "-."][i % 4]
-
             x_values = [row["epsilon"] for row in rows] if has_epsilon and all("epsilon" in row for row in rows) else [row["global_step"] for row in rows]
             returns = rolling([row["episodic_return"] for row in rows], rolling_window)
             success = rolling([row["goal_reached"] for row in rows], rolling_window)
 
-            axes[0].plot(x_values, returns, label=label, color=color, linestyle=linestyle, linewidth=1.6)
-            axes[1].plot(x_values, success, label=label, color=color, linestyle=linestyle, linewidth=1.6)
-
+            mx = []
+            my = []
             if secondary_metric and metric_rows:
                 mx = [row["global_step"] for row in metric_rows if secondary_metric in row]
                 my = [row[secondary_metric] for row in metric_rows if secondary_metric in row]
-                if mx and my:
-                    axes[2].plot(mx, rolling(my, rolling_window), label=label, color=color, linestyle=linestyle, linewidth=1.6)
+                if my:
+                    my = rolling(my, rolling_window)
+
+            prepared.append({
+                "exp_name": exp_name,
+                "seed": seed,
+                "label": label,
+                "x": x_values,
+                "returns": returns,
+                "success": success,
+                "metric_x": mx,
+                "metric_y": my,
+            })
+            return_series[label] = returns
+            success_series[label] = success
+            metric_series[label] = my
+
+    return_styles = _build_style_map(return_series)
+    success_styles = _build_style_map(success_series)
+    metric_styles = _build_style_map({k: v for k, v in metric_series.items() if v}) if secondary_metric else {}
+
+    for item in prepared:
+        exp_name = item["exp_name"]
+        color = AGENT_COLORS.get(exp_name, "#333333")
+
+        ret_style = return_styles[item["label"]]
+        axes[0].plot(
+            item["x"], item["returns"], label=item["label"], color=color,
+            linestyle=ret_style.get("linestyle", "-"), linewidth=ret_style.get("linewidth", 2.2),
+            marker=ret_style.get("marker"), markevery=ret_style.get("markevery"), markersize=ret_style.get("markersize", 5),
+        )
+
+        succ_style = success_styles[item["label"]]
+        axes[1].plot(
+            item["x"], item["success"], label=item["label"], color=color,
+            linestyle=succ_style.get("linestyle", "-"), linewidth=succ_style.get("linewidth", 2.2),
+            marker=succ_style.get("marker"), markevery=succ_style.get("markevery"), markersize=succ_style.get("markersize", 5),
+        )
+
+        if secondary_metric and item["metric_x"] and item["metric_y"]:
+            met_style = metric_styles.get(item["label"], DEFAULT_STYLES.get(exp_name, {"linestyle": "-", "linewidth": 2.2}))
+            axes[2].plot(
+                item["metric_x"], item["metric_y"], label=item["label"], color=color,
+                linestyle=met_style.get("linestyle", "-"), linewidth=met_style.get("linewidth", 2.2),
+                marker=met_style.get("marker"), markevery=met_style.get("markevery"), markersize=met_style.get("markersize", 5),
+            )
 
     axes[0].set_title(f"{env_id} - Episodic Return")
     axes[0].set_ylabel("Return")
@@ -131,7 +216,8 @@ def plot_curves(runs_by_exp, env_id, output_path, rolling_window):
     axes[2].set_title(f"{env_id} - {metric_title}")
     axes[2].set_ylabel(metric_title)
     axes[2].grid(alpha=0.3)
-    axes[2].legend(fontsize=8)
+    if secondary_metric:
+        axes[2].legend(fontsize=8)
     axes[2].set_xlabel("Epsilon" if has_epsilon else "Training Steps")
 
     if has_epsilon:
