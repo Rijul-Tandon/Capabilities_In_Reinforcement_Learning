@@ -68,7 +68,7 @@ from tqdm import tqdm
 #   (FullyObsWrapper, FlatObsWrapper, action subset, episode statistics).
 # linear_schedule: Computes the decaying epsilon value for a given timestep.
 #   We reuse it here to generate the "fake" epsilon for consistent plot X-axes.
-from dqn_common import make_env, linear_schedule
+from dqn_common import episode_success, make_env, linear_schedule
 
 
 def parse_args():
@@ -198,7 +198,7 @@ def main():
         if done:
             # Episode finished. Log the results.
             # In MiniGrid, positive reward means the goal was reached.
-            reached = episode_return > 0.0
+            reached = episode_success(args.env_id, episode_return)
             episode_writer.writerow(
                 {
                     "global_step": global_step,

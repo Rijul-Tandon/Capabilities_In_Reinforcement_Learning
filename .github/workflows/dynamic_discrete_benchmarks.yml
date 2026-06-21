@@ -1,0 +1,89 @@
+name: Dynamic Discrete Benchmarks
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  benchmark:
+    name: Benchmark (${{ matrix.agent }}, ${{ matrix.env_id }}, seed=${{ matrix.seed }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - env_id: CartPole-v1
+            timesteps: 50000
+            end_e: 0.05
+            agent: random_agent
+            seed: 1
+          - env_id: CartPole-v1
+            timesteps: 50000
+            end_e: 0.05
+            agent: dqn_baseline
+            seed: 1
+          - env_id: CartPole-v1
+            timesteps: 50000
+            end_e: 0.05
+            agent: dqn_reward_shaping
+            seed: 1
+          - env_id: MountainCar-v0
+            timesteps: 75000
+            end_e: 0.05
+            agent: random_agent
+            seed: 1
+          - env_id: MountainCar-v0
+            timesteps: 75000
+            end_e: 0.05
+            agent: dqn_baseline
+            seed: 1
+          - env_id: MountainCar-v0
+            timesteps: 75000
+            end_e: 0.05
+            agent: dqn_reward_shaping
+            seed: 1
+          - env_id: Taxi-v3
+            timesteps: 50000
+            end_e: 0.05
+            agent: random_agent
+            seed: 1
+          - env_id: Taxi-v3
+            timesteps: 50000
+            end_e: 0.05
+            agent: dqn_baseline
+            seed: 1
+          - env_id: Taxi-v3
+            timesteps: 50000
+            end_e: 0.05
+            agent: dqn_reward_shaping
+            seed: 1
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run benchmark
+        run: |
+          python src/${{ matrix.agent }}.py \
+            --env-id ${{ matrix.env_id }} \
+            --total-timesteps ${{ matrix.timesteps }} \
+            --seed ${{ matrix.seed }} \
+            --end-e ${{ matrix.end_e }}
+
+      - name: Upload run results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark_${{ matrix.agent }}_${{ matrix.env_id }}_seed${{ matrix.seed }}
+          path: results/
+          retention-days: 14

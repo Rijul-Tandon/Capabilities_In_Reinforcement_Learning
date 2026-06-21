@@ -1,0 +1,80 @@
+name: MuJoCo PPO Suite
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  benchmark:
+    name: Benchmark (${{ matrix.agent }}, ${{ matrix.env_id }}, seed=${{ matrix.seed }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env_id:
+          - Ant-v4
+          - HalfCheetah-v4
+          - Hopper-v4
+          - Humanoid-v4
+          - HumanoidStandup-v4
+          - InvertedDoublePendulum-v4
+          - InvertedPendulum-v4
+          - Pusher-v4
+          - Reacher-v4
+          - Swimmer-v4
+          - Walker2d-v4
+        agent:
+          - random_mujoco_agent
+          - ppo_mujoco_baseline
+          - ppo_mujoco_reward_shaping
+        seed:
+          - 1
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run benchmark
+        run: |
+          case "${{ matrix.agent }}" in
+            random_mujoco_agent)
+              script="random_mujoco_agent.py"
+              extra_args=""
+              ;;
+            ppo_mujoco_baseline)
+              script="ppo_mujoco_baseline.py"
+              extra_args="--save-model false"
+              ;;
+            ppo_mujoco_reward_shaping)
+              script="ppo_mujoco_reward_shaping.py"
+              extra_args="--save-model false"
+              ;;
+            *)
+              echo "Unknown agent: ${{ matrix.agent }}" >&2
+              exit 1
+              ;;
+          esac
+
+          python "src/${script}" \
+            --env-id ${{ matrix.env_id }} \
+            --seed ${{ matrix.seed }} \
+            --total-timesteps 100000 \
+            ${extra_args}
+
+      - name: Upload run results
+        uses: actions/upload-artifact@v4
+        with:
+          name: mujoco_${{ matrix.agent }}_${{ matrix.env_id }}_seed${{ matrix.seed }}
+          path: results/
+          retention-days: 14

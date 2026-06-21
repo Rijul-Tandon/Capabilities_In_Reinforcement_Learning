@@ -140,6 +140,64 @@ from torch.utils.tensorboard import SummaryWriter
 MINIGRID_ACTION_NAMES = ["left", "right", "forward", "pickup", "drop", "toggle", "done"]
 
 
+def get_env_profile(env_id):
+    """
+    Returns lightweight metadata needed to support multiple discrete-control
+    benchmark families with the same DQN training loop.
+    """
+    if env_id.startswith("MiniGrid-"):
+        return {
+            "family": "minigrid",
+            "success_threshold": 0.0,
+            "no_change_tolerance": 0.0,
+        }
+
+    profiles = {
+        "CartPole-v1": {
+            "family": "classic_control",
+            "success_threshold": 475.0,
+            "no_change_tolerance": 1e-8,
+        },
+        "MountainCar-v0": {
+            "family": "classic_control",
+            "success_threshold": -110.0,
+            "no_change_tolerance": 1e-8,
+        },
+        "Taxi-v3": {
+            "family": "tabular_discrete",
+            "success_threshold": 8.0,
+            "no_change_tolerance": 0.0,
+        },
+    }
+    return profiles.get(
+        env_id,
+        {
+            "family": "generic_discrete",
+            "success_threshold": 0.0,
+            "no_change_tolerance": 1e-8,
+        },
+    )
+
+
+def episode_success(env_id, episode_return):
+    """Maps an episode return to a simple success flag for cross-env logging."""
+    profile = get_env_profile(env_id)
+    return float(episode_return) > profile["success_threshold"]
+
+
+def observation_unchanged(obs, next_obs, tolerance):
+    """
+    Detects whether a transition produced a meaningful observation change.
+    For categorical MiniGrid observations we require exact equality; for
+    continuous observations we use a small tolerance.
+    """
+    obs_arr = np.asarray(obs, dtype=np.float32)
+    next_obs_arr = np.asarray(next_obs, dtype=np.float32)
+    if tolerance <= 0.0:
+        return bool(np.array_equal(obs_arr, next_obs_arr))
+    return bool(np.linalg.norm(next_obs_arr - obs_arr) <= tolerance)
+
+
 # ============================================================================
 # ENVIRONMENT SETUP
 # ============================================================================
@@ -243,6 +301,26 @@ class MiniGridActionSubsetWrapper(gym.ActionWrapper):
         return self.actions[int(action)]
 
 
+class OneHotObservationWrapper(gym.ObservationWrapper):
+    """Converts a discrete state index into a one-hot float vector."""
+
+    def __init__(self, env):
+        super().__init__(env)
+        n = int(env.observation_space.n)
+        self.n = n
+        self.observation_space = gym.spaces.Box(
+            low=0.0,
+            high=1.0,
+            shape=(n,),
+            dtype=np.float32,
+        )
+
+    def observation(self, obs):
+        vec = np.zeros(self.n, dtype=np.float32)
+        vec[int(obs)] = 1.0
+        return vec
+
+
 class FlatImageAndDirectionWrapper(gym.ObservationWrapper):
     """
     A custom wrapper that takes the 3D image output from ImgObsWrapper,
@@ -273,83 +351,52 @@ class FlatImageAndDirectionWrapper(gym.ObservationWrapper):
 
 def make_env(env_id, seed, action_set, capture_video=False, run_name=""):
     """
-    Creates a MiniGrid environment and wraps it with all necessary wrappers.
-
-    The wrapper chain (order matters!):
-      1. MiniGridActionSubsetWrapper - restricts actions to task-relevant ones
-      2. FullyObsWrapper - gives the agent full map visibility (not just 7x7 cone)
-      3. FlatObsWrapper - flattens the 3D grid into a 1D vector for the neural network
-      4. RecordEpisodeStatistics - automatically tracks episode return and length
-
-    Parameters
-    ----------
-    env_id : str
-        The gymnasium environment ID (e.g., "MiniGrid-DoorKey-8x8-v0").
-    seed : int
-        Random seed for reproducibility of the action space sampling.
-    action_set : str
-        "task" to use only task-relevant actions, "full" to use all 7 actions.
-    capture_video : bool, optional
-        If True, records a video of the agent's behavior. Default is False.
-    run_name : str, optional
-        Name for the video recording directory. Only used when capture_video=True.
-
-    Returns
-    -------
-    gym.Env
-        The fully wrapped environment, ready for training.
+    Creates a supported discrete-control environment and applies the wrappers
+    needed by our DQN pipeline. MiniGrid uses its existing custom wrappers,
+    while non-MiniGrid Box-observation environments are flattened directly.
     """
+    profile = get_env_profile(env_id)
+
     if capture_video:
-        # render_mode="rgb_array" makes the environment return pixel frames
-        # that can be recorded as video, instead of rendering to a window
         env = gym.make(env_id, render_mode="rgb_array")
         env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
     else:
         env = gym.make(env_id)
 
-    # Step 1: Restrict actions to only the ones needed for this environment
-    action_map = minigrid_action_map(env_id, action_set)
-    if action_map is not None:
-        env = MiniGridActionSubsetWrapper(env, action_map)
+    if profile["family"] == "minigrid":
+        action_map = minigrid_action_map(env_id, action_set)
+        if action_map is not None:
+            env = MiniGridActionSubsetWrapper(env, action_map)
 
-    # Step 2: Give the agent full visibility of the entire map
-    # Without this, the agent only sees a 7x7 cone in front of it (partial observability)
-    env = FullyObsWrapper(env)
+        env = FullyObsWrapper(env)
+        env = ImgObsWrapper(env)
+        env = FlatImageAndDirectionWrapper(env)
+    else:
+        if not isinstance(env.action_space, gym.spaces.Discrete):
+            raise ValueError(
+                f"{env_id} uses a non-discrete action space ({env.action_space}). "
+                "This DQN pipeline currently supports only discrete actions."
+            )
+        if isinstance(env.observation_space, gym.spaces.Box):
+            env = gym.wrappers.FlattenObservation(env)
+        elif isinstance(env.observation_space, gym.spaces.Discrete):
+            env = OneHotObservationWrapper(env)
+        else:
+            raise ValueError(
+                f"{env_id} uses an unsupported observation space ({env.observation_space}). "
+                "Expected a Box or Discrete observation space."
+            )
 
-    # Step 3: Extract ONLY the image from the observation dict, dropping the text
-    # This prevents the neural network from wasting capacity on a text string
-    env = ImgObsWrapper(env)
-    
-    # Step 3.5: Flatten the 3D image to 1D and append the agent's direction
-    env = FlatImageAndDirectionWrapper(env)
-
-    # Step 4: Automatically record episode statistics (total return, episode length)
-    # These are stored in the 'info' dict returned by env.step() when an episode ends
     env = gym.wrappers.RecordEpisodeStatistics(env)
-
-    # Seed the action space so that random action sampling is reproducible
     env.action_space.seed(seed)
     return env
 
 
 def action_names(env_id, action_set, action_space_n):
-    """
-    Returns human-readable names for the actions being used.
+    """Returns human-readable action names for logging and debug prints."""
+    if get_env_profile(env_id)["family"] != "minigrid":
+        return [f"action_{idx}" for idx in range(action_space_n)]
 
-    Parameters
-    ----------
-    env_id : str
-        The gymnasium environment ID.
-    action_set : str
-        "task" or "full" action set.
-    action_space_n : int
-        The number of actions in the (possibly wrapped) action space.
-
-    Returns
-    -------
-    list[str]
-        Names like ["left", "right", "forward"] for display and logging.
-    """
     action_map = minigrid_action_map(env_id, action_set)
     if action_map is None:
         return MINIGRID_ACTION_NAMES[:action_space_n]
@@ -666,8 +713,11 @@ def parse_args(default_exp_name, use_shaping):
 
     # --- Optional: Video Recording ---
     parser.add_argument("--capture-video", type=lambda x: str(x).lower() == "true", default=False)
+    parser.add_argument("--no-change-tolerance", type=float, default=None)
 
     args = parser.parse_args()
+    if args.no_change_tolerance is None:
+        args.no_change_tolerance = get_env_profile(args.env_id)["no_change_tolerance"]
     # Store the shaping flag so it can be accessed alongside other args
     args.use_shaping = use_shaping
     return args
@@ -838,7 +888,7 @@ def train(args, use_shaping):
         # ---- REWARD SHAPING ----
         # Compare the current and next observations to detect if the agent is "stuck"
         # (e.g., walking into a wall, where the observation doesn't change)
-        no_change = bool(np.array_equal(next_obs, obs))
+        no_change = observation_unchanged(obs, next_obs, args.no_change_tolerance)
         # Apply a small negative penalty if shaping is enabled and the agent didn't move
         # CRUCIAL FIX: Only penalize greedy actions. If the agent bumped a wall because
         # we forced it to take a random exploration action, we do not penalize it.
@@ -848,7 +898,6 @@ def train(args, use_shaping):
         reward_for_learning = float(env_reward + penalty)
 
         recent_stuck.append(float(no_change))
-        recent_penalty.append(penalty)
         recent_penalty.append(float(penalty))
 
         # ---- STORE TRANSITION ----
@@ -863,7 +912,7 @@ def train(args, use_shaping):
         if done:
             # In MiniGrid, reaching the goal gives a positive reward (> 0)
             # Not reaching the goal gives 0 reward (the episode times out)
-            reached = episode_return > 0.0
+            reached = episode_success(args.env_id, episode_return)
             recent_goals.append(float(reached))
             goal_rate = float(np.mean(recent_goals)) if recent_goals else 0.0
             best_goal_rate = max(best_goal_rate, goal_rate)
@@ -987,5 +1036,5 @@ def train(args, use_shaping):
             episode_rows.append(float(row["goal_reached"]))
     if len(episode_rows) == 0:
         return 0.0
-    cutoff = max(1, int(len(episode_rows) * 0.80))  # last 20% of episodes
+    cutoff = min(len(episode_rows) - 1, int(len(episode_rows) * 0.80))
     return float(np.mean(episode_rows[cutoff:]))
