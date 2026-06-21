@@ -71,7 +71,10 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install safety-gymnasium --no-deps
+          pip install xmltodict pyyaml imageio
 
       - name: Run benchmark
         run: |
@@ -124,7 +127,10 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install safety-gymnasium --no-deps
+          pip install xmltodict pyyaml imageio
 
       - name: Download all results
         uses: actions/download-artifact@v4
