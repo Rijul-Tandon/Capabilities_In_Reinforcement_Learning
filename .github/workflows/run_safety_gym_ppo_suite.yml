@@ -1,0 +1,161 @@
+name: Safety Gymnasium PPO Suite
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  benchmark:
+    name: Benchmark (${{ matrix.agent }}, ${{ matrix.env_id }}, seed=${{ matrix.seed }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env_id:
+          # --- Point agent ---
+          - SafetyPointGoal0-v0
+          - SafetyPointGoal1-v0
+          - SafetyPointGoal2-v0
+          - SafetyPointButton0-v0
+          - SafetyPointButton1-v0
+          - SafetyPointButton2-v0
+          - SafetyPointPush0-v0
+          - SafetyPointPush1-v0
+          - SafetyPointPush2-v0
+          - SafetyPointCircle0-v0
+          - SafetyPointCircle1-v0
+          - SafetyPointCircle2-v0
+          # --- Car agent ---
+          - SafetyCarGoal0-v0
+          - SafetyCarGoal1-v0
+          - SafetyCarGoal2-v0
+          - SafetyCarButton0-v0
+          - SafetyCarButton1-v0
+          - SafetyCarButton2-v0
+          - SafetyCarPush0-v0
+          - SafetyCarPush1-v0
+          - SafetyCarPush2-v0
+          - SafetyCarCircle0-v0
+          - SafetyCarCircle1-v0
+          - SafetyCarCircle2-v0
+          # --- Ant agent ---
+          - SafetyAntGoal0-v0
+          - SafetyAntGoal1-v0
+          - SafetyAntGoal2-v0
+          - SafetyAntButton0-v0
+          - SafetyAntButton1-v0
+          - SafetyAntButton2-v0
+          - SafetyAntPush0-v0
+          - SafetyAntPush1-v0
+          - SafetyAntPush2-v0
+          - SafetyAntCircle0-v0
+          - SafetyAntCircle1-v0
+          - SafetyAntCircle2-v0
+        agent:
+          - random_safety_agent
+          - ppo_safety_baseline
+          - ppo_safety_reward_shaping
+        seed:
+          - 1
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run benchmark
+        run: |
+          case "${{ matrix.agent }}" in
+            random_safety_agent)
+              script="random_safety_agent.py"
+              extra_args=""
+              ;;
+            ppo_safety_baseline)
+              script="ppo_safety_baseline.py"
+              extra_args="--save-model false"
+              ;;
+            ppo_safety_reward_shaping)
+              script="ppo_safety_reward_shaping.py"
+              extra_args="--save-model false"
+              ;;
+            *)
+              echo "Unknown agent: ${{ matrix.agent }}" >&2
+              exit 1
+              ;;
+          esac
+
+          python "src/${script}" \
+            --env-id ${{ matrix.env_id }} \
+            --seed ${{ matrix.seed }} \
+            --total-timesteps 500000 \
+            ${extra_args}
+
+      - name: Upload run results
+        uses: actions/upload-artifact@v4
+        with:
+          name: safety_${{ matrix.agent }}_${{ matrix.env_id }}_seed${{ matrix.seed }}
+          path: results/
+          retention-days: 14
+
+  plot:
+    name: Generate Plots and Push to Repo
+    needs: benchmark
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download all results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: safety_*
+          path: results/
+          merge-multiple: true
+
+      - name: Generate plots
+        run: |
+          for agent in "Point" "Car" "Ant"; do
+            for task in "Goal" "Button" "Push" "Circle"; do
+              for level in 0 1 2; do
+                env="Safety${agent}${task}${level}-v0"
+                echo "Plotting ${env}..."
+                python src/plot_benchmark_curves.py --env-id "${env}"
+              done
+            done
+          done
+
+      - name: Commit and push plots
+        run: |
+          TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
+          DIR_NAME="plots/safety_gym_ppo_suite_$TIMESTAMP"
+          mkdir -p "$DIR_NAME"
+          mv plots/*.png "$DIR_NAME/"
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git pull origin main
+          git add "$DIR_NAME/"
+          git commit -m "Auto-generated Safety Gymnasium PPO plots ($TIMESTAMP)" || echo "No changes to commit"
+          git push origin main

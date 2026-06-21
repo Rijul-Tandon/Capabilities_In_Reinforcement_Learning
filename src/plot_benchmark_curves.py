@@ -14,6 +14,9 @@ AGENT_COLORS = {
     "random_mujoco_agent": "#111111",
     "ppo_mujoco_baseline": "#009E73",
     "ppo_mujoco_reward_shaping": "#CC79A7",
+    "random_safety_agent": "#111111",
+    "ppo_safety_baseline": "#0072B2",
+    "ppo_safety_reward_shaping": "#E69F00",
 }
 
 DEFAULT_STYLES = {
@@ -23,6 +26,9 @@ DEFAULT_STYLES = {
     "random_mujoco_agent": {"linestyle": "-", "linewidth": 2.2, "marker": None, "markevery": None},
     "ppo_mujoco_baseline": {"linestyle": "-", "linewidth": 2.4, "marker": None, "markevery": None},
     "ppo_mujoco_reward_shaping": {"linestyle": "-", "linewidth": 2.4, "marker": None, "markevery": None},
+    "random_safety_agent": {"linestyle": "-", "linewidth": 2.2, "marker": None, "markevery": None},
+    "ppo_safety_baseline": {"linestyle": "-", "linewidth": 2.4, "marker": None, "markevery": None},
+    "ppo_safety_reward_shaping": {"linestyle": "-", "linewidth": 2.4, "marker": None, "markevery": None},
 }
 
 OVERLAP_MARKERS = ["o", "s", "^", "D"]
