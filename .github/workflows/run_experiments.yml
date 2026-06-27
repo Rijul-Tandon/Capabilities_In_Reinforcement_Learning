@@ -19,8 +19,8 @@ jobs:
       fail-fast: false  # If one run fails, keep running the others
       matrix:
         env_id:
-          - MiniGrid-Empty-8x8-v0
-          - MiniGrid-DoorKey-8x8-v0
+          - MiniGrid-Empty-6x6-v0
+          - MiniGrid-DoorKey-6x6-v0
           - MiniGrid-FourRooms-v0
           - MiniGrid-MultiRoom-N2-S4-v0
         agent:
@@ -92,7 +92,7 @@ jobs:
           
       - name: Generate Comparison and Heatmap Plots
         run: |
-          for env in "MiniGrid-Empty-8x8-v0" "MiniGrid-DoorKey-8x8-v0" "MiniGrid-FourRooms-v0" "MiniGrid-MultiRoom-N2-S4-v0"; do
+          for env in "MiniGrid-Empty-6x6-v0" "MiniGrid-DoorKey-6x6-v0" "MiniGrid-FourRooms-v0" "MiniGrid-MultiRoom-N2-S4-v0"; do
             echo "Plotting $env..."
             python src/plot_comparison.py --env-id $env
             python src/plot_state_action_freq.py --env-id $env
