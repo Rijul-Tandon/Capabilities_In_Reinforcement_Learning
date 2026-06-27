@@ -157,15 +157,16 @@ def get_agent_data(env, q_net, episodes, seed, num_actions, device):
     Returns
     tuple
         visit_counts: shape (width, height) - how many times each tile was visited.
-        state_action_counts: shape (width, height, num_actions) - how many times
-            each action was taken at each tile.
+        state_action_counts: shape (width, height, num_actions, 4) - how many times
+            each action was taken at each tile, separated by agent direction (0=E, 1=S, 2=W, 3=N).
         layout: dict containing coordinates for 'start', 'goal', 'walls', 'doors', 'keys'
     """
     width = env.unwrapped.width
     height = env.unwrapped.height
 
     # Initialize counting arrays with zeros
-    state_action_counts = np.zeros((width, height, num_actions), dtype=int)
+    # state_action_counts now tracks direction too: (width, height, actions, 4 directions)
+    state_action_counts = np.zeros((width, height, num_actions, 4), dtype=int)
     visit_counts = np.zeros((width, height), dtype=int)
     
     # Track the layout features (start, goal, walls, etc.) for plotting overlays
@@ -218,8 +219,9 @@ def get_agent_data(env, q_net, episodes, seed, num_actions, device):
                         # argmax returns the action index with the highest Q-value
                         action = int(torch.argmax(q_values, dim=1).item())
 
-                # Record which action was taken at this position
-                state_action_counts[x, y, action] += 1
+                # Record which action was taken at this position, and the direction the agent was facing
+                agent_dir = env.unwrapped.agent_dir
+                state_action_counts[x, y, action, agent_dir] += 1
 
             # Step the environment with the chosen action
             obs, _, terminated, truncated, _ = env.step(action)
@@ -361,6 +363,7 @@ def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=25
 
         # Map full action names to 1-letter abbreviations to save space
         abbr_map = {"left": "L", "right": "R", "forward": "F", "pickup": "P", "drop": "D", "toggle": "T", "done": "DN"}
+        dir_map = {0: "E", 1: "S", 2: "W", 3: "N"}  # MiniGrid directions
 
         # Overlay text on each cell showing the count for EVERY action
         for x in range(width):
@@ -369,8 +372,18 @@ def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=25
                 for act_idx in range(num_actions):
                     act_name = names[act_idx]
                     abbr = abbr_map.get(act_name, act_name[:1].upper())
-                    count = state_action_counts[x, y, act_idx]
-                    lines.append(f"{abbr}: {count}")
+                    
+                    if act_name == "forward":
+                        # Split forward action by the direction the agent was facing
+                        for d_idx in range(4):
+                            count = state_action_counts[x, y, act_idx, d_idx]
+                            if count > 0:
+                                lines.append(f"{abbr}({dir_map[d_idx]}): {count}")
+                    else:
+                        # For other actions, sum across all directions
+                        count = np.sum(state_action_counts[x, y, act_idx, :])
+                        if count > 0:
+                            lines.append(f"{abbr}: {count}")
                 
                 cell_text = "\n".join(lines)
                 

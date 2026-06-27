@@ -83,13 +83,15 @@ Dictionary:                 Dictionary:              1D numpy array:            
 
 Actions are restricted per environment using `MiniGridActionSubsetWrapper` to prevent the agent from wasting exploration on irrelevant actions:
 
-| Action Index | Name | Description |
-|---|---|---|
-| 0 | `left` | Turn 90° counter-clockwise |
-| 1 | `right` | Turn 90° clockwise |
-| 2 | `forward` | Move one tile in the facing direction |
-| 3 | `pickup` | Pick up the object the agent is facing |
-| 5 | `toggle` | Toggle/open the door the agent is facing |
+| Action | Name      | What it does                                                     |
+| ------ | --------- | ---------------------------------------------------------------- |
+| 0      | `left`    | Rotate the agent **90° left** (does **not** move)                |
+| 1      | `right`   | Rotate the agent **90° right** (does **not** move)               |
+| 2      | `forward` | Move one cell **in the direction the agent is currently facing** |
+| 3      | `pickup`  | Pick up an object in front of the agent                          |
+| 4      | `drop`    | Drop the carried object                                          |
+| 5      | `toggle`  | Open/close door or activate object in front                      |
+| 6      | `done`    | Unused                                                           |
 
 - **Empty / FourRooms:** Only actions 0, 1, 2 (navigation only)
 - **DoorKey:** Actions 0, 1, 2, 3, 5 (navigation + interaction)

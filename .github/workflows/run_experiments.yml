@@ -87,7 +87,7 @@ jobs:
           for env in "MiniGrid-Empty-5x5-v0" "MiniGrid-DoorKey-5x5-v0" "MiniGrid-FourRooms-v0" "MiniGrid-MultiRoom-N2-S4-v0"; do
             echo "Plotting $env..."
             python src/plot_comparison.py --env-id $env
-            python src/plot_state_action_freq.py --env-id $env --episodes 20
+            python src/plot_state_action_freq.py --env-id $env
           done
           
       - name: Commit and Push Plots
