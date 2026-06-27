@@ -349,19 +349,32 @@ class FlatImageAndDirectionWrapper(gym.ObservationWrapper):
         return np.concatenate([flat_image, direction]).astype(np.float32)
 
 
-def make_env(env_id, seed, action_set, capture_video=False, run_name=""):
+def make_env(env_id, seed, action_set, capture_video=False, run_name="", max_steps=None):
     """
     Creates a supported discrete-control environment and applies the wrappers
     needed by our DQN pipeline. MiniGrid uses its existing custom wrappers,
     while non-MiniGrid Box-observation environments are flattened directly.
+
+    Parameters
+    ----------
+    max_steps : int or None
+        Override MiniGrid's built-in episode step limit. MiniGrid's default is
+        4 * width * height (e.g. 100 for 5x5, 256 for 8x8). Pass a larger value
+        (e.g. 500) to give the agent more time per episode in harder environments.
+        If None, the environment's own default is used.
     """
     profile = get_env_profile(env_id)
 
+    # Build extra kwargs to forward to gym.make() — only used for MiniGrid
+    make_kwargs = {}
+    if profile["family"] == "minigrid" and max_steps is not None:
+        make_kwargs["max_steps"] = max_steps
+
     if capture_video:
-        env = gym.make(env_id, render_mode="rgb_array")
+        env = gym.make(env_id, render_mode="rgb_array", **make_kwargs)
         env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
     else:
-        env = gym.make(env_id)
+        env = gym.make(env_id, **make_kwargs)
 
     if profile["family"] == "minigrid":
         action_map = minigrid_action_map(env_id, action_set)
@@ -663,8 +676,16 @@ def parse_args(default_exp_name, use_shaping):
     # --learning-starts: Number of random steps before training begins.
     #   This seeds the replay buffer with diverse experiences before the network starts learning.
     parser.add_argument("--learning-starts", type=int, default=2000)
-    # --train-frequency: Train the network every N environment steps (not every single step)
-    parser.add_argument("--train-frequency", type=int, default=1)
+    # --train-frequency: Train the network every N environment steps (not every single step).
+    #   CleanRL uses 10 here. Training every single step (=1) causes correlated updates
+    #   because consecutive steps come from very similar states, destabilising learning.
+    parser.add_argument("--train-frequency", type=int, default=10)
+    # --max-steps: Maximum steps per episode. Overrides MiniGrid's built-in limit.
+    #   MiniGrid defaults: 4*width*height (100 for 5x5, 256 for 8x8, 400 for FourRooms).
+    #   Increasing this gives the agent more time to find the goal in harder environments
+    #   (e.g. DoorKey, FourRooms) where the default limit may truncate too aggressively.
+    #   Set to -1 to use each environment's own built-in default.
+    parser.add_argument("--max-steps", type=int, default=-1)
 
     # --- Exploration Schedule ---
     # --start-e: Initial epsilon (exploration rate). 1.0 = 100% random actions at the start.
@@ -673,7 +694,7 @@ def parse_args(default_exp_name, use_shaping):
     #   This prevents the agent from getting stuck in local optima, especially in
     #   environments with randomized layouts (DoorKey, FourRooms) where the agent
     #   needs to keep exploring to handle new configurations.
-    parser.add_argument("--end-e", type=float, default=0.0)
+    parser.add_argument("--end-e", type=float, default=0.05)
     # --exploration-fraction: Fraction of total timesteps over which epsilon decays.
     #   0.6 means epsilon reaches end_e at 60% of training, then stays flat.
     parser.add_argument("--exploration-fraction", type=float, default=0.642)
@@ -799,7 +820,9 @@ def train(args, use_shaping):
     )
 
     # --- Environment Setup ---
-    env = make_env(args.env_id, args.seed, args.action_set, args.capture_video, run_name)
+    # Pass max_steps only if the user explicitly set it (i.e. not the sentinel -1).
+    max_steps_override = args.max_steps if args.max_steps > 0 else None
+    env = make_env(args.env_id, args.seed, args.action_set, args.capture_video, run_name, max_steps_override)
     obs, _ = env.reset(seed=args.seed)
 
     # Get observation and action space dimensions from the wrapped environment
@@ -901,8 +924,21 @@ def train(args, use_shaping):
         recent_penalty.append(float(penalty))
 
         # ---- STORE TRANSITION ----
-        # Save the experience (s, s', a, r, done) to the replay buffer for later training
-        rb.add(obs, next_obs, action, reward_for_learning, float(done))
+        # Save the experience (s, s', a, r, s'_terminal) to the replay buffer.
+        #
+        # IMPORTANT: we store `terminated`, NOT `done` (= terminated OR truncated).
+        #
+        # Why this matters (truncation vs. termination):
+        #   - terminated=True  → the agent reached a genuine end-state (e.g. goal tile).
+        #                        s' has no future value → TD target = r  (no bootstrap).
+        #   - truncated=True   → the episode hit the step-limit; s' is a normal state.
+        #                        The agent *could* keep going → TD target = r + γ·max Q(s').
+        #
+        # The TD-target formula is:  r + γ · max Q(s') · (1 - done_flag)
+        # If we store `done` (terminated OR truncated) the (1-done_flag) term kills the
+        # bootstrap on every timeout, making productive states look valueless.
+        # Storing only `terminated` keeps the bootstrap alive for timeout transitions.
+        rb.add(obs, next_obs, action, reward_for_learning, float(terminated))
         episode_return += float(env_reward)  # Track ORIGINAL reward (not shaped) for metrics
         episode_length += 1
 

@@ -115,6 +115,10 @@ def parse_args():
     parser.add_argument("--end-e", type=float, default=0.3)
     parser.add_argument("--exploration-fraction", type=float, default=0.6)
 
+    # --max-steps: Maximum steps per episode. Mirrors the same flag in dqn_common.
+    #   Set to -1 to use each environment's own built-in default.
+    parser.add_argument("--max-steps", type=int, default=-1)
+
     return parser.parse_args()
 
 
@@ -148,7 +152,8 @@ def main():
     # Create the environment with the same wrappers as the DQN agents
     # (FullyObsWrapper, FlatObsWrapper, action subset) for a fair comparison.
     # capture_video=False: we don't need video recordings for the random agent.
-    env = make_env(args.env_id, args.seed, args.action_set, False, run_name)
+    max_steps_override = args.max_steps if args.max_steps > 0 else None
+    env = make_env(args.env_id, args.seed, args.action_set, False, run_name, max_steps_override)
 
     # Reset the environment and get the initial observation.
     # The underscore (_) discards the 'info' dict returned by reset().

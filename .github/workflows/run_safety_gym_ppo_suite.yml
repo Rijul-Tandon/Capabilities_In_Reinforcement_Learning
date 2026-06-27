@@ -71,10 +71,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install safety-gymnasium gymnasium-robotics --no-deps
-          pip install xmltodict pyyaml imageio pettingzoo
+        run: pip install -r requirements.txt
 
       - name: Run benchmark
         run: |
@@ -127,10 +124,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install safety-gymnasium gymnasium-robotics --no-deps
-          pip install xmltodict pyyaml imageio pettingzoo
+        run: pip install -r requirements.txt
 
       - name: Download all results
         uses: actions/download-artifact@v4

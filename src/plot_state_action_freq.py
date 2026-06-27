@@ -155,11 +155,11 @@ def get_agent_data(env, q_net, episodes, seed, num_actions, device):
         The device (CPU/GPU) to run the neural network on.
 
     Returns
-    -------
-    tuple of np.ndarray
+    tuple
         visit_counts: shape (width, height) - how many times each tile was visited.
         state_action_counts: shape (width, height, num_actions) - how many times
             each action was taken at each tile.
+        layout: dict containing coordinates for 'start', 'goal', 'walls', 'doors', 'keys'
     """
     width = env.unwrapped.width
     height = env.unwrapped.height
@@ -167,11 +167,31 @@ def get_agent_data(env, q_net, episodes, seed, num_actions, device):
     # Initialize counting arrays with zeros
     state_action_counts = np.zeros((width, height, num_actions), dtype=int)
     visit_counts = np.zeros((width, height), dtype=int)
+    
+    # Track the layout features (start, goal, walls, etc.) for plotting overlays
+    layout = {"start": None, "goal": None, "walls": [], "doors": [], "keys": []}
 
     for ep in range(episodes):
         # Reset with a different seed each episode to get varied layouts
         # (important for randomized environments like DoorKey and FourRooms)
         obs, _ = env.reset(seed=seed + ep)
+        
+        # Capture the environment layout (we only need to grab this once)
+        if ep == 0:
+            layout["start"] = env.unwrapped.agent_pos
+            for x in range(width):
+                for y in range(height):
+                    cell = env.unwrapped.grid.get(x, y)
+                    if cell is not None:
+                        if cell.type == 'wall':
+                            layout["walls"].append((x, y))
+                        elif cell.type == 'goal':
+                            layout["goal"] = (x, y)
+                        elif cell.type == 'door':
+                            layout["doors"].append((x, y))
+                        elif cell.type == 'key':
+                            layout["keys"].append((x, y))
+
         done = False
 
         while not done:
@@ -205,14 +225,14 @@ def get_agent_data(env, q_net, episodes, seed, num_actions, device):
             obs, _, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
 
-    return visit_counts, state_action_counts
+    return visit_counts, state_action_counts, layout
 
 
 # ============================================================================
 # MAIN PLOTTING FUNCTION
 # ============================================================================
 
-def plot_all_frequencies(env_id, results_dir, episodes=20, seed=1, hidden_size=256, action_set="task"):
+def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=256, action_set="task"):
     """
     Generates the 2x3 comparison plot for all three agents FOR A SPECIFIC SEED.
     Saves the output as: plots/{env_id}_state_action_freq_seed{seed}.png
@@ -303,7 +323,7 @@ def plot_all_frequencies(env_id, results_dir, episodes=20, seed=1, hidden_size=2
             continue
 
         # Run the agent through the environment and collect visit/action statistics
-        visit_counts, state_action_counts = get_agent_data(
+        visit_counts, state_action_counts, layout = get_agent_data(
             env, q_net, episodes, seed, num_actions, device
         )
 
@@ -317,6 +337,22 @@ def plot_all_frequencies(env_id, results_dir, episodes=20, seed=1, hidden_size=2
         # colorbar adds a legend showing what colors map to what visit counts
         # fraction and pad control the colorbar's size and spacing
         fig.colorbar(im, ax=axes[0, col], fraction=0.046, pad=0.04)
+
+        # --- Overlay Layout Features ---
+        if layout["start"]:
+            axes[0, col].plot(layout["start"][0], layout["start"][1], 'bo', markersize=10, markeredgecolor='white', label="Start" if col==0 else "")
+        if layout["goal"]:
+            axes[0, col].plot(layout["goal"][0], layout["goal"][1], 'g*', markersize=16, markeredgecolor='white', label="Goal" if col==0 else "")
+        for i, (wx, wy) in enumerate(layout["walls"]):
+            axes[0, col].plot(wx, wy, 's', color='dimgray', markersize=14, label="Wall" if col==0 and i==0 else "")
+        for i, (dx, dy) in enumerate(layout["doors"]):
+            axes[0, col].plot(dx, dy, 's', color='saddlebrown', markersize=12, markeredgecolor='white', label="Door" if col==0 and i==0 else "")
+        for i, (kx, ky) in enumerate(layout["keys"]):
+            axes[0, col].plot(kx, ky, 'yD', markersize=8, markeredgecolor='black', label="Key" if col==0 and i==0 else "")
+            
+        # Add a legend for the layout icons (only on the first column to avoid clutter)
+        if col == 0:
+            axes[0, col].legend(loc="upper left", bbox_to_anchor=(0, 1.3), ncol=3, fontsize=9, frameon=False)
 
         # --- Bottom Row: All Action Frequencies ---
         # Light blue background heatmap (just for visual context, not the main data)
@@ -403,8 +439,8 @@ if __name__ == "__main__":
     parser.add_argument("--results-dir", type=str, default="results")
 
     # --episodes: How many episodes to evaluate each agent for.
-    #   More episodes = more accurate heatmaps but longer runtime.
-    parser.add_argument("--episodes", type=int, default=10)
+    #   Default is 1 to show a single clear, explainable trajectory with layout overlays.
+    parser.add_argument("--episodes", type=int, default=1)
 
     # --action-set: Must match the action set used during training.
     #   "task" = environment-specific subset, "full" = all 7 MiniGrid actions.

@@ -1,7 +1,12 @@
 name: Run Experiments (100k Steps)
 
 on:
-  workflow_dispatch:  # Allows you to trigger the workflow manually from the GitHub UI
+  workflow_dispatch:  # Trigger manually from GitHub UI or `gh workflow run`
+    inputs:
+      max_steps:
+        description: 'Max steps per episode (-1 = env default)'
+        required: false
+        default: '-1'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -36,13 +41,13 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
         
-      - name: Run Agent (100k Steps)
+      - name: Run Agent (100k Steps, all defaults)
         run: |
           python src/${{ matrix.agent }}.py \
             --env-id ${{ matrix.env_id }} \
             --total-timesteps 100000 \
             --seed 1 \
-            --end-e 0.0
+            --max-steps ${{ github.event.inputs.max_steps || '-1' }}
           
       - name: Upload Run Results
         uses: actions/upload-artifact@v4
