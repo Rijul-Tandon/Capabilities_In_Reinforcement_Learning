@@ -43,11 +43,19 @@ jobs:
         
       - name: Run Agent (100k Steps, all defaults)
         run: |
+          # If user didn't provide a custom override, automatically use 1000 for the larger rooms
+          MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
+          if [ "$MAX_STEPS" = "-1" ]; then
+            if [ "${{ matrix.env_id }}" = "MiniGrid-FourRooms-v0" ] || [ "${{ matrix.env_id }}" = "MiniGrid-MultiRoom-N2-S4-v0" ]; then
+              MAX_STEPS=1000
+            fi
+          fi
+          
           python src/${{ matrix.agent }}.py \
             --env-id ${{ matrix.env_id }} \
             --total-timesteps 100000 \
             --seed 1 \
-            --max-steps ${{ github.event.inputs.max_steps || '-1' }}
+            --max-steps $MAX_STEPS
           
       - name: Upload Run Results
         uses: actions/upload-artifact@v4
