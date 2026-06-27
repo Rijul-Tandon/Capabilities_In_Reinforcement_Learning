@@ -664,7 +664,7 @@ def parse_args(default_exp_name, use_shaping):
     #   Too high = unstable training. Too low = slow learning. 2.5e-4 is a good default.
     parser.add_argument("--learning-rate", type=float, default=0.00171)
     # --buffer-size: Maximum number of transitions stored in the replay buffer
-    parser.add_argument("--buffer-size", type=int, default=5000)
+    parser.add_argument("--buffer-size", type=int, default=10000)
     # --gamma: Discount factor for future rewards (0 = greedy, 1 = far-sighted).
     #   0.99 means the agent values a reward 100 steps away at 0.99^100 ≈ 0.37 of its face value.
     parser.add_argument("--gamma", type=float, default=0.915)
