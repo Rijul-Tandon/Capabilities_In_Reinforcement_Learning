@@ -19,8 +19,8 @@ jobs:
       fail-fast: false  # If one run fails, keep running the others
       matrix:
         env_id:
-          - MiniGrid-Empty-16x16-v0
-          - MiniGrid-DoorKey-16x16-v0
+          - MiniGrid-Empty-6x6-v0
+          - MiniGrid-DoorKey-6x6-v0
           - MiniGrid-FourRooms-v0
           - MiniGrid-MultiRoom-N2-S4-v0
         agent:
@@ -43,19 +43,11 @@ jobs:
         
       - name: Run Agent (100k Steps, all defaults)
         run: |
-          # If user didn't provide a custom override, automatically use 1000 for the larger rooms
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
           TIMESTEPS=100000
 
           if [ "${{ matrix.env_id }}" = "MiniGrid-DoorKey-6x6-v0" ]; then
             TIMESTEPS=250000
-            if [ "$MAX_STEPS" = "-1" ]; then MAX_STEPS=1000; fi
-          fi
-
-          if [ "$MAX_STEPS" = "-1" ]; then
-            if [ "${{ matrix.env_id }}" = "MiniGrid-FourRooms-v0" ] || [ "${{ matrix.env_id }}" = "MiniGrid-MultiRoom-N2-S4-v0" ]; then
-              MAX_STEPS=1000
-            fi
           fi
           
           python src/${{ matrix.agent }}.py \
@@ -100,7 +92,7 @@ jobs:
           
       - name: Generate Comparison and Heatmap Plots
         run: |
-          for env in "MiniGrid-Empty-16x16-v0" "MiniGrid-DoorKey-16x16-v0" "MiniGrid-FourRooms-v0" "MiniGrid-MultiRoom-N2-S4-v0"; do
+          for env in "MiniGrid-Empty-6x6-v0" "MiniGrid-DoorKey-6x6-v0" "MiniGrid-FourRooms-v0" "MiniGrid-MultiRoom-N2-S4-v0"; do
             echo "Plotting $env..."
             python src/plot_comparison.py --env-id $env
             python src/plot_state_action_freq.py --env-id $env

@@ -112,7 +112,7 @@ def parse_args():
     # These control the fake epsilon computation for consistent plot X-axes.
     # They should match the defaults in dqn_common.parse_args() exactly.
     parser.add_argument("--start-e", type=float, default=1.0)
-    parser.add_argument("--end-e", type=float, default=0.05)
+    parser.add_argument("--end-e", type=float, default=0.01)
     parser.add_argument("--exploration-fraction", type=float, default=0.6)
 
     # --max-steps: Maximum steps per episode. Mirrors the same flag in dqn_common.

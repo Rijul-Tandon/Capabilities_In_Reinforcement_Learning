@@ -701,7 +701,7 @@ def parse_args(default_exp_name, use_shaping):
     #   This prevents the agent from getting stuck in local optima, especially in
     #   environments with randomized layouts (DoorKey, FourRooms) where the agent
     #   needs to keep exploring to handle new configurations.
-    parser.add_argument("--end-e", type=float, default=0.3)
+    parser.add_argument("--end-e", type=float, default=0.01)
     # --exploration-fraction: Fraction of total timesteps over which epsilon decays.
     #   0.6 means epsilon reaches end_e at 60% of training, then stays flat.
     parser.add_argument("--exploration-fraction", type=float, default=0.60)
