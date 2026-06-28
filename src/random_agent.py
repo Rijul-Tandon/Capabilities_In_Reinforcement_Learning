@@ -112,12 +112,15 @@ def parse_args():
     # These control the fake epsilon computation for consistent plot X-axes.
     # They should match the defaults in dqn_common.parse_args() exactly.
     parser.add_argument("--start-e", type=float, default=1.0)
-    parser.add_argument("--end-e", type=float, default=0.3)
+    parser.add_argument("--end-e", type=float, default=0.05)
     parser.add_argument("--exploration-fraction", type=float, default=0.6)
 
     # --max-steps: Maximum steps per episode. Mirrors the same flag in dqn_common.
     #   Set to -1 to use each environment's own built-in default.
     parser.add_argument("--max-steps", type=int, default=-1)
+
+    # --fixed-layout: If set, the environment uses the same seed on every single reset.
+    parser.add_argument("--fixed-layout", action="store_true")
 
     return parser.parse_args()
 
@@ -216,7 +219,8 @@ def main():
             episode_file.flush()  # Force write to disk immediately
 
             # Reset the environment for the next episode
-            obs, _ = env.reset()
+            reset_kwargs = {"seed": args.seed} if args.fixed_layout else {}
+            obs, _ = env.reset(**reset_kwargs)
             episode_return = 0.0
             episode_length = 0
         else:

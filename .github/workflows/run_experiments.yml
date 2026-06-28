@@ -62,7 +62,8 @@ jobs:
             --env-id ${{ matrix.env_id }} \
             --total-timesteps $TIMESTEPS \
             --seed 1 \
-            --max-steps $MAX_STEPS
+            --max-steps $MAX_STEPS \
+            --fixed-layout
           
       - name: Upload Run Results
         uses: actions/upload-artifact@v4

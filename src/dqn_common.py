@@ -663,12 +663,19 @@ def parse_args(default_exp_name, use_shaping):
     # --learning-rate: How fast the neural network adjusts its weights.
     #   Too high = unstable training. Too low = slow learning. 2.5e-4 is a good default.
     parser.add_argument("--learning-rate", type=float, default=0.00171)
-    # --buffer-size: Maximum number of transitions stored in the replay buffer
+    # --buffer-size: Maximum number of transitions to store in the replay buffer.
+    #   Reduced to 10k for debugging the fixed-layout overfitting experiment.
     parser.add_argument("--buffer-size", type=int, default=10000)
     # --gamma: Discount factor for future rewards (0 = greedy, 1 = far-sighted).
     #   0.99 means the agent values a reward 100 steps away at 0.99^100 ≈ 0.37 of its face value.
     parser.add_argument("--gamma", type=float, default=0.915)
-    # --target-network-frequency: How often (in steps) to copy q_net weights to target_net.
+
+    # --fixed-layout: If set, the environment uses the same seed on every single reset.
+    #   This forces the procedural generation to create the exact same map layout every episode,
+    #   allowing the agent to overfit to a single map (great for debugging if learning works at all).
+    parser.add_argument("--fixed-layout", action="store_true")
+
+    # --- Target Network Parameters ---quency: How often (in steps) to copy q_net weights to target_net.
     #   The target network provides stable Q-value targets during training.
     parser.add_argument("--target-network-frequency", type=int, default=788)
     # --batch-size: Number of transitions sampled from the replay buffer per training step
@@ -979,7 +986,9 @@ def train(args, use_shaping):
                 }
             )
             # Reset for the next episode
-            obs, _ = env.reset()
+            # If fixed-layout is enabled, we pass the same seed again so the layout doesn't change.
+            reset_kwargs = {"seed": args.seed} if args.fixed_layout else {}
+            obs, _ = env.reset(**reset_kwargs)
             episode_return = 0.0
             episode_length = 0
 
