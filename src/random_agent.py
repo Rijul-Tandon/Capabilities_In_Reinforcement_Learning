@@ -113,7 +113,7 @@ def parse_args():
     # They should match the defaults in dqn_common.parse_args() exactly.
     parser.add_argument("--start-e", type=float, default=1.0)
     parser.add_argument("--end-e", type=float, default=0.01)
-    parser.add_argument("--exploration-fraction", type=float, default=0.6)
+    parser.add_argument("--exploration-fraction", type=float, default=0.60)
 
     # --max-steps: Maximum steps per episode. Mirrors the same flag in dqn_common.
     #   Set to -1 to use each environment's own built-in default.
