@@ -694,10 +694,10 @@ def parse_args(default_exp_name, use_shaping):
     #   This prevents the agent from getting stuck in local optima, especially in
     #   environments with randomized layouts (DoorKey, FourRooms) where the agent
     #   needs to keep exploring to handle new configurations.
-    parser.add_argument("--end-e", type=float, default=0.05)
+    parser.add_argument("--end-e", type=float, default=0.3)
     # --exploration-fraction: Fraction of total timesteps over which epsilon decays.
     #   0.6 means epsilon reaches end_e at 60% of training, then stays flat.
-    parser.add_argument("--exploration-fraction", type=float, default=0.642)
+    parser.add_argument("--exploration-fraction", type=float, default=0.60)
 
     # --- Network Architecture ---
     # --hidden-size: Number of neurons in each hidden layer of the Q-Network
@@ -718,7 +718,7 @@ def parse_args(default_exp_name, use_shaping):
     # --- Reward Shaping ---
     # --stuck-penalty: Negative reward applied when the agent's observation doesn't change
     #   (e.g., bumping into a wall or doing nothing). Only used when use_shaping=True.
-    parser.add_argument("--stuck-penalty", type=float, default=-0.01)
+    parser.add_argument("--stuck-penalty", type=float, default=-0.02)
 
     # --- Logging ---
     # --log-interval: How often (in steps) to write training metrics to CSV and TensorBoard
@@ -849,7 +849,7 @@ def train(args, use_shaping):
     # Adam optimizer: adjusts q_net's weights to minimize the TD loss
     optimizer = optim.Adam(q_net.parameters(), lr=args.learning_rate)
 
-    # Create the replay buffer to store past experiences
+    # Create the replay buffer to store past experience
     rb = ReplayBuffer(args.buffer_size, obs_shape, device)
 
     # --- CSV Logging Setup ---
