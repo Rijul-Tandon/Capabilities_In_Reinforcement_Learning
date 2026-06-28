@@ -45,6 +45,13 @@ jobs:
         run: |
           # If user didn't provide a custom override, automatically use 1000 for the larger rooms
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
+          TIMESTEPS=100000
+
+          if [ "${{ matrix.env_id }}" = "MiniGrid-DoorKey-6x6-v0" ]; then
+            TIMESTEPS=250000
+            if [ "$MAX_STEPS" = "-1" ]; then MAX_STEPS=1000; fi
+          fi
+
           if [ "$MAX_STEPS" = "-1" ]; then
             if [ "${{ matrix.env_id }}" = "MiniGrid-FourRooms-v0" ] || [ "${{ matrix.env_id }}" = "MiniGrid-MultiRoom-N2-S4-v0" ]; then
               MAX_STEPS=1000
@@ -53,7 +60,7 @@ jobs:
           
           python src/${{ matrix.agent }}.py \
             --env-id ${{ matrix.env_id }} \
-            --total-timesteps 100000 \
+            --total-timesteps $TIMESTEPS \
             --seed 1 \
             --max-steps $MAX_STEPS
           
