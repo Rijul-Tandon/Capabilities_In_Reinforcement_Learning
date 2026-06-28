@@ -51,9 +51,8 @@ jobs:
           TIMESTEPS=100000
           EXPLORE_FRAC=0.60
 
-          if [ "${{ matrix.env_id }}" = "MiniGrid-DoorKey-6x6-v0" ]; then
-            TIMESTEPS=250000
-          elif [ "${{ matrix.env_id }}" = "MiniGrid-FourRooms-v0" ] || [ "${{ matrix.env_id }}" = "MiniGrid-MultiRoom-N2-S4-v0" ]; then
+          if [ "${{ matrix.env_id }}" != "MiniGrid-Empty-6x6-v0" ]; then
+            # For DoorKey, FourRooms, and MultiRoom, give them 500k steps and slow decay
             TIMESTEPS=500000
             EXPLORE_FRAC=0.80
           fi

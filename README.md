@@ -11,7 +11,7 @@ compare three agent types:
 |---|---|
 | **Random Agent** | Takes uniformly random actions. Establishes the performance floor. |
 | **Baseline DQN** | Standard DQN using only the environment's sparse reward signal. |
-| **Reward-Shaped DQN** | Same DQN with a small penalty (`-0.01`) when an action causes no observable state change (e.g., walking into a wall). |
+| **Reward-Shaped DQN** | Same DQN with a small penalty (`-0.02`) when an action causes no observable state change (e.g., walking into a wall). |
 
 The reward shaping approach is a lightweight, environment-agnostic proxy for
 capability-aware learning: if an action has no effect, the agent should learn
@@ -104,7 +104,7 @@ Actions are restricted per environment using `MiniGridActionSubsetWrapper` to pr
 |---|---|
 | Reaching the goal | `1 - 0.9 * (step_count / max_steps)` — a positive value that decreases the longer the agent takes |
 | Any other step | `0.0` (extremely sparse!) |
-| Stuck penalty (shaped agent only) | `-0.01` when `observation == next_observation` |
+| Stuck penalty (shaped agent only) | `-0.02` when `observation == next_observation` |
 
 The shaped agent's penalty is only used for training the neural network. The
 plots always show the **original environment reward** so comparisons are fair.
@@ -120,16 +120,16 @@ Input (193) → Linear(256) → ReLU → Linear(256) → ReLU → Linear(num_act
 | Hyperparameter | Default Value |
 |---|---|
 | Hidden layers | 2 × 256 neurons |
-| Learning rate | 2.5e-4 (Adam optimizer) |
-| Replay buffer size | 100,000 transitions |
+| Learning rate | 1.71e-3 (Adam optimizer) |
+| Replay buffer size | 10% of total timesteps (CleanRL default) |
 | Batch size | 128 |
-| Discount factor (γ) | 0.99 |
-| Target network update | Every 1,000 steps (hard copy) |
-| Learning starts | After 5,000 random steps |
-| Train frequency | Every 4 environment steps |
+| Discount factor (γ) | 0.915 |
+| Target network update | Every 788 steps |
+| Learning starts | After 2,000 random steps |
+| Train frequency | Every 10 environment steps |
 | Start epsilon | 1.0 (100% random) |
-| End epsilon | 0.3 (30% random — never drops below) |
-| Exploration fraction | 0.6 (epsilon reaches minimum at 60% of training) |
+| End epsilon | 0.01 (1% random — never drops below) |
+| Exploration fraction | 0.6 (epsilon decays over 60% of training, up to 80% on hard maps) |
 
 ---
 

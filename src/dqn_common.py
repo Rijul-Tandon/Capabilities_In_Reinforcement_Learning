@@ -664,8 +664,8 @@ def parse_args(default_exp_name, use_shaping):
     #   Too high = unstable training. Too low = slow learning. 2.5e-4 is a good default.
     parser.add_argument("--learning-rate", type=float, default=0.00171)
     # --buffer-size: Maximum number of transitions to store in the replay buffer.
-    #   Reduced to 10k for debugging the fixed-layout overfitting experiment.
-    parser.add_argument("--buffer-size", type=int, default=10000)
+    #   If -1, defaults to 10% of total_timesteps (standard in CleanRL).
+    parser.add_argument("--buffer-size", type=int, default=-1)
     # --gamma: Discount factor for future rewards (0 = greedy, 1 = far-sighted).
     #   0.99 means the agent values a reward 100 steps away at 0.99^100 ≈ 0.37 of its face value.
     parser.add_argument("--gamma", type=float, default=0.915)
@@ -746,6 +746,11 @@ def parse_args(default_exp_name, use_shaping):
     args = parser.parse_args()
     if args.no_change_tolerance is None:
         args.no_change_tolerance = get_env_profile(args.env_id)["no_change_tolerance"]
+    
+    # Calculate dynamic defaults
+    if args.buffer_size == -1:
+        args.buffer_size = int(args.total_timesteps * 0.10)
+        
     # Store the shaping flag so it can be accessed alongside other args
     args.use_shaping = use_shaping
     return args
