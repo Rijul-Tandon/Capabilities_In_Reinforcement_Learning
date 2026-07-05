@@ -141,6 +141,29 @@ def get_models_by_seed(results_dir, env_id, exp_name):
     return models  # {seed: Path}
 
 
+def get_wrapped_obs(env):
+    """
+    Generates the raw observation and manually pushes it through the pipeline
+    of ObservationWrappers. This avoids AttributeError when the top-level
+    wrapper (like RecordEpisodeStatistics) does not expose an observation() method.
+    """
+    obs = env.unwrapped.gen_obs()
+    
+    # Collect all observation wrappers in the stack (outermost to innermost)
+    wrapper = env
+    obs_wrappers = []
+    while hasattr(wrapper, 'env'):
+        if hasattr(wrapper, 'observation'):
+            obs_wrappers.append(wrapper)
+        wrapper = wrapper.env
+        
+    # Apply them from innermost to outermost
+    for w in reversed(obs_wrappers):
+        obs = w.observation(obs)
+        
+    return obs
+
+
 def compute_q_values_grid(env, q_net, seed, device):
     """
     Computes max_a Q(s, a) for every reachable (non-wall) cell and all 4
@@ -212,7 +235,7 @@ def compute_q_values_grid(env, q_net, seed, device):
                     # through the full wrapper pipeline (FullyObs → ImgObs →
                     # FlatImageAndDirection) to get the flat float vector that
                     # the Q-network expects.
-                    obs = env.observation(env.unwrapped.gen_obs())
+                    obs = get_wrapped_obs(env)
 
                     # Convert to tensor: (obs_dim,) → (1, obs_dim) with batch dim.
                     obs_t = torch.tensor(

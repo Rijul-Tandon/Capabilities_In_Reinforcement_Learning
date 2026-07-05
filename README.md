@@ -129,7 +129,7 @@ Input (193) → Linear(256) → ReLU → Linear(256) → ReLU → Linear(num_act
 | Learning starts | After 2,000 random steps |
 | Train frequency | Every 10 environment steps |
 | Start epsilon | 1.0 (100% random) |
-| End epsilon | 0.01 (1% random — never drops below) |
+| End epsilon | 0.1 (10% random — never drops below) |
 | Exploration fraction | 0.6 (epsilon decays over 60% of training, up to 80% on hard maps) |
 
 ---
@@ -229,7 +229,7 @@ results/MiniGrid-Empty-8x8-v0__dqn_baseline__1__1718300000/
 
 ## Key Design Decisions
 
-1. **Minimum epsilon = 0.01:** We let exploration decay to just 1%. On hard environments (DoorKey, FourRooms, MultiRoom) we decay slowly over 80% of training.
+1. **Minimum epsilon = 0.1:** We let exploration decay to 10%. On hard environments (DoorKey, FourRooms, MultiRoom) we decay slowly over 80% of training.
 
 2. **FullyObsWrapper:** MiniGrid's default 7×7 partial view makes it a POMDP. Since our DQN has no memory (no LSTM/attention), it cannot solve POMDPs. Full observability converts it to a standard MDP.
 
