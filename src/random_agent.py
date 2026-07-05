@@ -68,7 +68,7 @@ from tqdm import tqdm
 #   (FullyObsWrapper, FlatObsWrapper, action subset, episode statistics).
 # linear_schedule: Computes the decaying epsilon value for a given timestep.
 #   We reuse it here to generate the "fake" epsilon for consistent plot X-axes.
-from dqn_common import episode_success, make_env, linear_schedule
+from dqn_common import episode_success, make_env, polynomial_schedule, linear_schedule
 
 
 def parse_args():
@@ -117,7 +117,11 @@ def parse_args():
     # They should match the defaults in dqn_common.parse_args() exactly.
     parser.add_argument("--start-e", type=float, default=1.0)
     parser.add_argument("--end-e", type=float, default=0.1)
+    # --exploration-fraction: What fraction of training to decay epsilon over
     parser.add_argument("--exploration-fraction", type=float, default=0.60)
+    
+    # --epsilon-schedule: Which decay schedule to use for epsilon
+    parser.add_argument("--epsilon-schedule", choices=["linear", "polynomial"], default="linear")
 
     # --max-steps: Maximum steps per episode. Mirrors the same flag in dqn_common.
     #   Set to -1 to use each environment's own built-in default.
@@ -196,12 +200,21 @@ def main():
         # This agent ALWAYS acts randomly regardless of epsilon.
         # We only compute this so the X-axis in our comparison plots (Return vs Epsilon)
         # lines up correctly with the DQN agents' real epsilon values.
-        fake_epsilon = linear_schedule(
-            args.start_e,                                    # Starting epsilon (1.0)
-            args.end_e,                                      # Ending epsilon (0.3)
-            args.exploration_fraction * args.total_timesteps, # Duration of decay
-            local_step,                                      # Current step within stage
-        )
+        if args.epsilon_schedule == "linear":
+            fake_epsilon = linear_schedule(
+                args.start_e,
+                args.end_e,
+                args.exploration_fraction * args.total_timesteps,
+                local_step,
+            )
+        else:
+            fake_epsilon = polynomial_schedule(
+                args.start_e,
+                args.end_e,
+                args.exploration_fraction * args.total_timesteps,
+                local_step,
+                power=3.0,
+            )
 
         # Take a completely random action from the allowed action space.
         # env.action_space.sample() returns a uniformly random integer in [0, num_actions).

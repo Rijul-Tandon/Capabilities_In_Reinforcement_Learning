@@ -115,14 +115,18 @@ def get_models_by_seed(results_dir, env_id, exp_name):
     models = {}  # seed -> latest model path for that seed
     for run_dir in sorted(Path(results_dir).glob(f"{env_id}__{exp_name}__*")):
         model_path = run_dir / "q_net.pt"
-        if not model_path.exists():
+        config_path = run_dir / "config.json"
+        
+        if not model_path.exists() or not config_path.exists():
             continue
-        # Directory name format: env__exp__seed__timestamp
-        parts = run_dir.name.split("__")
+            
         try:
-            seed = int(parts[2])
-        except (IndexError, ValueError):
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            seed = int(config["seed"])
+        except (KeyError, ValueError, json.JSONDecodeError):
             continue
+            
         # Overwrite with newer run (sorted order ensures newest is last)
         models[seed] = model_path
     return models  # {seed: Path}

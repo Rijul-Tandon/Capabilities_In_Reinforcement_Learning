@@ -13,7 +13,7 @@ env:
 
 jobs:
   train:
-    name: Train (${{ matrix.agent }}, ${{ matrix.env_id }})
+    name: Train (${{ matrix.agent }}, ${{ matrix.env_id }}, seed ${{ matrix.seed }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false  # If one run fails, keep running the others
@@ -27,6 +27,10 @@ jobs:
           - random_agent
           - dqn_baseline
           - dqn_reward_shaping
+        seed:
+          - 1
+          - 2
+          - 3
 
     steps:
       - name: Checkout Code
@@ -41,106 +45,31 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
         
-      - name: "Run Agent (Curriculum: 3 Stages, 200k Steps Each)"
+      - name: "Run Agent (100k Steps, all defaults)"
         run: |
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
-          TIMESTEPS=200000
-          EXPLORE_FRAC=0.60
-          
-          if [ "${{ matrix.agent }}" == "random_agent" ]; then
-            # =====================================================================
-            # RANDOM AGENT BASELINE
-            # =====================================================================
-            # The random agent doesn't learn, so it doesn't need curriculum stages 
-            # or model loading. However, to ensure our plotting scripts can compare 
-            # it fairly against the DQN agents, we generate a continuous 600k step 
-            # log by running it 3 times sequentially and appending to the same CSV.
-            
-            # Use a single dedicated output directory for all 3 runs
-            RUN_DIR="results/${{ matrix.env_id }}__${{ matrix.agent }}__curriculum"
-            
-            for stage in 1 2 3; do
-              echo "Running random_agent stage $stage"
-              
-              # Calculate the starting step number for this stage's log entries.
-              # Stage 1: 0, Stage 2: 200000, Stage 3: 400000
-              OFFSET=$(( (stage - 1) * TIMESTEPS ))
-              
-              python src/${{ matrix.agent }}.py \
-                --env-id ${{ matrix.env_id }} \
-                --total-timesteps $TIMESTEPS \
-                --seed $stage \
-                --max-steps $MAX_STEPS \
-                --fixed-layout \
-                --run-dir $RUN_DIR \
-                --global-step-offset $OFFSET
-            done
-          else
-            # =====================================================================
-            # DQN AGENTS: CURRICULUM LEARNING (Stage 1 -> Stage 2 -> Stage 3)
-            # =====================================================================
-            # To train the agents progressively, we run 3 separate python commands.
-            # Each command represents a stage in the curriculum. We pass the trained 
-            # neural network weights from one stage to the next using --load-model.
-            # All 3 stages write to the same RUN_DIR so the logs are concatenated 
-            # into a single, continuous 600k step learning curve.
-            
-            RUN_DIR="results/${{ matrix.env_id }}__${{ matrix.agent }}__curriculum"
-            
-            # --- STAGE 1 (Easy) ---
-            # The CurriculumWrapper forces the Goal/Key to spawn very close to the agent.
-            echo "--- STAGE 1 (Easy) ---"
-            python src/${{ matrix.agent }}.py \
-              --env-id ${{ matrix.env_id }} \
-              --total-timesteps $TIMESTEPS \
-              --seed 1 \
-              --max-steps $MAX_STEPS \
-              --exploration-fraction $EXPLORE_FRAC \
-              --fixed-layout \
-              --curriculum-stage 1 \
-              --run-dir $RUN_DIR
-              
-            # The model is saved to q_net.pt in the run directory at the end of Stage 1.
-            MODEL_PATH="$RUN_DIR/q_net.pt"
-            
-            # --- STAGE 2 (Medium) ---
-            # The Goal/Key spawn a medium distance away. 
-            # We load the weights from Stage 1 so the agent doesn't start from scratch.
-            # We offset the logging steps by 200,000 so the CSV continues seamlessly.
-            echo "--- STAGE 2 (Medium) ---"
-            python src/${{ matrix.agent }}.py \
-              --env-id ${{ matrix.env_id }} \
-              --total-timesteps $TIMESTEPS \
-              --seed 2 \
-              --max-steps $MAX_STEPS \
-              --exploration-fraction $EXPLORE_FRAC \
-              --fixed-layout \
-              --curriculum-stage 2 \
-              --load-model $MODEL_PATH \
-              --run-dir $RUN_DIR \
-              --global-step-offset 200000
-              
-            # --- STAGE 3 (Hard) ---
-            # The environment is fully randomized (default MiniGrid behavior).
-            # The agent must now solve the standard environment using what it learned.
-            echo "--- STAGE 3 (Hard) ---"
-            python src/${{ matrix.agent }}.py \
-              --env-id ${{ matrix.env_id }} \
-              --total-timesteps $TIMESTEPS \
-              --seed 3 \
-              --max-steps $MAX_STEPS \
-              --exploration-fraction $EXPLORE_FRAC \
-              --fixed-layout \
-              --curriculum-stage 3 \
-              --load-model $MODEL_PATH \
-              --run-dir $RUN_DIR \
-              --global-step-offset 400000
+          TIMESTEPS=100000
+          EXPLORE_FRAC=0.90
+
+          if [ "${{ matrix.env_id }}" != "MiniGrid-Empty-6x6-v0" ]; then
+            # For DoorKey, FourRooms, and MultiRoom, give them 500k steps and slow decay
+            TIMESTEPS=500000
+            EXPLORE_FRAC=0.80
           fi
+          
+          python src/${{ matrix.agent }}.py \
+            --env-id ${{ matrix.env_id }} \
+            --total-timesteps $TIMESTEPS \
+            --seed ${{ matrix.seed }} \
+            --max-steps $MAX_STEPS \
+            --exploration-fraction $EXPLORE_FRAC \
+            --epsilon-schedule polynomial \
+            --fixed-layout
           
       - name: Upload Run Results
         uses: actions/upload-artifact@v4
         with:
-          name: result_${{ matrix.agent }}_${{ matrix.env_id }}
+          name: result_${{ matrix.agent }}_${{ matrix.env_id }}_seed${{ matrix.seed }}
           path: results/
           retention-days: 14
 

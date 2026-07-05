@@ -679,35 +679,22 @@ class ReplayBuffer:
 
 def linear_schedule(start_e, end_e, duration, step):
     """
-    Computes the current epsilon value for epsilon-greedy exploration.
-
-    Epsilon controls the exploration-exploitation tradeoff:
-      - epsilon = 1.0: 100% random actions (pure exploration)
-      - epsilon = 0.0: 100% greedy actions (pure exploitation)
-
-    This function linearly decays epsilon from start_e to end_e over 'duration'
-    steps, then holds it at end_e for the rest of training. This ensures the
-    agent explores broadly at the start and gradually shifts to exploiting
-    what it has learned, while always maintaining some minimum exploration.
-
-    Parameters
-    ----------
-    start_e : float
-        Starting epsilon value (typically 1.0 for full exploration).
-    end_e : float
-        Minimum epsilon value (e.g., 0.3 to always keep 30% random actions).
-    duration : float
-        Number of steps over which to decay from start_e to end_e.
-    step : int
-        The current training step.
-
-    Returns
-    -------
-    float
-        The current epsilon value, clamped to be at least end_e.
+    Computes the current epsilon value for epsilon-greedy exploration using a linear decay.
     """
     slope = (end_e - start_e) / duration
     return max(slope * step + start_e, end_e)
+
+def polynomial_schedule(start_e, end_e, duration, step, power=3.0):
+    """
+    Computes the current epsilon value for epsilon-greedy exploration using a polynomial decay.
+    
+    Decays epsilon slowly at first, then increasingly fast as t approaches `duration`.
+    power=1.0 reduces to your existing linear_schedule.
+    power=2-4 gives a pronounced slow-start/fast-finish curve.
+    """
+    frac = min(step / duration, 1.0)
+    decay = (1.0 - frac) ** power
+    return end_e + (start_e - end_e) * decay
 
 
 # ============================================================================
@@ -757,7 +744,7 @@ def parse_args(default_exp_name, use_shaping):
     parser.add_argument("--buffer-size", type=int, default=-1)
     # --gamma: Discount factor for future rewards (0 = greedy, 1 = far-sighted).
     #   0.99 means the agent values a reward 100 steps away at 0.99^100 ≈ 0.37 of its face value.
-    parser.add_argument("--gamma", type=float, default=0.915)
+    parser.add_argument("--gamma", type=float, default=0.99)
 
     # --fixed-layout: If set, the environment uses the same seed on every single reset.
     #   This forces the procedural generation to create the exact same map layout every episode,
@@ -772,7 +759,7 @@ def parse_args(default_exp_name, use_shaping):
 
     # --- Target Network Parameters ---quency: How often (in steps) to copy q_net weights to target_net.
     #   The target network provides stable Q-value targets during training.
-    parser.add_argument("--target-network-frequency", type=int, default=788)
+    parser.add_argument("--target-network-frequency", type=int, default=264)
     # --batch-size: Number of transitions sampled from the replay buffer per training step
     parser.add_argument("--batch-size", type=int, default=128)
     # --learning-starts: Number of random steps before training begins.
@@ -797,11 +784,13 @@ def parse_args(default_exp_name, use_shaping):
     #   environments with randomized layouts (DoorKey, FourRooms) where the agent
     #   needs to keep exploring to handle new configurations.
     parser.add_argument("--end-e", type=float, default=0.1)
-    # --exploration-fraction: Fraction of total timesteps over which epsilon decays.
-    #   0.7 means epsilon reaches end_e at 70% of training, then stays flat.
-    parser.add_argument("--exploration-fraction", type=float, default=0.70)
+    # --exploration-fraction: What fraction of training to decay epsilon over
+    parser.add_argument("--exploration-fraction", type=float, default=0.60)
+    
+    # --epsilon-schedule: Which decay schedule to use for epsilon
+    parser.add_argument("--epsilon-schedule", choices=["linear", "polynomial"], default="linear")
 
-    # --- Network Architecture ---
+    # --- Hyperparameters ---
     # --hidden-size: Number of neurons in each hidden layer of the Q-Network
     parser.add_argument("--hidden-size", type=int, default=256)
 
@@ -1030,13 +1019,22 @@ def train(args, use_shaping):
         global_step = local_step + args.global_step_offset
         
         # ---- EPSILON-GREEDY ACTION SELECTION ----
-        # Calculate current exploration rate (decays linearly over training)
-        epsilon = linear_schedule(
-            args.start_e,
-            args.end_e,
-            args.exploration_fraction * args.total_timesteps,
-            local_step,
-        )
+        # Calculate current exploration rate (decays based on selected schedule)
+        if args.epsilon_schedule == "linear":
+            epsilon = linear_schedule(
+                args.start_e,
+                args.end_e,
+                args.exploration_fraction * args.total_timesteps,
+                local_step,
+            )
+        else:
+            epsilon = polynomial_schedule(
+                args.start_e,
+                args.end_e,
+                args.exploration_fraction * args.total_timesteps,
+                local_step,
+                power=3.0,
+            )
 
         was_random = False
         if random.random() < epsilon:

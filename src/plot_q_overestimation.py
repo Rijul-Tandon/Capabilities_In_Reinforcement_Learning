@@ -596,10 +596,6 @@ def main():
             print(f"    DDQN avg max Q : {np.nanmean(ddqn_grid_max):.4f}")
             print(f"    Difference     : {diff_avg:+.4f}")
 
-            seed_ddqn_avgs.append(ddqn_avg)
-
-            # --- Generate Per-Environment Heatmap ---
-            plot_heatmap_for_env(env_id, dqn_grid, ddqn_grid, wall_mask, seed)
 
         env.close()
 
