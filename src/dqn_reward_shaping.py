@@ -1,9 +1,9 @@
 """
-dqn_reward_shaping.py - DQN Agent WITH Reward Shaping
-======================================================
-This script trains a Deep Q-Network (DQN) agent on a MiniGrid environment
+dqn_reward_shaping.py - Double DQN Agent WITH Reward Shaping
+=============================================================
+This script trains a Double DQN (DDQN) agent on a MiniGrid environment
 WITH reward shaping enabled. In addition to the environment's sparse reward,
-the agent receives a small negative penalty (default: -0.01) whenever its
+the agent receives a small negative penalty (default: -0.02) whenever its
 observation does not change between steps.
 
 When does the observation stay the same?
@@ -14,7 +14,7 @@ When does the observation stay the same?
 This penalty discourages the agent from wasting steps on futile actions
 and encourages it to explore more effectively by trying different actions.
 
-By comparing this agent's performance against dqn_baseline.py (no shaping),
+By comparing this agent's performance against dqn_baseline.py (DDQN, no shaping),
 we can evaluate whether this simple reward shaping technique improves
 learning speed, goal success rate, or both.
 
@@ -32,12 +32,16 @@ from dqn_common import parse_args, train
 
 if __name__ == "__main__":
     # parse_args() configures the experiment:
-    #   default_exp_name="dqn_reward_shaping" -> used in run directory names and plot labels
+    #   default_exp_name="ddqn_reward_shaping" -> used in run directory names and plot labels
     #   use_shaping=True -> tells the training loop to apply stuck penalties
-    args = parse_args(default_exp_name="dqn_reward_shaping", use_shaping=True)
+    args = parse_args(default_exp_name="ddqn_reward_shaping", use_shaping=True)
+
+    # Enable Double DQN for this agent (same algorithm as dqn_baseline,
+    # but with the added stuck penalty for reward shaping).
+    args.double_dqn = True
 
     # train() runs the full DQN training loop:
     #   args: all hyperparameters (env_id, timesteps, learning_rate, epsilon schedule, etc.)
     #   use_shaping=True: the agent receives a penalty when its observation doesn't change
-    #     The penalty value is controlled by --stuck-penalty (default: -0.01)
+    #     The penalty value is controlled by --stuck-penalty (default: -0.02)
     train(args, use_shaping=True)

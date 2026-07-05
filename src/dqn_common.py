@@ -675,6 +675,12 @@ def parse_args(default_exp_name, use_shaping):
     #   allowing the agent to overfit to a single map (great for debugging if learning works at all).
     parser.add_argument("--fixed-layout", action="store_true")
 
+    # --double-dqn: If set, uses Double DQN for the TD target computation.
+    #   Standard DQN: target = r + γ * max_a Q_target(s', a)  (target net selects AND evaluates)
+    #   Double DQN:   target = r + γ * Q_target(s', argmax_a Q_online(s', a))  (online selects, target evaluates)
+    #   Double DQN reduces the overestimation bias inherent in standard DQN.
+    parser.add_argument("--double-dqn", action="store_true")
+
     # --- Target Network Parameters ---quency: How often (in steps) to copy q_net weights to target_net.
     #   The target network provides stable Q-value targets during training.
     parser.add_argument("--target-network-frequency", type=int, default=788)
@@ -875,7 +881,7 @@ def train(args, use_shaping):
     )
     metric_writer = csv.DictWriter(
         metric_file,
-        fieldnames=["global_step", "epsilon", "td_loss", "q_value", "stuck_rate", "mean_penalty"],
+        fieldnames=["global_step", "epsilon", "td_loss", "q_value", "max_q", "stuck_rate", "mean_penalty"],
     )
     episode_writer.writeheader()
     metric_writer.writeheader()
@@ -888,7 +894,8 @@ def train(args, use_shaping):
     episode_return = 0.0   # Cumulative reward for the current episode
     episode_length = 0     # Number of steps in the current episode
     last_loss = np.nan     # Most recent TD loss value (for logging)
-    last_q = np.nan        # Most recent mean Q-value (for logging)
+    last_q = 0.0           # Most recent mean Q-value (for logging)
+    last_max_q = 0.0       # Most recent max Q-value in batch (for overestimation tracking)
     best_goal_rate = 0.0   # Highest goal rate achieved so far
 
     # --- Main Loop ---
@@ -1005,18 +1012,21 @@ def train(args, use_shaping):
             b_obs, b_next_obs, b_actions, b_rewards, b_dones = rb.sample(args.batch_size)
 
             with torch.no_grad():
-                # --- Double DQN Compute TD Target ---
-                # In Double DQN, we use the online network to SELECT the best action
-                # for the next state, but use the target network to EVALUATE its value.
-                # This prevents the overestimation bias present in standard DQN.
-                
-                # 1. Select best action for next state using the online network (q_net)
-                best_next_actions = q_net(b_next_obs).argmax(dim=1, keepdim=True)
-                
-                # 2. Evaluate the value of that action using the target network
-                target_max = target_net(b_next_obs).gather(1, best_next_actions).squeeze(1)
-                
-                # 3. Compute the TD target
+                if args.double_dqn:
+                    # --- Double DQN: Decoupled Selection & Evaluation ---
+                    # The ONLINE network selects the best action for the next state,
+                    # but the TARGET network evaluates its value.
+                    # This prevents the overestimation bias present in standard DQN.
+                    best_next_actions = q_net(b_next_obs).argmax(dim=1, keepdim=True)
+                    target_max = target_net(b_next_obs).gather(1, best_next_actions).squeeze(1)
+                else:
+                    # --- Standard DQN: Single-Network Max ---
+                    # The TARGET network both selects AND evaluates the best action.
+                    # This is prone to overestimation because max over noisy estimates
+                    # is a biased estimator of the true max value.
+                    target_max = target_net(b_next_obs).max(dim=1).values
+
+                # Compute the TD target: r + γ * Q(s', a*) * (1 - done)
                 td_target = b_rewards + args.gamma * target_max * (1.0 - b_dones)
 
             # --- Compute Current Q-Values ---
@@ -1040,6 +1050,7 @@ def train(args, use_shaping):
 
             last_loss = float(loss.item())
             last_q = float(old_val.mean().item())
+            last_max_q = float(old_val.max().item())
 
         # ---- TARGET NETWORK UPDATE ----
         # Periodically copy q_net's weights to target_net (hard update).
@@ -1056,6 +1067,7 @@ def train(args, use_shaping):
                     "epsilon": epsilon,
                     "td_loss": last_loss,
                     "q_value": last_q,
+                    "max_q": last_max_q,
                     "stuck_rate": float(np.mean(recent_stuck)) if recent_stuck else 0.0,
                     "mean_penalty": float(np.mean(recent_penalty)) if recent_penalty else 0.0,
                 }
@@ -1063,6 +1075,7 @@ def train(args, use_shaping):
             metric_file.flush()
             writer.add_scalar("losses/td_loss", last_loss, global_step)
             writer.add_scalar("losses/q_values", last_q, global_step)
+            writer.add_scalar("losses/max_q", last_max_q, global_step)
             writer.add_scalar("charts/epsilon", epsilon, global_step)
 
     # --- Cleanup ---

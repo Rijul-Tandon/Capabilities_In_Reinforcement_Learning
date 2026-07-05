@@ -272,8 +272,13 @@ def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=25
     height = env.unwrapped.height        # Grid height (e.g., 8)
 
     # --- Find Trained Models for This Seed ---
-    baseline_models = get_models_by_seed(results_dir, env_id, "dqn_baseline")
-    shaped_models   = get_models_by_seed(results_dir, env_id, "dqn_reward_shaping")
+    # Try new DDQN names first, fall back to legacy names for old results
+    baseline_models = get_models_by_seed(results_dir, env_id, "ddqn_baseline")
+    if not baseline_models:
+        baseline_models = get_models_by_seed(results_dir, env_id, "dqn_baseline")
+    shaped_models = get_models_by_seed(results_dir, env_id, "ddqn_reward_shaping")
+    if not shaped_models:
+        shaped_models = get_models_by_seed(results_dir, env_id, "dqn_reward_shaping")
 
     baseline_model_path = baseline_models.get(seed)
     shaped_model_path   = shaped_models.get(seed)
@@ -462,8 +467,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Discover which seeds are available for this environment
-    baseline_models = get_models_by_seed(args.results_dir, args.env_id, "dqn_baseline")
-    shaped_models   = get_models_by_seed(args.results_dir, args.env_id, "dqn_reward_shaping")
+    # Try new DDQN names first, fall back to legacy names for old results
+    baseline_models = get_models_by_seed(args.results_dir, args.env_id, "ddqn_baseline")
+    if not baseline_models:
+        baseline_models = get_models_by_seed(args.results_dir, args.env_id, "dqn_baseline")
+    shaped_models = get_models_by_seed(args.results_dir, args.env_id, "ddqn_reward_shaping")
+    if not shaped_models:
+        shaped_models = get_models_by_seed(args.results_dir, args.env_id, "dqn_reward_shaping")
 
     # Union of all seeds found across both agents
     all_seeds = sorted(set(baseline_models.keys()) | set(shaped_models.keys()))

@@ -5,13 +5,14 @@
 This project investigates how reinforcement learning agents can learn to avoid
 wasteful actions by understanding their own **capabilities** in a given state.
 We train Deep Q-Network (DQN) agents on MiniGrid grid-world environments and
-compare three agent types:
+compare four agent types:
 
 | Agent | Description |
 |---|---|
 | **Random Agent** | Takes uniformly random actions. Establishes the performance floor. |
-| **Baseline DQN** | Standard DQN using only the environment's sparse reward signal. |
-| **Reward-Shaped DQN** | Same DQN with a small penalty (`-0.02`) when an action causes no observable state change (e.g., walking into a wall). |
+| **Vanilla DQN** | Standard DQN using the original TD target (`max_a Q_target`). Prone to Q-value overestimation. |
+| **DDQN Baseline** | Double DQN — decouples action selection from evaluation to reduce overestimation. No reward shaping. |
+| **DDQN Reward-Shaped** | Same Double DQN with a small penalty (`-0.02`) when an action causes no observable state change (e.g., walking into a wall). |
 
 The reward shaping approach is a lightweight, environment-agnostic proxy for
 capability-aware learning: if an action has no effect, the agent should learn
@@ -138,17 +139,20 @@ Input (193) → Linear(256) → ReLU → Linear(256) → ReLU → Linear(num_act
 ```
 Capabilities_In_Reinforcement_Learning/
 ├── src/
-│   ├── dqn_common.py             # Shared DQN infrastructure (network, buffer, training loop, wrappers)
-│   ├── dqn_baseline.py           # Entry point: trains baseline DQN (no shaping)
-│   ├── dqn_reward_shaping.py     # Entry point: trains DQN with stuck penalty
+│   ├── dqn_common.py             # Shared DQN/DDQN infrastructure (network, buffer, training loop, wrappers)
+│   ├── dqn_vanilla.py            # Entry point: trains standard DQN (no double, no shaping)
+│   ├── dqn_baseline.py           # Entry point: trains Double DQN baseline (no shaping)
+│   ├── dqn_reward_shaping.py     # Entry point: trains Double DQN with stuck penalty
 │   ├── random_agent.py           # Entry point: runs a random action baseline
 │   ├── plot_comparison.py        # Generates Return & Goal Rate vs Epsilon comparison plots
-│   └── plot_state_action_freq.py # Generates state-visit and action-frequency heatmaps
-├── run_comparison.ps1            # PowerShell script to run all 3 agents + plot for one environment
+│   ├── plot_state_action_freq.py # Generates state-visit and action-frequency heatmaps
+│   └── plot_q_overestimation.py  # Generates DQN vs DDQN Q-value overestimation heatmaps & bar charts
+├── .github/workflows/
+│   ├── run_experiments.yml       # Main workflow: trains all agents on all envs (3 seeds)
+│   └── run_overestimation.yml    # Overestimation workflow: DQN vs DDQN comparison (1 seed)
+├── run_comparison.ps1            # PowerShell script to run all agents + plot for one environment
 ├── requirements.txt              # Python dependencies
 ├── README.md                     # This file
-├── RUN_STEPS.md                  # Detailed command checklist
-├── presentation.tex              # LaTeX Beamer presentation
 ├── results/                      # Training output (CSV logs, model weights, configs)
 └── plots/                        # Generated comparison plots and heatmaps
 ```
@@ -225,7 +229,7 @@ results/MiniGrid-Empty-8x8-v0__dqn_baseline__1__1718300000/
 
 ## Key Design Decisions
 
-1. **Minimum epsilon = 0.3:** We never drop exploration below 30%. In randomized environments (DoorKey, FourRooms), the agent needs sustained exploration to handle varied layouts.
+1. **Minimum epsilon = 0.01:** We let exploration decay to just 1%. On hard environments (DoorKey, FourRooms, MultiRoom) we decay slowly over 80% of training.
 
 2. **FullyObsWrapper:** MiniGrid's default 7×7 partial view makes it a POMDP. Since our DQN has no memory (no LSTM/attention), it cannot solve POMDPs. Full observability converts it to a standard MDP.
 
@@ -234,3 +238,27 @@ results/MiniGrid-Empty-8x8-v0__dqn_baseline__1__1718300000/
 4. **Environment reward for logging, shaped reward for learning:** The stuck penalty is only added to the reward used in the replay buffer. All logged metrics and plots use the original environment reward, ensuring fair comparison.
 
 5. **Task-specific action subsets:** Removing irrelevant actions (like `drop` in Empty) shrinks the action space and accelerates learning.
+
+6. **DQN vs DDQN toggle:** The `--double-dqn` flag controls whether the TD target uses standard DQN (`max_a Q_target`) or Double DQN (online selects, target evaluates). This allows direct comparison of Q-value overestimation.
+
+7. **Dynamic replay buffer:** Buffer size defaults to 10% of total timesteps (CleanRL standard), scaling automatically with training duration.
+
+---
+
+## DQN vs DDQN Overestimation Experiment
+
+The `run_overestimation.yml` workflow trains both **Standard DQN** (`dqn_vanilla.py`) and **Double DQN** (`dqn_baseline.py`) on all 4 environments with a fixed layout (seed=1). After training, `plot_q_overestimation.py` generates:
+
+1. **Q-Value Heatmaps**: For each environment, a 3-panel grid showing `DQN Max Q | DDQN Max Q | Difference (DQN - DDQN)`. Red cells in the difference panel indicate where standard DQN overestimates relative to DDQN.
+
+2. **Bar Chart**: A grouped bar chart comparing average max Q-values across all environments, clearly showing the overestimation gap.
+
+### Why Standard DQN Overestimates
+
+Standard DQN uses `max_a Q_target(s', a)` as the TD target. The `max` operator applied to noisy Q-value estimates is a **positively biased estimator** — it systematically picks the noisiest (highest) estimate, inflating Q-values over training.
+
+Double DQN fixes this by decoupling selection from evaluation:
+- The **online network** selects the best action: `a* = argmax_a Q_online(s', a)`
+- The **target network** evaluates it: `Q_target(s', a*)`
+
+Since these are different networks, the noise doesn't compound, reducing overestimation.

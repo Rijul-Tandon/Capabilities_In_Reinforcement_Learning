@@ -1,4 +1,4 @@
-name: Run Experiments (100k Steps)
+name: Run Overestimation Comparison (DQN vs DDQN)
 
 on:
   workflow_dispatch:  # Trigger manually from GitHub UI or `gh workflow run`
@@ -13,7 +13,7 @@ env:
 
 jobs:
   train:
-    name: Train (${{ matrix.agent }}, ${{ matrix.env_id }}, seed ${{ matrix.seed }})
+    name: Train (${{ matrix.agent }}, ${{ matrix.env_id }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false  # If one run fails, keep running the others
@@ -24,13 +24,8 @@ jobs:
           - MiniGrid-FourRooms-v0
           - MiniGrid-MultiRoom-N2-S4-v0
         agent:
-          - random_agent
+          - dqn_vanilla
           - dqn_baseline
-          - dqn_reward_shaping
-        seed:
-          - 1
-          - 2
-          - 3
 
     steps:
       - name: Checkout Code
@@ -45,7 +40,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
         
-      - name: Run Agent (100k Steps, all defaults)
+      - name: Run Agent
         run: |
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
           TIMESTEPS=100000
@@ -60,7 +55,7 @@ jobs:
           python src/${{ matrix.agent }}.py \
             --env-id ${{ matrix.env_id }} \
             --total-timesteps $TIMESTEPS \
-            --seed ${{ matrix.seed }} \
+            --seed 1 \
             --max-steps $MAX_STEPS \
             --exploration-fraction $EXPLORE_FRAC \
             --fixed-layout
@@ -68,12 +63,12 @@ jobs:
       - name: Upload Run Results
         uses: actions/upload-artifact@v4
         with:
-          name: result_${{ matrix.agent }}_${{ matrix.env_id }}_seed${{ matrix.seed }}
+          name: overestimation_${{ matrix.agent }}_${{ matrix.env_id }}
           path: results/
           retention-days: 14
 
   plot:
-    name: Generate Plots & Push to Repo
+    name: Generate Q-Value Overestimation Plots & Push
     needs: train  # Wait for all matrix training jobs to finish
     runs-on: ubuntu-latest
     permissions:
@@ -94,27 +89,23 @@ jobs:
       - name: Download all results
         uses: actions/download-artifact@v4
         with:
-          pattern: result_*
+          pattern: overestimation_*
           path: results/
           merge-multiple: true
           
-      - name: Generate Comparison and Heatmap Plots
+      - name: Generate Q-Value Overestimation Plots
         run: |
-          for env in "MiniGrid-Empty-6x6-v0" "MiniGrid-DoorKey-6x6-v0" "MiniGrid-FourRooms-v0" "MiniGrid-MultiRoom-N2-S4-v0"; do
-            echo "Plotting $env..."
-            python src/plot_comparison.py --env-id $env
-            python src/plot_state_action_freq.py --env-id $env
-          done
+          python src/plot_q_overestimation.py
           
       - name: Commit and Push Plots
         run: |
           # Create timestamped plots directory inside plots/
           TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
-          DIR_NAME="plots/plots_$TIMESTAMP"
+          DIR_NAME="plots/overestimation_$TIMESTAMP"
           mkdir -p $DIR_NAME
           
-          # Move all generated .png files into the new directory
-          mv plots/*.png $DIR_NAME/
+          # Move all generated overestimation .png files into the new directory
+          mv plots/*overestimation*.png $DIR_NAME/ 2>/dev/null || true
           
           # Configure git
           git config --global user.name "github-actions[bot]"
@@ -123,5 +114,5 @@ jobs:
           # Pull latest changes to avoid conflicts, add plots, commit, and push
           git pull origin main
           git add $DIR_NAME/
-          git commit -m "Auto-generated plots for 100k steps ($TIMESTAMP)" || echo "No changes to commit"
+          git commit -m "Auto-generated DQN vs DDQN overestimation plots ($TIMESTAMP)" || echo "No changes to commit"
           git push origin main

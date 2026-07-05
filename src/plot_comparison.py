@@ -205,9 +205,15 @@ def load_runs(results_dir, env_id):
 # ============================================================================
 
 AGENT_COLORS = {
-    "random_agent":       "dimgray",
-    "dqn_baseline":       "steelblue",
-    "dqn_reward_shaping": "darkorange",
+    "random_agent":          "dimgray",
+    # New DDQN names (going forward)
+    "ddqn_baseline":         "steelblue",
+    "ddqn_reward_shaping":   "darkorange",
+    # Legacy names (backward compatibility with old results)
+    "dqn_baseline":          "steelblue",
+    "dqn_reward_shaping":    "darkorange",
+    # Standard DQN (for overestimation comparison)
+    "dqn_vanilla":           "mediumseagreen",
 }
 LINE_STYLES = ["-", "--", ":", "-."]
 

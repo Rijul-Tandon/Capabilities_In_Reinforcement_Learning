@@ -1,15 +1,20 @@
 """
-dqn_baseline.py - Baseline DQN Agent (No Reward Shaping)
-=========================================================
-This script trains a standard Deep Q-Network (DQN) agent on a MiniGrid environment
+dqn_baseline.py - Double DQN Baseline Agent (No Reward Shaping)
+================================================================
+This script trains a Double DQN (DDQN) agent on a MiniGrid environment
 WITHOUT any reward shaping. The agent only receives the environment's original
 sparse reward signal:
   - Positive reward (> 0) when it reaches the goal.
   - Zero reward for every other step.
 
-This serves as the control experiment. By comparing its performance against
-dqn_reward_shaping.py (which adds a stuck penalty), we can measure whether
-reward shaping actually helps the agent learn faster or more reliably.
+Double DQN decouples action selection from action evaluation in the TD target:
+    a* = argmax_a Q_online(s', a)       (online network SELECTS)
+    target = r + γ * Q_target(s', a*)   (target network EVALUATES)
+
+This reduces the overestimation bias present in standard DQN. By comparing
+this agent against dqn_vanilla.py (standard DQN), we can measure the
+overestimation. By comparing against dqn_reward_shaping.py (DDQN with stuck
+penalty), we can measure whether reward shaping helps.
 
 Usage:
   python dqn_baseline.py --env-id MiniGrid-Empty-8x8-v0 --total-timesteps 30000
@@ -25,9 +30,14 @@ from dqn_common import parse_args, train
 
 if __name__ == "__main__":
     # parse_args() configures the experiment:
-    #   default_exp_name="dqn_baseline" -> used in run directory names and plot labels
+    #   default_exp_name="ddqn_baseline" -> used in run directory names and plot labels
     #   use_shaping=False -> tells the training loop NOT to apply stuck penalties
-    args = parse_args(default_exp_name="dqn_baseline", use_shaping=False)
+    args = parse_args(default_exp_name="ddqn_baseline", use_shaping=False)
+
+    # Enable Double DQN for this agent.
+    # This uses the online network to select the best next action and the
+    # target network to evaluate it, reducing overestimation bias.
+    args.double_dqn = True
 
     # train() runs the full DQN training loop:
     #   args: all hyperparameters (env_id, timesteps, learning_rate, epsilon schedule, etc.)
