@@ -41,7 +41,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
         
-      - name: Run Agent (Curriculum: 3 Stages, 200k Steps Each)
+      - name: "Run Agent (Curriculum: 3 Stages, 200k Steps Each)"
         run: |
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
           TIMESTEPS=200000
