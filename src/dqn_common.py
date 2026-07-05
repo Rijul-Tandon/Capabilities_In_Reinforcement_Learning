@@ -740,7 +740,7 @@ def parse_args(default_exp_name, use_shaping):
     # --exp-name: A label for this experiment, used in directory names and plot legends
     parser.add_argument("--exp-name", type=str, default=default_exp_name)
     # --env-id: Which MiniGrid environment to train on
-    parser.add_argument("--env-id", type=str, default="MiniGrid-Empty-8x8-v0")
+    parser.add_argument("--env-id", type=str, default="MiniGrid-Empty-6x6-v0")
     # --seed: Random seed for reproducibility (same seed = same results)
     parser.add_argument("--seed", type=int, default=1)
 
@@ -798,8 +798,8 @@ def parse_args(default_exp_name, use_shaping):
     #   needs to keep exploring to handle new configurations.
     parser.add_argument("--end-e", type=float, default=0.1)
     # --exploration-fraction: Fraction of total timesteps over which epsilon decays.
-    #   0.6 means epsilon reaches end_e at 60% of training, then stays flat.
-    parser.add_argument("--exploration-fraction", type=float, default=0.60)
+    #   0.7 means epsilon reaches end_e at 70% of training, then stays flat.
+    parser.add_argument("--exploration-fraction", type=float, default=0.70)
 
     # --- Network Architecture ---
     # --hidden-size: Number of neurons in each hidden layer of the Q-Network
