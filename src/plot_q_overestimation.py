@@ -195,36 +195,52 @@ def compute_q_values_grid(env, q_net, seed, device):
 
     Returns
     -------
-    q_grid : np.ndarray, shape (width, height)
-        Average max-Q value at each cell.  Wall cells contain np.nan.
+    q_grid : np.ndarray, shape (width, height, num_actions)
+        Average Q-value for each action at each cell. Wall cells contain np.nan.
     wall_mask : np.ndarray, shape (width, height), dtype bool
         True where a cell is a wall (used for gray overlay in heatmaps).
+    annotations : dict[tuple(int, int), str]
+        Mapping of (x, y) coordinates to character labels (e.g., 'S' for start,
+        'G' for goal, 'K' for key, 'D' for door).
     """
     # Reset env to establish the deterministic grid layout for this seed.
     env.reset(seed=seed)
 
     width = env.unwrapped.width
     height = env.unwrapped.height
+    num_actions = env.action_space.n
 
     # Pre-allocate: NaN for walls, will be filled for reachable cells.
-    q_grid = np.full((width, height), np.nan, dtype=np.float32)
+    q_grid = np.full((width, height, num_actions), np.nan, dtype=np.float32)
     wall_mask = np.zeros((width, height), dtype=bool)
+    annotations = {}
 
-    # Identify wall cells from the grid object.
+    # Identify the start position
+    start_pos = tuple(env.unwrapped.agent_pos)
+    annotations[start_pos] = "S"
+
+    # Identify wall cells, goals, keys, and doors from the grid object.
     for x in range(width):
         for y in range(height):
             cell = env.unwrapped.grid.get(x, y)
-            if cell is not None and cell.type == "wall":
-                wall_mask[x, y] = True
+            if cell is not None:
+                if cell.type == "wall":
+                    wall_mask[x, y] = True
+                elif cell.type == "goal":
+                    annotations[(x, y)] = "G"
+                elif cell.type == "key":
+                    annotations[(x, y)] = "K"
+                elif cell.type == "door":
+                    annotations[(x, y)] = "D"
 
-    # Compute max-Q for every reachable cell, averaged over 4 directions.
+    # Compute Q-values for every reachable cell, averaged over 4 directions.
     with torch.no_grad():
         for x in range(width):
             for y in range(height):
                 if wall_mask[x, y]:
                     continue  # skip wall cells
 
-                dir_maxq = []
+                dir_qvals = []
                 for d in range(NUM_DIRECTIONS):
                     # Directly set the agent's position and direction on the
                     # unwrapped (raw MiniGrid) environment.
@@ -242,21 +258,21 @@ def compute_q_values_grid(env, q_net, seed, device):
                         obs, dtype=torch.float32, device=device
                     ).unsqueeze(0)
 
-                    q_values = q_net(obs_t)            # shape (1, num_actions)
-                    max_q = q_values.max(dim=1).values.item()
-                    dir_maxq.append(max_q)
+                    q_values = q_net(obs_t).squeeze(0) # shape (num_actions,)
+                    dir_qvals.append(q_values.cpu().numpy())
 
                 # Average across the 4 directions.
-                q_grid[x, y] = np.mean(dir_maxq)
+                # Resulting shape: (num_actions,)
+                q_grid[x, y, :] = np.mean(dir_qvals, axis=0)
 
-    return q_grid, wall_mask
+    return q_grid, wall_mask, annotations
 
 
 # ============================================================================
 # PER-ENVIRONMENT HEATMAP PLOT
 # ============================================================================
 
-def plot_heatmap_for_env(env_id, dqn_grid, ddqn_grid, wall_mask, seed):
+def plot_heatmap_for_env(env_id, dqn_grid, ddqn_grid, wall_mask, annotations, seed):
     """
     Creates a 1×3 heatmap figure for a single environment and seed:
         Panel 0: DQN Max Q
@@ -266,45 +282,59 @@ def plot_heatmap_for_env(env_id, dqn_grid, ddqn_grid, wall_mask, seed):
     Wall cells are overlaid in dark gray.  The difference panel uses a
     diverging colour map centred at zero so that overestimation (positive
     values) and underestimation (negative values) are visually symmetric.
+    The specific state-action Q-values are printed inside each cell.
 
     Parameters
     ----------
     env_id : str
         Environment name (used in title and filename).
-    dqn_grid : np.ndarray, shape (W, H)
-        Average max-Q from the vanilla DQN.  Walls are np.nan.
-    ddqn_grid : np.ndarray, shape (W, H)
-        Average max-Q from the Double DQN.  Walls are np.nan.
+    dqn_grid : np.ndarray, shape (W, H, num_actions)
+        Average Q-values for all actions from vanilla DQN.  Walls are np.nan.
+    ddqn_grid : np.ndarray, shape (W, H, num_actions)
+        Average Q-values for all actions from Double DQN.  Walls are np.nan.
     wall_mask : np.ndarray, shape (W, H), dtype bool
         True for wall cells.
+    annotations : dict[tuple, str]
+        Mapping of (x,y) to layout labels (S, G, K, D).
     seed : int
         Training seed (shown in title and filename).
     """
-    width, height = dqn_grid.shape
-    diff_grid = dqn_grid - ddqn_grid  # positive ⇒ DQN overestimates
+    width, height, num_actions = dqn_grid.shape
+    
+    # The background color of the cell will be based on the maximum Q-value
+    dqn_grid_max = np.nanmax(dqn_grid, axis=2)
+    ddqn_grid_max = np.nanmax(ddqn_grid, axis=2)
+    diff_grid_max = dqn_grid_max - ddqn_grid_max  # positive ⇒ DQN overestimates
+    
+    # For the text inside the cell, we want the specific Q-values or difference
+    diff_grid = dqn_grid - ddqn_grid
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    # Make the figure larger so the text fits comfortably
+    fig, axes = plt.subplots(1, 3, figsize=(24, 7))
     fig.suptitle(
         f"{env_id}  —  Q-Value Overestimation  (seed={seed})",
-        fontsize=14, fontweight="bold",
+        fontsize=16, fontweight="bold",
     )
 
     # Shared min/max across DQN and DDQN panels for comparable colour scales.
-    vmin_q = np.nanmin([dqn_grid, ddqn_grid])
-    vmax_q = np.nanmax([dqn_grid, ddqn_grid])
+    vmin_q = np.nanmin([dqn_grid_max, ddqn_grid_max])
+    vmax_q = np.nanmax([dqn_grid_max, ddqn_grid_max])
 
     panels = [
-        ("DQN (Vanilla)  Max Q", dqn_grid, "viridis", None),
-        ("DDQN  Max Q",          ddqn_grid, "viridis", None),
-        ("Difference (DQN − DDQN)", diff_grid, "RdBu_r", "diverging"),
+        ("DQN (Vanilla)  Max Q", dqn_grid_max, dqn_grid, "viridis", None),
+        ("DDQN  Max Q",          ddqn_grid_max, ddqn_grid, "viridis", None),
+        ("Difference (DQN − DDQN)", diff_grid_max, diff_grid, "RdBu_r", "diverging"),
     ]
 
-    for col, (title, grid, cmap, style) in enumerate(panels):
+    # Action labels for the text overlay
+    action_labels = ["L", "R", "F", "P", "D", "T", "Dn"]
+
+    for col, (title, grid_max, grid_full, cmap, style) in enumerate(panels):
         ax = axes[col]
 
         # Build a display array.  Walls get a sentinel value so we can paint
         # them gray after the main imshow call.
-        display = grid.T.copy()  # transpose so x→columns, y→rows
+        display = grid_max.T.copy()  # transpose so x→columns, y→rows
 
         if style == "diverging":
             # Centre the diverging colour map at zero.
@@ -320,7 +350,7 @@ def plot_heatmap_for_env(env_id, dqn_grid, ddqn_grid, wall_mask, seed):
 
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-        # Overlay dark gray squares on wall cells.
+        # Overlay dark gray squares on wall cells and add annotations/text to free cells
         for x in range(width):
             for y in range(height):
                 if wall_mask[x, y]:
@@ -328,6 +358,28 @@ def plot_heatmap_for_env(env_id, dqn_grid, ddqn_grid, wall_mask, seed):
                         (x - 0.5, y - 0.5), 1, 1,
                         facecolor="dimgray", edgecolor="none",
                     ))
+                else:
+                    # Draw static layout annotations (S, G, K, D)
+                    if (x, y) in annotations:
+                        # Place symbol in the top-right corner of the cell
+                        ax.text(x + 0.45, y - 0.45, annotations[(x, y)],
+                                ha='right', va='top', color='white', 
+                                fontsize=10, fontweight='bold',
+                                path_effects=[plt.matplotlib.patheffects.withStroke(linewidth=2, foreground='black')])
+                    
+                    # Draw action Q-values as text inside the cell
+                    q_vals = grid_full[x, y, :]
+                    text_lines = []
+                    for a in range(len(q_vals)):
+                        if a < len(action_labels):
+                            # Use +/- sign explicitly for difference plot
+                            val_str = f"{q_vals[a]:+.2f}" if style == "diverging" else f"{q_vals[a]:.2f}"
+                            text_lines.append(f"{action_labels[a]}: {val_str}")
+                    
+                    text_str = "\n".join(text_lines)
+                    bbox_props = dict(boxstyle="round,pad=0.2", fc="white", alpha=0.75, ec="none")
+                    ax.text(x, y, text_str, ha='center', va='center', 
+                            color='black', fontsize=6, bbox=bbox_props)
 
         # Draw grid lines between cells.
         ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
@@ -507,28 +559,33 @@ def main():
             env_seed = make_env(env_id, seed, args.action_set)
 
             print("    Computing DQN  Q-values …")
-            dqn_grid, wall_mask = compute_q_values_grid(
+            dqn_grid, wall_mask, annotations = compute_q_values_grid(
                 env_seed, q_net_dqn, seed, device
             )
 
             print("    Computing DDQN Q-values …")
-            ddqn_grid, _ = compute_q_values_grid(
+            ddqn_grid, _, _ = compute_q_values_grid(
                 env_seed, q_net_ddqn, seed, device
             )
 
-            env_seed.close()
+            # The q_grids are (W, H, num_actions). 
+            # We take the max over actions to compute the average overestimation 
+            # for the bar chart.
+            dqn_grid_max = np.nanmax(dqn_grid, axis=2)
+            ddqn_grid_max = np.nanmax(ddqn_grid, axis=2)
 
-            # --- Per-Seed Statistics ---
-            # nanmean ignores wall cells (which are NaN).
-            dqn_avg  = float(np.nanmean(dqn_grid))
-            ddqn_avg = float(np.nanmean(ddqn_grid))
-            diff_avg = dqn_avg - ddqn_avg
+            seed_dqn_avgs.append(np.nanmean(dqn_grid_max))
+            seed_ddqn_avgs.append(np.nanmean(ddqn_grid_max))
 
-            print(f"    DQN  avg max Q : {dqn_avg:.4f}")
-            print(f"    DDQN avg max Q : {ddqn_avg:.4f}")
+            # Generate the visualization heatmap.
+            print("    Generating heatmap plot …")
+            plot_heatmap_for_env(env_id, dqn_grid, ddqn_grid, wall_mask, annotations, seed)
+            
+            diff_avg = np.nanmean(dqn_grid_max) - np.nanmean(ddqn_grid_max)
+            print(f"    DQN  avg max Q : {np.nanmean(dqn_grid_max):.4f}")
+            print(f"    DDQN avg max Q : {np.nanmean(ddqn_grid_max):.4f}")
             print(f"    Difference     : {diff_avg:+.4f}")
 
-            seed_dqn_avgs.append(dqn_avg)
             seed_ddqn_avgs.append(ddqn_avg)
 
             # --- Generate Per-Environment Heatmap ---

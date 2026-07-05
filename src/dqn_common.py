@@ -347,9 +347,94 @@ class FlatImageAndDirectionWrapper(gym.ObservationWrapper):
         direction = np.array([self.env.unwrapped.agent_dir])
         # Append the direction to the end of the flattened array
         return np.concatenate([flat_image, direction]).astype(np.float32)
+class CurriculumWrapper(gym.Wrapper):
+    """
+    Modifies the MiniGrid environment layout on reset to enforce a curriculum.
+    - Stage 1: Key and Goal are moved very close to the agent.
+    - Stage 2: Key and Goal are moved a medium distance away.
+    - Stage 3: The environment is left fully randomized (default behavior).
+    """
+    def __init__(self, env, stage):
+        super().__init__(env)
+        self.stage = stage
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        
+        # Only modify the environment layout for stages 1 and 2, and only for MiniGrid
+        if self.stage < 3 and hasattr(self.unwrapped, 'grid') and hasattr(self.unwrapped, 'agent_pos'):
+            grid = self.unwrapped.grid
+            width = self.unwrapped.width
+            height = self.unwrapped.height
+            agent_x, agent_y = self.unwrapped.agent_pos
+            
+            # 1. Locate the goal and the key (if one exists)
+            goal_pos = None
+            key_pos = None
+            for x in range(width):
+                for y in range(height):
+                    cell = grid.get(x, y)
+                    if cell is not None:
+                        if cell.type == 'goal':
+                            goal_pos = (x, y)
+                        elif cell.type == 'key':
+                            key_pos = (x, y)
+                            
+            # Helper: Find an empty tile within a certain distance range from the agent
+            def find_empty_in_range(min_dist, max_dist):
+                candidates = []
+                for dx in range(-max_dist, max_dist + 1):
+                    for dy in range(-max_dist, max_dist + 1):
+                        nx, ny = agent_x + dx, agent_y + dy
+                        if 1 <= nx < width - 1 and 1 <= ny < height - 1:
+                            dist = abs(nx - agent_x) + abs(ny - agent_y)
+                            if min_dist <= dist <= max_dist:
+                                if grid.get(nx, ny) is None and (nx, ny) != (agent_x, agent_y):
+                                    candidates.append((nx, ny))
+                if candidates:
+                    # Sort candidates by distance (closest first for stability)
+                    candidates.sort(key=lambda p: abs(p[0] - agent_x) + abs(p[1] - agent_y))
+                    return candidates[0]
+                return None
+
+            # 2. Relocate objects based on the curriculum stage
+            if self.stage == 1:
+                # Stage 1: Very close (distance 1-2)
+                if goal_pos:
+                    new_goal = find_empty_in_range(1, 2)
+                    if new_goal:
+                        goal_obj = grid.get(*goal_pos)
+                        grid.set(*goal_pos, None)
+                        grid.set(*new_goal, goal_obj)
+                if key_pos:
+                    new_key = find_empty_in_range(1, 2)
+                    if new_key:
+                        key_obj = grid.get(*key_pos)
+                        grid.set(*key_pos, None)
+                        grid.set(*new_key, key_obj)
+                        
+            elif self.stage == 2:
+                # Stage 2: Medium distance (distance 3-4)
+                if goal_pos:
+                    new_goal = find_empty_in_range(3, 4)
+                    if new_goal:
+                        goal_obj = grid.get(*goal_pos)
+                        grid.set(*goal_pos, None)
+                        grid.set(*new_goal, goal_obj)
+                if key_pos:
+                    new_key = find_empty_in_range(3, 4)
+                    if new_key:
+                        key_obj = grid.get(*key_pos)
+                        grid.set(*key_pos, None)
+                        grid.set(*new_key, key_obj)
+
+            # Regenerate the raw observation dictionary because we modified the grid
+            obs = self.unwrapped.gen_obs()
+            
+        return obs, info
 
 
-def make_env(env_id, seed, action_set, capture_video=False, run_name="", max_steps=None):
+def make_env(env_id, seed, action_set, capture_video=False, run_name="", max_steps=None, curriculum_stage=3):
     """
     Creates a supported discrete-control environment and applies the wrappers
     needed by our DQN pipeline. MiniGrid uses its existing custom wrappers,
@@ -380,6 +465,10 @@ def make_env(env_id, seed, action_set, capture_video=False, run_name="", max_ste
         action_map = minigrid_action_map(env_id, action_set)
         if action_map is not None:
             env = MiniGridActionSubsetWrapper(env, action_map)
+
+        # Apply CurriculumWrapper before the Observation Wrappers so that
+        # the observation wrappers correctly wrap the modified grid.
+        env = CurriculumWrapper(env, curriculum_stage)
 
         env = FullyObsWrapper(env)
         env = ImgObsWrapper(env)
@@ -724,9 +813,13 @@ def parse_args(default_exp_name, use_shaping):
     # --cuda: Whether to use GPU acceleration (if available)
     parser.add_argument("--cuda", type=lambda x: str(x).lower() == "true", default=True)
 
-    # --- Model Saving ---
+    # --- Model Saving & Loading ---
     # --save-model: Whether to save the trained Q-Network weights to disk as q_net.pt
     parser.add_argument("--save-model", type=lambda x: str(x).lower() == "true", default=True)
+    # --load-model: Path to a pre-trained q_net.pt to load before training
+    parser.add_argument("--load-model", type=str, default="")
+    # --curriculum-stage: Used in the CurriculumWrapper. 1=easy, 2=medium, 3=hard
+    parser.add_argument("--curriculum-stage", type=int, default=3)
 
     # --- Reward Shaping ---
     # --stuck-penalty: Negative reward applied when the agent's observation doesn't change
@@ -738,6 +831,10 @@ def parse_args(default_exp_name, use_shaping):
     parser.add_argument("--log-interval", type=int, default=1000)
     # --results-dir: Parent directory where run folders are created
     parser.add_argument("--results-dir", type=str, default="results")
+    # --run-dir: Explicit directory to save/append to (used for curriculum stages)
+    parser.add_argument("--run-dir", type=str, default="")
+    # --global-step-offset: Starting step number (used when chaining curriculum stages)
+    parser.add_argument("--global-step-offset", type=int, default=0)
 
     # --- Optional: Weights & Biases Integration ---
     # --track: Enable Weights & Biases (wandb) logging for cloud-based experiment tracking
@@ -806,10 +903,15 @@ def train(args, use_shaping):
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # --- Run Directory Setup ---
-    # Create a unique directory name using: environment__experiment__seed__timestamp
-    # Example: "MiniGrid-Empty-8x8-v0__dqn_baseline__1__1718300000"
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
-    run_dir = Path(args.results_dir) / run_name
+    # If run_dir is explicitly provided (e.g., continuing a curriculum), use it.
+    # Otherwise, create a unique directory name using: environment__experiment__seed__timestamp
+    if args.run_dir:
+        run_dir = Path(args.run_dir)
+        run_name = run_dir.name
+    else:
+        run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+        run_dir = Path(args.results_dir) / run_name
+        
     run_dir.mkdir(parents=True, exist_ok=True)
     # Save the full configuration as JSON for later reference and reproducibility
     with open(run_dir / "config.json", "w", encoding="utf-8") as f:
@@ -840,7 +942,15 @@ def train(args, use_shaping):
     # --- Environment Setup ---
     # Pass max_steps only if the user explicitly set it (i.e. not the sentinel -1).
     max_steps_override = args.max_steps if args.max_steps > 0 else None
-    env = make_env(args.env_id, args.seed, args.action_set, args.capture_video, run_name, max_steps_override)
+    env = make_env(
+        args.env_id, 
+        args.seed, 
+        args.action_set, 
+        args.capture_video, 
+        run_name, 
+        max_steps_override,
+        curriculum_stage=args.curriculum_stage
+    )
     obs, _ = env.reset(seed=args.seed)
 
     # Get observation and action space dimensions from the wrapped environment
@@ -862,6 +972,20 @@ def train(args, use_shaping):
     #     The target network is periodically updated by copying weights from q_net.
     q_net = QNetwork(obs_dim, num_actions, args.hidden_size).to(device)
     target_net = QNetwork(obs_dim, num_actions, args.hidden_size).to(device)
+    
+    # If loading a pre-trained model (e.g. for curriculum learning across stages)
+    if args.load_model:
+        print(f"[{args.exp_name}] Loading pre-trained model from {args.load_model}")
+        q_net.load_state_dict(torch.load(args.load_model, map_location=device))
+        
+        # When continuing from a previous stage, we shouldn't spend thousands of steps
+        # doing purely random actions, because the network is already trained.
+        args.learning_starts = 0
+        
+        # We also shouldn't start epsilon at 1.0. A small bump (e.g., 0.3) helps it 
+        # explore the new difficulty without forgetting its old knowledge.
+        args.start_e = 0.3
+
     target_net.load_state_dict(q_net.state_dict())  # Initialize target_net with same weights
 
     # Adam optimizer: adjusts q_net's weights to minimize the TD loss
@@ -873,8 +997,9 @@ def train(args, use_shaping):
     # --- CSV Logging Setup ---
     # episodes.csv: One row per completed episode (return, length, goal reached, epsilon)
     # metrics.csv: One row per log_interval steps (loss, Q-values, stuck rate)
-    episode_file = open(run_dir / "episodes.csv", "w", newline="", encoding="utf-8")
-    metric_file = open(run_dir / "metrics.csv", "w", newline="", encoding="utf-8")
+    file_mode = "a" if args.run_dir and (run_dir / "episodes.csv").exists() else "w"
+    episode_file = open(run_dir / "episodes.csv", file_mode, newline="", encoding="utf-8")
+    metric_file = open(run_dir / "metrics.csv", file_mode, newline="", encoding="utf-8")
     episode_writer = csv.DictWriter(
         episode_file,
         fieldnames=["global_step", "episodic_return", "episodic_length", "goal_reached", "epsilon"],
@@ -883,8 +1008,9 @@ def train(args, use_shaping):
         metric_file,
         fieldnames=["global_step", "epsilon", "td_loss", "q_value", "max_q", "stuck_rate", "mean_penalty"],
     )
-    episode_writer.writeheader()
-    metric_writer.writeheader()
+    if file_mode == "w":
+        episode_writer.writeheader()
+        metric_writer.writeheader()
 
     # --- Rolling Statistics ---
     # deque with maxlen automatically discards old values, giving us a sliding window
@@ -900,14 +1026,16 @@ def train(args, use_shaping):
 
     # --- Main Loop ---
     pbar = tqdm(range(args.total_timesteps), desc=args.exp_name)
-    for global_step in pbar:
+    for local_step in pbar:
+        global_step = local_step + args.global_step_offset
+        
         # ---- EPSILON-GREEDY ACTION SELECTION ----
         # Calculate current exploration rate (decays linearly over training)
         epsilon = linear_schedule(
             args.start_e,
             args.end_e,
             args.exploration_fraction * args.total_timesteps,
-            global_step,
+            local_step,
         )
 
         was_random = False

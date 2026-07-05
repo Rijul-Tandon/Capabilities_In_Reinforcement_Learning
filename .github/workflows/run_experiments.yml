@@ -13,7 +13,7 @@ env:
 
 jobs:
   train:
-    name: Train (${{ matrix.agent }}, ${{ matrix.env_id }}, seed ${{ matrix.seed }})
+    name: Train (${{ matrix.agent }}, ${{ matrix.env_id }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false  # If one run fails, keep running the others
@@ -27,10 +27,6 @@ jobs:
           - random_agent
           - dqn_baseline
           - dqn_reward_shaping
-        seed:
-          - 1
-          - 2
-          - 3
 
     steps:
       - name: Checkout Code
@@ -45,30 +41,80 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
         
-      - name: Run Agent (100k Steps, all defaults)
+      - name: Run Agent (Curriculum: 3 Stages, 200k Steps Each)
         run: |
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
-          TIMESTEPS=100000
+          TIMESTEPS=200000
           EXPLORE_FRAC=0.60
-
-          if [ "${{ matrix.env_id }}" != "MiniGrid-Empty-6x6-v0" ]; then
-            # For DoorKey, FourRooms, and MultiRoom, give them 500k steps and slow decay
-            TIMESTEPS=500000
-            EXPLORE_FRAC=0.80
-          fi
           
-          python src/${{ matrix.agent }}.py \
-            --env-id ${{ matrix.env_id }} \
-            --total-timesteps $TIMESTEPS \
-            --seed ${{ matrix.seed }} \
-            --max-steps $MAX_STEPS \
-            --exploration-fraction $EXPLORE_FRAC \
-            --fixed-layout
+          if [ "${{ matrix.agent }}" == "random_agent" ]; then
+            # Random agent doesn't learn, so it doesn't need a curriculum or loaded models.
+            # We just run it 3 times sequentially to generate 3 logs that match the DQNs.
+            # We use a single run-dir and step offsets so it outputs a continuous 600k log.
+            RUN_DIR="results/${{ matrix.env_id }}__${{ matrix.agent }}__curriculum"
+            for stage in 1 2 3; do
+              echo "Running random_agent stage $stage"
+              OFFSET=$(( (stage - 1) * TIMESTEPS ))
+              python src/${{ matrix.agent }}.py \
+                --env-id ${{ matrix.env_id }} \
+                --total-timesteps $TIMESTEPS \
+                --seed $stage \
+                --max-steps $MAX_STEPS \
+                --fixed-layout \
+                --run-dir $RUN_DIR \
+                --global-step-offset $OFFSET
+            done
+          else
+            # DQN Agents: Curriculum Learning (Stage 1 -> Stage 2 -> Stage 3)
+            RUN_DIR="results/${{ matrix.env_id }}__${{ matrix.agent }}__curriculum"
+            
+            # Stage 1: Easy (Goal/Key very close)
+            echo "--- STAGE 1 (Easy) ---"
+            python src/${{ matrix.agent }}.py \
+              --env-id ${{ matrix.env_id }} \
+              --total-timesteps $TIMESTEPS \
+              --seed 1 \
+              --max-steps $MAX_STEPS \
+              --exploration-fraction $EXPLORE_FRAC \
+              --fixed-layout \
+              --curriculum-stage 1 \
+              --run-dir $RUN_DIR
+              
+            MODEL_PATH="$RUN_DIR/q_net.pt"
+            
+            # Stage 2: Medium (Goal/Key medium distance)
+            echo "--- STAGE 2 (Medium) ---"
+            python src/${{ matrix.agent }}.py \
+              --env-id ${{ matrix.env_id }} \
+              --total-timesteps $TIMESTEPS \
+              --seed 2 \
+              --max-steps $MAX_STEPS \
+              --exploration-fraction $EXPLORE_FRAC \
+              --fixed-layout \
+              --curriculum-stage 2 \
+              --load-model $MODEL_PATH \
+              --run-dir $RUN_DIR \
+              --global-step-offset 200000
+              
+            # Stage 3: Hard (Fully Randomized)
+            echo "--- STAGE 3 (Hard) ---"
+            python src/${{ matrix.agent }}.py \
+              --env-id ${{ matrix.env_id }} \
+              --total-timesteps $TIMESTEPS \
+              --seed 3 \
+              --max-steps $MAX_STEPS \
+              --exploration-fraction $EXPLORE_FRAC \
+              --fixed-layout \
+              --curriculum-stage 3 \
+              --load-model $MODEL_PATH \
+              --run-dir $RUN_DIR \
+              --global-step-offset 400000
+          fi
           
       - name: Upload Run Results
         uses: actions/upload-artifact@v4
         with:
-          name: result_${{ matrix.agent }}_${{ matrix.env_id }}_seed${{ matrix.seed }}
+          name: result_${{ matrix.agent }}_${{ matrix.env_id }}
           path: results/
           retention-days: 14
 
