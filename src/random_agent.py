@@ -180,8 +180,13 @@ def main():
     counts_file = run_dir / "state_action_counts.npy"
     if args.run_dir and counts_file.exists():
         state_action_counts = np.load(counts_file)
+        state_action_counts_second_half = np.load(run_dir / "state_action_counts_second_half.npy")
     else:
         state_action_counts = np.zeros(
+            (env.unwrapped.width, env.unwrapped.height, 4, num_actions), 
+            dtype=np.int64
+        )
+        state_action_counts_second_half = np.zeros(
             (env.unwrapped.width, env.unwrapped.height, 4, num_actions), 
             dtype=np.int64
         )
@@ -235,6 +240,8 @@ def main():
         ax, ay = env.unwrapped.agent_pos
         ad = env.unwrapped.agent_dir
         state_action_counts[ax, ay, ad, action] += 1
+        if local_step >= args.total_timesteps / 2:
+            state_action_counts_second_half[ax, ay, ad, action] += 1
 
         # Step the environment with the random action.
         # Returns: next_obs, reward, terminated (goal reached), truncated (time limit), info
@@ -274,6 +281,7 @@ def main():
     
     # Save the cumulative state-action counts
     np.save(run_dir / "state_action_counts.npy", state_action_counts)
+    np.save(run_dir / "state_action_counts_second_half.npy", state_action_counts_second_half)
     
     env.close()
     print(f"Done. Results: {run_dir}")

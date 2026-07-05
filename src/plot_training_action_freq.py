@@ -42,22 +42,34 @@ def get_dirs_by_seed(results_dir, env_id, exp_name):
     return dirs
 
 def extract_layout(env):
-    """Extracts walls from the environment for overlaying on the plot."""
+    """Extracts walls and annotations from the environment for overlaying on the plot."""
     width = env.unwrapped.width
     height = env.unwrapped.height
     grid = env.unwrapped.grid
     
     wall_mask = np.zeros((width, height), dtype=bool)
+    annotations = {}
+    
+    # Start position
+    start_pos = tuple(env.unwrapped.agent_pos)
+    annotations[start_pos] = "S"
     
     for x in range(width):
         for y in range(height):
             cell = grid.get(x, y)
-            if cell is not None and cell.type == "wall":
-                wall_mask[x, y] = True
+            if cell is not None:
+                if cell.type == "wall":
+                    wall_mask[x, y] = True
+                elif cell.type == "goal":
+                    annotations[(x, y)] = "G"
+                elif cell.type == "key":
+                    annotations[(x, y)] = "K"
+                elif cell.type == "door":
+                    annotations[(x, y)] = "D"
                 
-    return wall_mask, width, height
+    return wall_mask, annotations, width, height
 
-def plot_3x4_frequencies(env_id, results_dir, seed, action_set):
+def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title_suffix="(All Steps)"):
     # Find directories
     random_dirs = get_dirs_by_seed(results_dir, env_id, "random_agent")
     baseline_dirs = get_dirs_by_seed(results_dir, env_id, "ddqn_baseline")
@@ -84,16 +96,26 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set):
 
     # Dummy env to get layout and action names
     env = make_env(env_id, seed, action_set, capture_video=False, run_name="dummy", max_steps=10)
-    env.reset()
-    wall_mask, width, height = extract_layout(env)
+    env.reset(seed=seed)
+    wall_mask, annotations, width, height = extract_layout(env)
     
     num_actions = env.action_space.n
     names = action_names(env_id, action_set, num_actions)
     env.close()
 
+    # Find the indices for pickup and toggle
+    try:
+        pickup_idx = names.index("pickup")
+    except ValueError:
+        pickup_idx = -1
+    try:
+        toggle_idx = names.index("toggle")
+    except ValueError:
+        toggle_idx = -1
+
     # Create 3x4 grid
     fig, axes = plt.subplots(3, 4, figsize=(20, 15))
-    fig.suptitle(f"Cumulative Action Frequencies During Training ({env_id} | Seed {seed})", fontsize=20, y=0.95)
+    fig.suptitle(f"Cumulative Action Frequencies During Training {title_suffix} ({env_id} | Seed {seed})", fontsize=20, y=0.95)
 
     abbr_map = {
         "left": "L", "right": "R", "forward": "F",
@@ -102,8 +124,9 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set):
 
     for row, (agent_name, run_dir) in enumerate(agents):
         # Load the tracking array
-        if run_dir and (run_dir / "state_action_counts.npy").exists():
-            counts = np.load(run_dir / "state_action_counts.npy")
+        counts_path = run_dir / f"state_action_counts{suffix}.npy" if run_dir else None
+        if counts_path and counts_path.exists():
+            counts = np.load(counts_path)
             # shape = (width, height, 4, num_actions)
         else:
             counts = np.zeros((width, height, 4, num_actions), dtype=np.int64)
@@ -119,13 +142,19 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set):
             if row == 0:
                 ax.set_title(f"Facing {d_name}", fontsize=16)
 
-            # We want to color the cell based on the total number of actions taken
-            # in that direction. We'll use a log scale so heavily visited areas don't wash out everything.
-            dir_total = counts[:, :, d_idx, :].sum(axis=-1)
+            # We want to color the cell based on the total number of Pickup and Toggle actions
+            # since these are the "futile" actions that get masked by reward shaping.
+            if pickup_idx != -1 and toggle_idx != -1:
+                pt_total = counts[:, :, d_idx, pickup_idx] + counts[:, :, d_idx, toggle_idx]
+            elif pickup_idx != -1:
+                pt_total = counts[:, :, d_idx, pickup_idx]
+            elif toggle_idx != -1:
+                pt_total = counts[:, :, d_idx, toggle_idx]
+            else:
+                pt_total = np.zeros((width, height))
             
             # Create a heatmap background (transpose because imshow expects (y, x))
-            # We use log1p to compress the dynamic range of training counts (which can hit 100k+)
-            heatmap = ax.imshow(np.log1p(dir_total).T, cmap="Blues", origin="upper", aspect="equal")
+            heatmap = ax.imshow(np.log1p(pt_total).T, cmap="Blues", origin="upper", aspect="equal")
             
             # Overlay walls in dark gray
             wall_layer = np.full((height, width, 4), [0.0, 0.0, 0.0, 0.0])
@@ -139,34 +168,30 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set):
                         continue
                         
                     cell_counts = counts[x, y, d_idx, :]
-                    total_cell = cell_counts.sum()
-                    if total_cell == 0:
-                        continue
-                        
+                    
                     lines = []
-                    # Only show actions that were taken at least once
-                    for a_idx, a_name in enumerate(names):
-                        c = cell_counts[a_idx]
-                        if c > 0:
-                            abbr = abbr_map.get(a_name, a_name)
-                            # Convert count to K if it's large
-                            c_str = f"{c/1000:.1f}k" if c >= 1000 else str(c)
-                            lines.append(f"{abbr}:{c_str}")
+                    # Only show Pickup and Toggle
+                    if pickup_idx != -1:
+                        c = cell_counts[pickup_idx]
+                        c_str = f"{c/1000:.1f}k" if c >= 1000 else str(c)
+                        lines.append(f"P: {c_str}")
+                    if toggle_idx != -1:
+                        c = cell_counts[toggle_idx]
+                        c_str = f"{c/1000:.1f}k" if c >= 1000 else str(c)
+                        lines.append(f"T: {c_str}")
                             
                     if lines:
-                        # Split into columns if there are many actions to fit in the box
-                        if len(lines) > 3:
-                            half = len(lines) // 2 + len(lines) % 2
-                            col1 = "\n".join(lines[:half])
-                            col2 = "\n".join(lines[half:])
-                            text = f"{col1}\n--\n{col2}"
-                        else:
-                            text = "\n".join(lines)
-                            
+                        text = "\n".join(lines)
                         # If the cell is very dark (high count), use white text
-                        text_color = "white" if np.log1p(total_cell) > np.log1p(dir_total.max()) * 0.5 else "black"
+                        text_color = "white" if np.log1p(pt_total[x, y]) > np.log1p(pt_total.max()) * 0.5 else "black"
+                        ax.text(x, y, text, ha="center", va="center", fontsize=8, color=text_color, fontweight="bold")
                         
-                        ax.text(x, y, text, ha="center", va="center", fontsize=7, color=text_color, fontweight="bold")
+                    # Add annotation (S, G, K, D) if present
+                    if (x, y) in annotations:
+                        label = annotations[(x, y)]
+                        # Draw label in bottom-right corner of the cell
+                        ax.text(x + 0.35, y + 0.35, label, color='red', fontsize=10, 
+                                fontweight='bold', ha='center', va='center')
 
             # Grid lines
             ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
@@ -175,9 +200,8 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set):
             ax.tick_params(which="both", bottom=False, left=False, labelbottom=False, labelleft=False)
 
     # Action Legend
-    legend_parts = [f"{abbr_map.get(n, n)}={n}" for n in names]
-    legend_text = "  |  ".join(legend_parts)
-    fig.text(0.5, 0.02, f"Action key:  {legend_text}", ha="center", va="bottom", fontsize=12,
+    legend_text = "P = pickup  |  T = toggle"
+    fig.text(0.5, 0.02, f"Action key:  {legend_text}    ---    Red labels (S=Start, G=Goal, K=Key, D=Door)", ha="center", va="bottom", fontsize=12,
              bbox=dict(boxstyle="round,pad=0.3", facecolor="#f0f0f0", edgecolor="#aaaaaa", alpha=0.8))
 
     plt.tight_layout(rect=[0, 0.05, 1, 0.93])
@@ -185,7 +209,7 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set):
     # Save inside the sub-folder requested by the user
     output_dir = Path("plots/action_freq_plots")
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{env_id}_training_action_freq_seed{seed}.png"
+    output_path = output_dir / f"{env_id}_training_action_freq{suffix}_seed{seed}.png"
     plt.savefig(output_path, dpi=150)
     plt.close(fig)
     print(f"Plot saved to {output_path}")
@@ -208,5 +232,7 @@ if __name__ == "__main__":
         raise SystemExit(1)
         
     for seed in seeds:
-        print(f"Generating training action freq plot for {args.env_id} seed={seed} ...")
-        plot_3x4_frequencies(args.env_id, args.results_dir, seed, args.action_set)
+        print(f"Generating training action freq plot for {args.env_id} seed={seed} (All Steps) ...")
+        plot_3x4_frequencies(args.env_id, args.results_dir, seed, args.action_set, suffix="", title_suffix="(All Steps)")
+        print(f"Generating training action freq plot for {args.env_id} seed={seed} (Second Half) ...")
+        plot_3x4_frequencies(args.env_id, args.results_dir, seed, args.action_set, suffix="_second_half", title_suffix="(Second Half)")
