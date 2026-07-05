@@ -107,6 +107,10 @@ def parse_args():
 
     # --results-dir: Parent directory where run folders are created.
     parser.add_argument("--results-dir", type=str, default="results")
+    # --run-dir: Explicit directory to save/append to (used for curriculum stages)
+    parser.add_argument("--run-dir", type=str, default="")
+    # --global-step-offset: Starting step number (used when chaining curriculum stages)
+    parser.add_argument("--global-step-offset", type=int, default=0)
 
     # --- Fake Epsilon Schedule Arguments ---
     # These control the fake epsilon computation for consistent plot X-axes.
@@ -143,8 +147,13 @@ def main():
 
     # Create a uniquely named run directory using the same convention as DQN agents:
     # Format: {env_id}__{exp_name}__{seed}__{unix_timestamp}
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
-    run_dir = Path(args.results_dir) / run_name
+    if args.run_dir:
+        run_dir = Path(args.run_dir)
+        run_name = run_dir.name
+    else:
+        run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+        run_dir = Path(args.results_dir) / run_name
+        
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # Save the configuration as JSON so we can identify this run later.
@@ -165,12 +174,14 @@ def main():
     # --- CSV Logging Setup ---
     # The CSV format matches dqn_common's episodes.csv exactly so that
     # plot_comparison.py can read and plot all agents together.
-    episode_file = open(run_dir / "episodes.csv", "w", newline="", encoding="utf-8")
+    file_mode = "a" if args.run_dir and (run_dir / "episodes.csv").exists() else "w"
+    episode_file = open(run_dir / "episodes.csv", file_mode, newline="", encoding="utf-8")
     episode_writer = csv.DictWriter(
         episode_file,
         fieldnames=["global_step", "episodic_return", "episodic_length", "goal_reached", "epsilon"],
     )
-    episode_writer.writeheader()
+    if file_mode == "w":
+        episode_writer.writeheader()
 
     # Track cumulative reward and step count for the current episode
     episode_return = 0.0
@@ -178,7 +189,9 @@ def main():
 
     # --- Main Loop ---
     pbar = tqdm(range(args.total_timesteps), desc=args.exp_name)
-    for global_step in pbar:
+    for local_step in pbar:
+        global_step = local_step + args.global_step_offset
+        
         # Compute the "fake" epsilon value.
         # This agent ALWAYS acts randomly regardless of epsilon.
         # We only compute this so the X-axis in our comparison plots (Return vs Epsilon)
@@ -187,7 +200,7 @@ def main():
             args.start_e,                                    # Starting epsilon (1.0)
             args.end_e,                                      # Ending epsilon (0.3)
             args.exploration_fraction * args.total_timesteps, # Duration of decay
-            global_step,                                     # Current step
+            local_step,                                      # Current step within stage
         )
 
         # Take a completely random action from the allowed action space.

@@ -51,6 +51,7 @@ from pathlib import Path
 #   charts.  plt.subplots() creates grids of axes, ax.imshow() renders 2-D
 #   arrays as colour-mapped images, and ax.bar() draws grouped bar charts.
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as path_effects
 
 # matplotlib.colors: Provides Normalize and TwoSlopeNorm for mapping data
 #   values to the [0, 1] colour-map range.  TwoSlopeNorm centres a diverging
@@ -302,8 +303,12 @@ def plot_heatmap_for_env(env_id, dqn_grid, ddqn_grid, wall_mask, annotations, se
     width, height, num_actions = dqn_grid.shape
     
     # The background color of the cell will be based on the maximum Q-value
-    dqn_grid_max = np.nanmax(dqn_grid, axis=2)
-    ddqn_grid_max = np.nanmax(ddqn_grid, axis=2)
+    # Use warnings.catch_warnings to ignore the expected all-NaN slice warnings for wall cells
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        dqn_grid_max = np.nanmax(dqn_grid, axis=2)
+        ddqn_grid_max = np.nanmax(ddqn_grid, axis=2)
+    
     diff_grid_max = dqn_grid_max - ddqn_grid_max  # positive ⇒ DQN overestimates
     
     # For the text inside the cell, we want the specific Q-values or difference
@@ -365,7 +370,7 @@ def plot_heatmap_for_env(env_id, dqn_grid, ddqn_grid, wall_mask, annotations, se
                         ax.text(x + 0.45, y - 0.45, annotations[(x, y)],
                                 ha='right', va='top', color='white', 
                                 fontsize=10, fontweight='bold',
-                                path_effects=[plt.matplotlib.patheffects.withStroke(linewidth=2, foreground='black')])
+                                path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
                     
                     # Draw action Q-values as text inside the cell
                     q_vals = grid_full[x, y, :]
@@ -571,8 +576,10 @@ def main():
             # The q_grids are (W, H, num_actions). 
             # We take the max over actions to compute the average overestimation 
             # for the bar chart.
-            dqn_grid_max = np.nanmax(dqn_grid, axis=2)
-            ddqn_grid_max = np.nanmax(ddqn_grid, axis=2)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                dqn_grid_max = np.nanmax(dqn_grid, axis=2)
+                ddqn_grid_max = np.nanmax(ddqn_grid, axis=2)
 
             seed_dqn_avgs.append(np.nanmean(dqn_grid_max))
             seed_ddqn_avgs.append(np.nanmean(ddqn_grid_max))
