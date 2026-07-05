@@ -684,7 +684,7 @@ def linear_schedule(start_e, end_e, duration, step):
     slope = (end_e - start_e) / duration
     return max(slope * step + start_e, end_e)
 
-def polynomial_schedule(start_e, end_e, duration, step, power=3.0):
+def polynomial_schedule(start_e, end_e, duration, step, power=4.0):
     """
     Computes the current epsilon value for epsilon-greedy exploration using a polynomial decay.
     
@@ -785,7 +785,7 @@ def parse_args(default_exp_name, use_shaping):
     #   needs to keep exploring to handle new configurations.
     parser.add_argument("--end-e", type=float, default=0.1)
     # --exploration-fraction: What fraction of training to decay epsilon over
-    parser.add_argument("--exploration-fraction", type=float, default=0.60)
+    parser.add_argument("--exploration-fraction", type=float, default=0.80)
     
     # --epsilon-schedule: Which decay schedule to use for epsilon
     parser.add_argument("--epsilon-schedule", choices=["linear", "polynomial"], default="linear")
@@ -983,6 +983,17 @@ def train(args, use_shaping):
     # Create the replay buffer to store past experience
     rb = ReplayBuffer(args.buffer_size, obs_shape, device)
 
+    # --- State-Action Frequency Tracking ---
+    # We track how many times each action was taken in each (x, y, dir) state.
+    counts_file = run_dir / "state_action_counts.npy"
+    if args.run_dir and counts_file.exists():
+        state_action_counts = np.load(counts_file)
+    else:
+        state_action_counts = np.zeros(
+            (env.unwrapped.width, env.unwrapped.height, 4, num_actions), 
+            dtype=np.int64
+        )
+
     # --- CSV Logging Setup ---
     # episodes.csv: One row per completed episode (return, length, goal reached, epsilon)
     # metrics.csv: One row per log_interval steps (loss, Q-values, stuck rate)
@@ -1048,6 +1059,12 @@ def train(args, use_shaping):
                 obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
                 q_values = q_net(obs_tensor)
                 action = int(torch.argmax(q_values, dim=1).item())
+
+        # Track the action taken at the current state
+        # (Must do this before env.step() since env.step() changes agent_pos/dir)
+        ax, ay = env.unwrapped.agent_pos
+        ad = env.unwrapped.agent_dir
+        state_action_counts[ax, ay, ad, action] += 1
 
         # Execute the chosen action in the environment
         next_obs, env_reward, terminated, truncated, info = env.step(action)
@@ -1211,6 +1228,9 @@ def train(args, use_shaping):
 
     episode_file.close()
     metric_file.close()
+    # Save the cumulative state-action counts
+    np.save(run_dir / "state_action_counts.npy", state_action_counts)
+
     writer.close()
     env.close()
     print(f"Done. Results: {run_dir}")

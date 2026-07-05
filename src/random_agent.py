@@ -174,6 +174,17 @@ def main():
     # Reset the environment and get the initial observation.
     # The underscore (_) discards the 'info' dict returned by reset().
     obs, _ = env.reset(seed=args.seed)
+    num_actions = env.action_space.n
+
+    # --- State-Action Frequency Tracking ---
+    counts_file = run_dir / "state_action_counts.npy"
+    if args.run_dir and counts_file.exists():
+        state_action_counts = np.load(counts_file)
+    else:
+        state_action_counts = np.zeros(
+            (env.unwrapped.width, env.unwrapped.height, 4, num_actions), 
+            dtype=np.int64
+        )
 
     # --- CSV Logging Setup ---
     # The CSV format matches dqn_common's episodes.csv exactly so that
@@ -220,6 +231,11 @@ def main():
         # env.action_space.sample() returns a uniformly random integer in [0, num_actions).
         action = env.action_space.sample()
 
+        # Track the action taken at the current state
+        ax, ay = env.unwrapped.agent_pos
+        ad = env.unwrapped.agent_dir
+        state_action_counts[ax, ay, ad, action] += 1
+
         # Step the environment with the random action.
         # Returns: next_obs, reward, terminated (goal reached), truncated (time limit), info
         next_obs, env_reward, terminated, truncated, _ = env.step(action)
@@ -255,6 +271,10 @@ def main():
 
     # --- Cleanup ---
     episode_file.close()
+    
+    # Save the cumulative state-action counts
+    np.save(run_dir / "state_action_counts.npy", state_action_counts)
+    
     env.close()
     print(f"Done. Results: {run_dir}")
 

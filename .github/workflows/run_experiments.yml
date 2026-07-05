@@ -105,6 +105,7 @@ jobs:
             echo "Plotting $env..."
             python src/plot_comparison.py --env-id $env
             python src/plot_state_action_freq.py --env-id $env
+            python src/plot_training_action_freq.py --env-id $env
           done
           
       - name: Commit and Push Plots
@@ -124,5 +125,6 @@ jobs:
           # Pull latest changes to avoid conflicts, add plots, commit, and push
           git pull origin main
           git add $DIR_NAME/
+          git add plots/action_freq_plots/
           git commit -m "Auto-generated plots for 100k steps ($TIMESTAMP)" || echo "No changes to commit"
           git push origin main
