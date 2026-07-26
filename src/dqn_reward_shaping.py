@@ -3,7 +3,7 @@ dqn_reward_shaping.py - Double DQN Agent WITH Reward Shaping
 =============================================================
 This script trains a Double DQN (DDQN) agent on a MiniGrid environment
 WITH reward shaping enabled. In addition to the environment's sparse reward,
-the agent receives a small negative penalty (default: -0.02) whenever its
+the agent receives a negative penalty (default: -0.10) whenever its
 observation does not change between steps.
 
 When does the observation stay the same?
@@ -43,5 +43,5 @@ if __name__ == "__main__":
     # train() runs the full DQN training loop:
     #   args: all hyperparameters (env_id, timesteps, learning_rate, epsilon schedule, etc.)
     #   use_shaping=True: the agent receives a penalty when its observation doesn't change
-    #     The penalty value is controlled by --stuck-penalty (default: -0.02)
+    #     The penalty value is controlled by --stuck-penalty (default: -0.10)
     train(args, use_shaping=True)

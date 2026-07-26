@@ -81,7 +81,7 @@ python src\plot_state_action_freq.py --env-id MiniGrid-FourRooms-v0
   - Empty / FourRooms: `left`, `right`, `forward` (3 actions)
   - DoorKey / UnlockPickup: `left`, `right`, `forward`, `pickup`, `toggle` (5 actions)
 - Use `--action-set full` if you want all seven MiniGrid actions.
-- The shaped agent uses `--stuck-penalty -0.01` by default.
+- The shaped agent uses `--stuck-penalty -0.10` by default.
 - Minimum epsilon is `0.3` for all agents (never drops below 30% exploration).
 - Environment return is logged separately from shaped learning reward, so comparison plots use the original MiniGrid reward.
 - The plotting scripts automatically find the **latest** run for each experiment type, so re-running training and then plotting will always show the newest results.

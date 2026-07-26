@@ -813,7 +813,8 @@ def parse_args(default_exp_name, use_shaping):
     # --- Reward Shaping ---
     # --stuck-penalty: Negative reward applied when the agent's observation doesn't change
     #   (e.g., bumping into a wall or doing nothing). Only used when use_shaping=True.
-    parser.add_argument("--stuck-penalty", type=float, default=-0.02)
+    #   A stronger default makes no-op transitions much less attractive than before.
+    parser.add_argument("--stuck-penalty", type=float, default=-0.10)
 
     # --- Logging ---
     # --log-interval: How often (in steps) to write training metrics to CSV and TensorBoard
@@ -1081,10 +1082,10 @@ def train(args, use_shaping):
         # Compare the current and next observations to detect if the agent is "stuck"
         # (e.g., walking into a wall, where the observation doesn't change)
         no_change = observation_unchanged(obs, next_obs, args.no_change_tolerance)
-        # Apply a small negative penalty if shaping is enabled and the agent didn't move
-        # CRUCIAL FIX: Only penalize greedy actions. If the agent bumped a wall because
-        # we forced it to take a random exploration action, we do not penalize it.
-        penalty = args.stuck_penalty if use_shaping and not was_random and no_change else 0.0
+        # Apply a negative penalty if shaping is enabled and the agent did not move.
+        # Penalizing all no-change transitions, including exploratory ones, lets the
+        # replay buffer teach the Q-network that the action is bad in this state.
+        penalty = args.stuck_penalty if use_shaping and no_change else 0.0
         # The reward used for training includes the penalty; the original env_reward is
         # used for tracking performance metrics (so plots show true environment reward)
         reward_for_learning = float(env_reward + penalty)

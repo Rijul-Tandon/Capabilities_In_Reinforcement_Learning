@@ -12,7 +12,7 @@ compare four agent types:
 | **Random Agent** | Takes uniformly random actions. Establishes the performance floor. |
 | **Vanilla DQN** | Standard DQN using the original TD target (`max_a Q_target`). Prone to Q-value overestimation. |
 | **DDQN Baseline** | Double DQN — decouples action selection from evaluation to reduce overestimation. No reward shaping. |
-| **DDQN Reward-Shaped** | Same Double DQN with a small penalty (`-0.02`) when an action causes no observable state change (e.g., walking into a wall). |
+| **DDQN Reward-Shaped** | Same Double DQN with a penalty (`-0.10`) when an action causes no observable state change (e.g., walking into a wall). |
 
 The reward shaping approach is a lightweight, environment-agnostic proxy for
 capability-aware learning: if an action has no effect, the agent should learn
@@ -105,7 +105,7 @@ Actions are restricted per environment using `MiniGridActionSubsetWrapper` to pr
 |---|---|
 | Reaching the goal | `1 - 0.9 * (step_count / max_steps)` — a positive value that decreases the longer the agent takes |
 | Any other step | `0.0` (extremely sparse!) |
-| Stuck penalty (shaped agent only) | `-0.02` when `observation == next_observation` |
+| Stuck penalty (shaped agent only) | `-0.10` when `observation == next_observation` |
 
 The shaped agent's penalty is only used for training the neural network. The
 plots always show the **original environment reward** so comparisons are fair.

@@ -92,8 +92,8 @@ from dqn_common import QNetwork, make_env, action_names
 ENV_IDS = [
     "MiniGrid-Empty-6x6-v0",
     "MiniGrid-DoorKey-6x6-v0",
-    "MiniGrid-FourRooms-v0",
-    "MiniGrid-MultiRoom-N2-S4-v0",
+    # "MiniGrid-FourRooms-v0",
+    # "MiniGrid-MultiRoom-N2-S4-v0",
 ]
 
 # MiniGrid direction codes → human-readable labels (used in comments only).

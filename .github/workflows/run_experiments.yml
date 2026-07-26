@@ -21,8 +21,8 @@ jobs:
         env_id:
           - MiniGrid-Empty-6x6-v0
           - MiniGrid-DoorKey-6x6-v0
-          - MiniGrid-FourRooms-v0
-          - MiniGrid-MultiRoom-N2-S4-v0
+          # - MiniGrid-FourRooms-v0
+          # - MiniGrid-MultiRoom-N2-S4-v0
         agent:
           - random_agent
           - dqn_baseline
@@ -52,7 +52,7 @@ jobs:
           EXPLORE_FRAC=0.90
 
           if [ "${{ matrix.env_id }}" != "MiniGrid-Empty-6x6-v0" ]; then
-            # For DoorKey, FourRooms, and MultiRoom, give them 500k steps and slow decay
+            # For DoorKey, give it 500k steps and slow decay
             TIMESTEPS=500000
             EXPLORE_FRAC=0.80
           fi
@@ -101,7 +101,7 @@ jobs:
           
       - name: Generate Comparison and Heatmap Plots
         run: |
-          for env in "MiniGrid-Empty-6x6-v0" "MiniGrid-DoorKey-6x6-v0" "MiniGrid-FourRooms-v0" "MiniGrid-MultiRoom-N2-S4-v0"; do
+          for env in "MiniGrid-Empty-6x6-v0" "MiniGrid-DoorKey-6x6-v0"; do
             echo "Plotting $env..."
             python src/plot_comparison.py --env-id $env
             python src/plot_state_action_freq.py --env-id $env
