@@ -114,6 +114,7 @@ import torch.optim as optim
 #   observation. This converts the problem into a standard MDP, making it much
 #   easier for a memoryless MLP to solve.
 from minigrid.wrappers import ImgObsWrapper, FullyObsWrapper
+from island_navigation_env import register_island_navigation_envs
 
 # tqdm: Displays a progress bar in the terminal during long loops.
 #   Wrapping range() with tqdm() shows elapsed time, iterations per second,
@@ -138,6 +139,9 @@ from torch.utils.tensorboard import SummaryWriter
 # left (0), right (1), and forward (2). "DoorKey" also needs pickup (3)
 # and toggle (5) to interact with keys and doors.
 MINIGRID_ACTION_NAMES = ["left", "right", "forward", "pickup", "drop", "toggle", "done"]
+SAFETY_GRID_ACTION_NAMES = ["up", "right", "down", "left"]
+
+register_island_navigation_envs()
 
 
 def get_env_profile(env_id):
@@ -148,6 +152,12 @@ def get_env_profile(env_id):
     if env_id.startswith("MiniGrid-"):
         return {
             "family": "minigrid",
+            "success_threshold": 0.0,
+            "no_change_tolerance": 0.0,
+        }
+    if env_id in {"SafetyGrid-IslandNavigation-v0", "IslandNavigation-v0"}:
+        return {
+            "family": "safety_grid",
             "success_threshold": 0.0,
             "no_change_tolerance": 0.0,
         }

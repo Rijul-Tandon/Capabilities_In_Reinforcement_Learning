@@ -238,13 +238,13 @@ def get_agent_data(env, q_net, episodes, seed, num_actions, device):
 # MAIN PLOTTING FUNCTION
 # ============================================================================
 
-def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=256, action_set="task"):
+def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=256, action_set="task", include_random=True):
     """
-    Generates the 2x3 comparison plot for all three agents FOR A SPECIFIC SEED.
+    Generates the state/action comparison plot for a specific seed.
     Saves the output as: plots/{env_id}_state_action_freq_seed{seed}.png
 
     Layout:
-      Column 0: Random Agent  | Column 1: Baseline DQN    | Column 2: Reward Shaped DQN
+      Columns: Baseline DQN and Reward Shaped DQN, plus Random Agent on the first seed only
       Row 0: Visit Frequencies  (heatmaps showing where each agent goes)
       Row 1: Action Counts      (text labels: count for every action at every cell)
 
@@ -288,9 +288,9 @@ def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=25
     shaped_model_path   = shaped_models.get(seed)
 
     # Build the list of agents to plot. Each entry is (display_name, q_net_or_None).
-    # The Random Agent has no neural network, so q_net=None.
-    # Random agent is always evaluated with seed 1 regardless of the DQN seed.
-    agents = [("Random Agent", None)]
+    # The Random Agent has no neural network, so q_net=None. We only include it
+    # once across seed-specific plots because one random seed is enough.
+    agents = [("Random Agent", None)] if include_random else []
 
     # --- Load Baseline DQN Model ---
     if baseline_model_path:
@@ -316,9 +316,8 @@ def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=25
         agents.append(("Reward Shaped (Not Found)", None))
 
     # --- Create the Figure ---
-    # 2 rows x 3 columns = 6 subplots
-    # figsize=(18, 10) gives enough space for all heatmaps and text labels
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    # Two rows and one column per plotted agent.
+    fig, axes = plt.subplots(2, len(agents), figsize=(6 * len(agents), 10), squeeze=False)
     # suptitle adds a title above all subplots
     fig.suptitle(
         f"{env_id} - State/Action Frequencies ({episodes} episodes, DQN seed={seed})",
@@ -488,6 +487,7 @@ if __name__ == "__main__":
 
     print(f"Found seeds: {all_seeds} for {args.env_id}")
 
+    first_seed = all_seeds[0]
     for seed in all_seeds:
         print(f"Generating heatmap for seed={seed} ...")
         plot_all_frequencies(
@@ -496,6 +496,7 @@ if __name__ == "__main__":
             episodes=args.episodes,
             seed=seed,
             action_set=args.action_set,
+            include_random=seed == first_seed,
         )
 
     print(f"Done. {len(all_seeds)} heatmap(s) saved to plots/")

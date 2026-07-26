@@ -355,13 +355,15 @@ def main():
     print(f"Found DQN seeds: {all_seeds} for {args.env_id}")
 
     # --- Generate One comparison plot per seed ---
+    first_seed = all_seeds[0] if all_seeds else None
     for seed in all_seeds:
         # Filter each agent's run list to only this seed
-        # Random agent only ran once (seed 1), so we include it in ALL plots
+        # Random agent only runs once, so include it only in the first seed plot.
         filtered = {}
         for exp_name, run_list in runs_by_exp.items():
             if exp_name == "random_agent":
-                filtered[exp_name] = run_list
+                if seed == first_seed:
+                    filtered[exp_name] = run_list[:1]
             else:
                 seed_runs = [(d, c, r, m) for d, c, r, m in run_list if int(c["seed"]) == seed]
                 if seed_runs:

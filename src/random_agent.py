@@ -118,7 +118,7 @@ def parse_args():
     parser.add_argument("--start-e", type=float, default=1.0)
     parser.add_argument("--end-e", type=float, default=0.1)
     # --exploration-fraction: What fraction of training to decay epsilon over
-    parser.add_argument("--exploration-fraction", type=float, default=0.60)
+    parser.add_argument("--exploration-fraction", type=float, default=0.50)
     
     # --epsilon-schedule: Which decay schedule to use for epsilon
     parser.add_argument("--epsilon-schedule", choices=["linear", "polynomial"], default="linear")

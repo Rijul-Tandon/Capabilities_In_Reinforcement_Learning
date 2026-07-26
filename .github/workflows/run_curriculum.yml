@@ -1,4 +1,4 @@
-name: Run Experiments (Curriculum)
+name: Run Experiments (Curriculum, 300k Steps)
 
 on:
   workflow_dispatch:  # Trigger manually from GitHub UI or `gh workflow run`
@@ -41,40 +41,24 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
         
-      - name: "Run Agent (Curriculum: 3 Stages, 200k Steps Each)"
+      - name: "Run Agent (Curriculum: 3 Stages, 100k Steps Each)"
         run: |
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
-          TIMESTEPS=200000
-          EXPLORE_FRAC=0.60
+          TIMESTEPS=100000
+          EXPLORE_FRAC=0.50
           
           if [ "${{ matrix.agent }}" == "random_agent" ]; then
             # =====================================================================
             # RANDOM AGENT BASELINE
             # =====================================================================
-            # The random agent doesn't learn, so it doesn't need curriculum stages 
-            # or model loading. However, to ensure our plotting scripts can compare 
-            # it fairly against the DQN agents, we generate a continuous 600k step 
-            # log by running it 3 times sequentially and appending to the same CSV.
-            
-            # Use a single dedicated output directory for all 3 runs
-            RUN_DIR="results/${{ matrix.env_id }}__${{ matrix.agent }}__curriculum"
-            
-            for stage in 1 2 3; do
-              echo "Running random_agent stage $stage"
-              
-              # Calculate the starting step number for this stage's log entries.
-              # Stage 1: 0, Stage 2: 200000, Stage 3: 400000
-              OFFSET=$(( (stage - 1) * TIMESTEPS ))
-              
-              python src/${{ matrix.agent }}.py \
-                --env-id ${{ matrix.env_id }} \
-                --total-timesteps $TIMESTEPS \
-                --seed $stage \
-                --max-steps $MAX_STEPS \
-                --fixed-layout \
-                --run-dir $RUN_DIR \
-                --global-step-offset $OFFSET
-            done
+            # The random agent does not learn, so one seed/run is enough.
+            python src/${{ matrix.agent }}.py \
+              --env-id ${{ matrix.env_id }} \
+              --total-timesteps $(( 3 * TIMESTEPS )) \
+              --seed 1 \
+              --max-steps $MAX_STEPS \
+              --exploration-fraction $EXPLORE_FRAC \
+              --fixed-layout
           else
             # =====================================================================
             # DQN AGENTS: CURRICULUM LEARNING (Stage 1 -> Stage 2 -> Stage 3)
@@ -83,7 +67,7 @@ jobs:
             # Each command represents a stage in the curriculum. We pass the trained 
             # neural network weights from one stage to the next using --load-model.
             # All 3 stages write to the same RUN_DIR so the logs are concatenated 
-            # into a single, continuous 600k step learning curve.
+            # into a single, continuous 300k step learning curve.
             
             RUN_DIR="results/${{ matrix.env_id }}__${{ matrix.agent }}__curriculum"
             
@@ -106,7 +90,7 @@ jobs:
             # --- STAGE 2 (Medium) ---
             # The Goal/Key spawn a medium distance away. 
             # We load the weights from Stage 1 so the agent doesn't start from scratch.
-            # We offset the logging steps by 200,000 so the CSV continues seamlessly.
+            # We offset the logging steps by 100,000 so the CSV continues seamlessly.
             echo "--- STAGE 2 (Medium) ---"
             python src/${{ matrix.agent }}.py \
               --env-id ${{ matrix.env_id }} \
@@ -118,7 +102,7 @@ jobs:
               --curriculum-stage 2 \
               --load-model $MODEL_PATH \
               --run-dir $RUN_DIR \
-              --global-step-offset 200000
+              --global-step-offset 100000
               
             # --- STAGE 3 (Hard) ---
             # The environment is fully randomized (default MiniGrid behavior).
@@ -134,7 +118,7 @@ jobs:
               --curriculum-stage 3 \
               --load-model $MODEL_PATH \
               --run-dir $RUN_DIR \
-              --global-step-offset 400000
+              --global-step-offset 200000
           fi
           
       - name: Upload Run Results
@@ -195,5 +179,5 @@ jobs:
           # Pull latest changes to avoid conflicts, add plots, commit, and push
           git pull origin main
           git add $DIR_NAME/
-          git commit -m "Auto-generated plots for 100k steps ($TIMESTAMP)" || echo "No changes to commit"
+          git commit -m "Auto-generated plots for 300k curriculum steps ($TIMESTAMP)" || echo "No changes to commit"
           git push origin main
