@@ -785,7 +785,7 @@ def parse_args(default_exp_name, use_shaping):
     #   needs to keep exploring to handle new configurations.
     parser.add_argument("--end-e", type=float, default=0.1)
     # --exploration-fraction: What fraction of training to decay epsilon over
-    parser.add_argument("--exploration-fraction", type=float, default=0.80)
+    parser.add_argument("--exploration-fraction", type=float, default=0.50)
     
     # --epsilon-schedule: Which decay schedule to use for epsilon
     parser.add_argument("--epsilon-schedule", choices=["linear", "polynomial"], default="linear")
