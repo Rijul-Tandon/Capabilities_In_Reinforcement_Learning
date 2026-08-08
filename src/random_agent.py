@@ -116,12 +116,16 @@ def parse_args():
     # These control the fake epsilon computation for consistent plot X-axes.
     # They should match the defaults in dqn_common.parse_args() exactly.
     parser.add_argument("--start-e", type=float, default=1.0)
-    parser.add_argument("--end-e", type=float, default=0.1)
+    parser.add_argument("--end-e", type=float, default=0.05)
     # --exploration-fraction: What fraction of training to decay epsilon over
     parser.add_argument("--exploration-fraction", type=float, default=0.50)
     
     # --epsilon-schedule: Which decay schedule to use for epsilon
     parser.add_argument("--epsilon-schedule", choices=["linear", "polynomial"], default="linear")
+
+    # --exploration-strategy: Accepted for CLI compatibility with DQN agents but ignored
+    #   (the random agent always acts randomly regardless of exploration strategy).
+    parser.add_argument("--exploration-strategy", choices=["epsilon_greedy", "softmax"], default="epsilon_greedy")
 
     # --max-steps: Maximum steps per episode. Mirrors the same flag in dqn_common.
     #   Set to -1 to use each environment's own built-in default.
