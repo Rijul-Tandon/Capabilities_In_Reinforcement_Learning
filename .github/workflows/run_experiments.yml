@@ -7,6 +7,10 @@ on:
         description: 'Max steps per episode (-1 = env default)'
         required: false
         default: '-1'
+      exploration_strategy:
+        description: 'Exploration strategy: epsilon_greedy or softmax'
+        required: false
+        default: 'epsilon_greedy'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -55,6 +59,7 @@ jobs:
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
           TIMESTEPS=300000
           EXPLORE_FRAC=0.50
+          STRATEGY="${{ github.event.inputs.exploration_strategy || 'epsilon_greedy' }}"
           
           python src/${{ matrix.agent }}.py \
             --env-id ${{ matrix.env_id }} \
@@ -63,6 +68,8 @@ jobs:
             --max-steps $MAX_STEPS \
             --exploration-fraction $EXPLORE_FRAC \
             --epsilon-schedule polynomial \
+            --end-e 0.05 \
+            --exploration-strategy $STRATEGY \
             --fixed-layout
           
       - name: Upload Run Results

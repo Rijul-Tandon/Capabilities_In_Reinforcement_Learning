@@ -114,7 +114,6 @@ import torch.optim as optim
 #   observation. This converts the problem into a standard MDP, making it much
 #   easier for a memoryless MLP to solve.
 from minigrid.wrappers import ImgObsWrapper, FullyObsWrapper
-from island_navigation_env import register_island_navigation_envs
 
 # tqdm: Displays a progress bar in the terminal during long loops.
 #   Wrapping range() with tqdm() shows elapsed time, iterations per second,
@@ -139,9 +138,6 @@ from torch.utils.tensorboard import SummaryWriter
 # left (0), right (1), and forward (2). "DoorKey" also needs pickup (3)
 # and toggle (5) to interact with keys and doors.
 MINIGRID_ACTION_NAMES = ["left", "right", "forward", "pickup", "drop", "toggle", "done"]
-SAFETY_GRID_ACTION_NAMES = ["up", "right", "down", "left"]
-
-register_island_navigation_envs()
 
 
 def get_env_profile(env_id):
@@ -152,12 +148,6 @@ def get_env_profile(env_id):
     if env_id.startswith("MiniGrid-"):
         return {
             "family": "minigrid",
-            "success_threshold": 0.0,
-            "no_change_tolerance": 0.0,
-        }
-    if env_id in {"SafetyGrid-IslandNavigation-v0", "IslandNavigation-v0"}:
-        return {
-            "family": "safety_grid",
             "success_threshold": 0.0,
             "no_change_tolerance": 0.0,
         }
@@ -707,6 +697,24 @@ def polynomial_schedule(start_e, end_e, duration, step, power=4.0):
     return end_e + (start_e - end_e) * decay
 
 
+def softmax_tau_schedule(total_timesteps, step):
+    """
+    Computes the current temperature (tau) for softmax exploration using a simple linear decay.
+    tau = max(1.0 * (1 - step / (total_timesteps * 0.75)), 0.01)
+    At the start tau=1.0 (high randomness); decays linearly to a minimum of 0.01.
+    """
+    return max(1.0 * (1.0 - step / (total_timesteps * 0.75)), 0.01)
+
+
+def softmax_action(q_values_tensor, tau):
+    """
+    Selects an action by sampling from a softmax distribution over Q-values.
+    Lower tau -> distribution closer to greedy; higher tau -> more uniform (more exploration).
+    """
+    probs = torch.softmax(q_values_tensor / tau, dim=1)
+    return int(torch.multinomial(probs, num_samples=1).item())
+
+
 # ============================================================================
 # ARGUMENT PARSING
 # ============================================================================
@@ -793,12 +801,17 @@ def parse_args(default_exp_name, use_shaping):
     #   This prevents the agent from getting stuck in local optima, especially in
     #   environments with randomized layouts (DoorKey, FourRooms) where the agent
     #   needs to keep exploring to handle new configurations.
-    parser.add_argument("--end-e", type=float, default=0.1)
+    parser.add_argument("--end-e", type=float, default=0.05)
     # --exploration-fraction: What fraction of training to decay epsilon over
     parser.add_argument("--exploration-fraction", type=float, default=0.50)
     
     # --epsilon-schedule: Which decay schedule to use for epsilon
     parser.add_argument("--epsilon-schedule", choices=["linear", "polynomial"], default="linear")
+
+    # --exploration-strategy: Whether to use epsilon-greedy or softmax exploration.
+    #   epsilon_greedy: standard random action with probability epsilon.
+    #   softmax: samples action from softmax(Q/tau) where tau decays linearly.
+    parser.add_argument("--exploration-strategy", choices=["epsilon_greedy", "softmax"], default="epsilon_greedy")
 
     # --- Hyperparameters ---
     # --hidden-size: Number of neurons in each hidden layer of the Q-Network
@@ -1045,36 +1058,45 @@ def train(args, use_shaping):
     for local_step in pbar:
         global_step = local_step + args.global_step_offset
         
-        # ---- EPSILON-GREEDY ACTION SELECTION ----
-        # Calculate current exploration rate (decays based on selected schedule)
-        if args.epsilon_schedule == "linear":
-            epsilon = linear_schedule(
-                args.start_e,
-                args.end_e,
-                args.exploration_fraction * args.total_timesteps,
-                local_step,
-            )
-        else:
-            epsilon = polynomial_schedule(
-                args.start_e,
-                args.end_e,
-                args.exploration_fraction * args.total_timesteps,
-                local_step,
-                power=3.0,
-            )
-
+        # ---- ACTION SELECTION ----
+        # Either epsilon-greedy or softmax, depending on --exploration-strategy.
         was_random = False
-        if random.random() < epsilon:
-            # Explore: pick a random action
-            action = env.action_space.sample()
-            was_random = True
-        else:
-            # Exploit: pick the action with the highest predicted Q-value
+        if args.exploration_strategy == "softmax":
+            # Softmax exploration: sample from softmax(Q/tau)
+            tau = softmax_tau_schedule(args.total_timesteps, local_step)
+            epsilon = tau  # log tau as "epsilon" for CSV/TensorBoard continuity
             with torch.no_grad():
-                # Convert the observation to a PyTorch tensor and add a batch dimension
                 obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
                 q_values = q_net(obs_tensor)
-                action = int(torch.argmax(q_values, dim=1).item())
+                action = softmax_action(q_values, tau)
+        else:
+            # Epsilon-greedy: calculate current exploration rate
+            if args.epsilon_schedule == "linear":
+                epsilon = linear_schedule(
+                    args.start_e,
+                    args.end_e,
+                    args.exploration_fraction * args.total_timesteps,
+                    local_step,
+                )
+            else:
+                epsilon = polynomial_schedule(
+                    args.start_e,
+                    args.end_e,
+                    args.exploration_fraction * args.total_timesteps,
+                    local_step,
+                    power=3.0,
+                )
+
+            if random.random() < epsilon:
+                # Explore: pick a random action
+                action = env.action_space.sample()
+                was_random = True
+            else:
+                # Exploit: pick the action with the highest predicted Q-value
+                with torch.no_grad():
+                    obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+                    q_values = q_net(obs_tensor)
+                    action = int(torch.argmax(q_values, dim=1).item())
 
         # Track the action taken at the current state
         # (Must do this before env.step() since env.step() changes agent_pos/dir)

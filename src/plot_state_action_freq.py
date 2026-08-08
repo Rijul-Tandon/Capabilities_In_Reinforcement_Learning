@@ -317,7 +317,7 @@ def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=25
 
     # --- Create the Figure ---
     # Two rows and one column per plotted agent.
-    fig, axes = plt.subplots(2, len(agents), figsize=(6 * len(agents), 10), squeeze=False)
+    fig, axes = plt.subplots(2, len(agents), figsize=(9 * len(agents), 14), squeeze=False)
     # suptitle adds a title above all subplots
     fig.suptitle(
         f"{env_id} - State/Action Frequencies ({episodes} episodes, DQN seed={seed})",
@@ -400,7 +400,7 @@ def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=25
                 
                 axes[1, col].text(
                     x, y, cell_text,
-                    ha="center", va="center", fontsize=7, fontweight="bold", alpha=alpha_val
+                    ha="center", va="center", fontsize=5, fontweight="bold", alpha=alpha_val
                 )
 
         # --- Draw Grid Lines ---
