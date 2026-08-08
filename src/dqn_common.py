@@ -1012,13 +1012,13 @@ def train(args, use_shaping):
     counts_file = run_dir / "state_action_counts.npy"
     if args.run_dir and counts_file.exists():
         state_action_counts = np.load(counts_file)
-        state_action_counts_second_half = np.load(run_dir / "state_action_counts_second_half.npy")
+        state_action_counts_last_quarter = np.load(run_dir / "state_action_counts_last_quarter.npy")
     else:
         state_action_counts = np.zeros(
             (env.unwrapped.width, env.unwrapped.height, 4, num_actions), 
             dtype=np.int64
         )
-        state_action_counts_second_half = np.zeros(
+        state_action_counts_last_quarter = np.zeros(
             (env.unwrapped.width, env.unwrapped.height, 4, num_actions), 
             dtype=np.int64
         )
@@ -1103,8 +1103,8 @@ def train(args, use_shaping):
         ax, ay = env.unwrapped.agent_pos
         ad = env.unwrapped.agent_dir
         state_action_counts[ax, ay, ad, action] += 1
-        if local_step >= args.total_timesteps / 2:
-            state_action_counts_second_half[ax, ay, ad, action] += 1
+        if local_step >= args.total_timesteps *0.75:
+            state_action_counts_last_quarter[ax, ay, ad, action] += 1
 
         # Execute the chosen action in the environment
         next_obs, env_reward, terminated, truncated, info = env.step(action)
@@ -1270,7 +1270,7 @@ def train(args, use_shaping):
     metric_file.close()
     # Save the cumulative state-action counts
     np.save(run_dir / "state_action_counts.npy", state_action_counts)
-    np.save(run_dir / "state_action_counts_second_half.npy", state_action_counts_second_half)
+    np.save(run_dir / "state_action_counts_last_quarter.npy", state_action_counts_last_quarter)
 
     writer.close()
     env.close()
