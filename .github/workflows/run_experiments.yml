@@ -38,93 +38,101 @@ jobs:
             seed: 1
 
           # --- MiniGrid-Empty-6x6-v0 ---
-          # Baseline: linear decay
+          # Seed 1: baseline linear, reward shaping linear
           - env_id: MiniGrid-Empty-6x6-v0
             agent: ddqn_baseline
             decay: linear
             seed: 1
           - env_id: MiniGrid-Empty-6x6-v0
+            agent: ddqn_reward_shaping
+            decay: linear
+            seed: 1
+
+          # Seed 2: baseline linear, reward shaping exponential
+          - env_id: MiniGrid-Empty-6x6-v0
             agent: ddqn_baseline
             decay: linear
             seed: 2
           - env_id: MiniGrid-Empty-6x6-v0
+            agent: ddqn_reward_shaping
+            decay: exponential
+            seed: 2
+
+          # Seed 3: baseline polynomial, reward shaping exponential
+          - env_id: MiniGrid-Empty-6x6-v0
             agent: ddqn_baseline
-            decay: linear
+            decay: polynomial
             seed: 3
+          - env_id: MiniGrid-Empty-6x6-v0
+            agent: ddqn_reward_shaping
+            decay: exponential
+            seed: 3
+
+          # Seeds 4 & 5 (optional extended runs)
           - env_id: MiniGrid-Empty-6x6-v0
             agent: ddqn_baseline
             decay: linear
+            seed: 4
+          - env_id: MiniGrid-Empty-6x6-v0
+            agent: ddqn_reward_shaping
+            decay: polynomial
             seed: 4
           - env_id: MiniGrid-Empty-6x6-v0
             agent: ddqn_baseline
             decay: linear
             seed: 5
-
-          # Reward Shaped: polynomial decay
-          - env_id: MiniGrid-Empty-6x6-v0
-            agent: ddqn_reward_shaping
-            decay: polynomial
-            seed: 1
-          - env_id: MiniGrid-Empty-6x6-v0
-            agent: ddqn_reward_shaping
-            decay: polynomial
-            seed: 2
-          - env_id: MiniGrid-Empty-6x6-v0
-            agent: ddqn_reward_shaping
-            decay: polynomial
-            seed: 3
-          - env_id: MiniGrid-Empty-6x6-v0
-            agent: ddqn_reward_shaping
-            decay: polynomial
-            seed: 4
           - env_id: MiniGrid-Empty-6x6-v0
             agent: ddqn_reward_shaping
             decay: polynomial
             seed: 5
 
           # --- MiniGrid-DoorKey-6x6-v0 ---
-          # Baseline: exponential decay
+          # Seed 1: baseline linear, reward shaping linear
           - env_id: MiniGrid-DoorKey-6x6-v0
             agent: ddqn_baseline
-            decay: exponential
+            decay: linear
             seed: 1
           - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_baseline
-            decay: exponential
-            seed: 2
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_baseline
-            decay: exponential
-            seed: 3
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_baseline
-            decay: exponential
-            seed: 4
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_baseline
-            decay: exponential
-            seed: 5
+            agent: ddqn_reward_shaping
+            decay: linear
+            seed: 1
 
-          # Reward Shaped: cosine decay
+          # Seed 2: baseline linear, reward shaping exponential
           - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_reward_shaping
-            decay: cosine
-            seed: 1
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_reward_shaping
-            decay: cosine
+            agent: ddqn_baseline
+            decay: linear
             seed: 2
           - env_id: MiniGrid-DoorKey-6x6-v0
             agent: ddqn_reward_shaping
-            decay: cosine
+            decay: exponential
+            seed: 2
+
+          # Seed 3: baseline polynomial, reward shaping exponential
+          - env_id: MiniGrid-DoorKey-6x6-v0
+            agent: ddqn_baseline
+            decay: polynomial
             seed: 3
           - env_id: MiniGrid-DoorKey-6x6-v0
             agent: ddqn_reward_shaping
-            decay: cosine
+            decay: exponential
+            seed: 3
+
+          # Seeds 4 & 5 (optional extended runs)
+          - env_id: MiniGrid-DoorKey-6x6-v0
+            agent: ddqn_baseline
+            decay: linear
             seed: 4
           - env_id: MiniGrid-DoorKey-6x6-v0
             agent: ddqn_reward_shaping
-            decay: cosine
+            decay: polynomial
+            seed: 4
+          - env_id: MiniGrid-DoorKey-6x6-v0
+            agent: ddqn_baseline
+            decay: linear
+            seed: 5
+          - env_id: MiniGrid-DoorKey-6x6-v0
+            agent: ddqn_reward_shaping
+            decay: polynomial
             seed: 5
 
     steps:
