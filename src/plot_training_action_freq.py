@@ -14,6 +14,7 @@ state/direction pair.
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
@@ -195,7 +196,8 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title
     # Save inside the sub-folder requested by the user
     output_dir = Path("plots/action_freq_plots")
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{env_id}_training_action_freq{suffix}_seed{seed}.png"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = output_dir / f"{env_id}_training_action_freq{suffix}_seed{seed}_{timestamp}.png"
     plt.savefig(output_path, dpi=150)
     plt.close(fig)
     print(f"Plot saved to {output_path}")
@@ -222,5 +224,5 @@ if __name__ == "__main__":
         include_random = seed == first_seed
         print(f"Generating training action freq plot for {args.env_id} seed={seed} (All Steps) ...")
         plot_3x4_frequencies(args.env_id, args.results_dir, seed, args.action_set, suffix="", title_suffix="(All Steps)", include_random=include_random)
-        print(f"Generating training action freq plot for {args.env_id} seed={seed} (Second Half) ...")
-        plot_3x4_frequencies(args.env_id, args.results_dir, seed, args.action_set, suffix="_second_half", title_suffix="(Second Half)", include_random=include_random)
+        print(f"Generating training action freq plot for {args.env_id} seed={seed} (Last 25%) ...")
+        plot_3x4_frequencies(args.env_id, args.results_dir, seed, args.action_set, suffix="_last_quarter", title_suffix="(Last 25%)", include_random=include_random)

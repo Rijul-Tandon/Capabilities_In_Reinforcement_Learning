@@ -700,10 +700,10 @@ def polynomial_schedule(start_e, end_e, duration, step, power=4.0):
 def softmax_tau_schedule(total_timesteps, step):
     """
     Computes the current temperature (tau) for softmax exploration using a simple linear decay.
-    tau = max(1.0 * (1 - step / (total_timesteps * 0.75)), 0.01)
-    At the start tau=1.0 (high randomness); decays linearly to a minimum of 0.01.
+    tau = max(1.0 * (1 - step / (total_timesteps * 0.75)), 0.1)
+    At the start tau=1.0 (high randomness); decays linearly to a minimum of 0.1.
     """
-    return max(1.0 * (1.0 - step / (total_timesteps * 0.75)), 0.01)
+    return max(1.0 * (1.0 - step / (total_timesteps * 0.75)), 0.1)
 
 
 def softmax_action(q_values_tensor, tau):
@@ -801,7 +801,7 @@ def parse_args(default_exp_name, use_shaping):
     #   This prevents the agent from getting stuck in local optima, especially in
     #   environments with randomized layouts (DoorKey, FourRooms) where the agent
     #   needs to keep exploring to handle new configurations.
-    parser.add_argument("--end-e", type=float, default=0.05)
+    parser.add_argument("--end-e", type=float, default=0.1)
     # --exploration-fraction: What fraction of training to decay epsilon over
     parser.add_argument("--exploration-fraction", type=float, default=0.50)
     
