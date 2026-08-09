@@ -47,19 +47,30 @@ jobs:
             exit 0
           fi
 
-          # Determine specific decay schedule based on environment and agent
-          DECAY="polynomial"
-          if [ "${{ matrix.env_id }}" = "MiniGrid-Empty-6x6-v0" ]; then
-            if [ "${{ matrix.agent }}" = "ddqn_baseline" ]; then
+          # Determine specific decay schedule based on seed and agent
+          DECAY="linear"
+          SEED="${{ matrix.seed }}"
+          AGENT="${{ matrix.agent }}"
+
+          if [ "$SEED" = "1" ]; then
+            DECAY="linear"
+          elif [ "$SEED" = "2" ]; then
+            if [ "$AGENT" = "ddqn_baseline" ]; then
+              DECAY="linear"
+            else
+              DECAY="exponential"
+            fi
+          elif [ "$SEED" = "3" ]; then
+            if [ "$AGENT" = "ddqn_baseline" ]; then
+              DECAY="polynomial"
+            else
+              DECAY="exponential"
+            fi
+          else
+            if [ "$AGENT" = "ddqn_baseline" ]; then
               DECAY="linear"
             else
               DECAY="polynomial"
-            fi
-          elif [ "${{ matrix.env_id }}" = "MiniGrid-DoorKey-6x6-v0" ]; then
-            if [ "${{ matrix.agent }}" = "ddqn_baseline" ]; then
-              DECAY="exponential"
-            else
-              DECAY="cosine"
             fi
           fi
 
