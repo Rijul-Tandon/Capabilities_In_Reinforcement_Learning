@@ -70,6 +70,21 @@ def extract_layout(env):
                 
     return wall_mask, annotations, width, height
 
+def get_decay_str(run_dir):
+    if not run_dir:
+        return ""
+    cfg_path = run_dir / "config.json"
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                c = json.load(f)
+            sched = c.get("epsilon_schedule", "")
+            if sched:
+                return f" ({sched})"
+        except Exception:
+            pass
+    return ""
+
 def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title_suffix="(All Steps)", include_random=True, plots_dir="plots/action_freq_plots"):
     # Find directories
     random_dirs = get_dirs_by_seed(results_dir, env_id, "random_agent")
@@ -81,12 +96,15 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title
         shaped_dirs = get_dirs_by_seed(results_dir, env_id, "dqn_reward_shaping")
 
     random_seed = min(random_dirs.keys()) if random_dirs else None
+    b_dir = baseline_dirs.get(seed)
+    s_dir = shaped_dirs.get(seed)
+
     agents = []
     if include_random and random_seed is not None:
         agents.append((f"Random Agent (seed {random_seed})", random_dirs[random_seed]))
     agents.extend([
-        ("Baseline DDQN", baseline_dirs.get(seed)),
-        ("Shaped DDQN", shaped_dirs.get(seed)),
+        (f"Baseline DDQN{get_decay_str(b_dir)}", b_dir),
+        (f"Shaped DDQN{get_decay_str(s_dir)}", s_dir),
     ])
 
     # Directions in MiniGrid: 0=East, 1=South, 2=West, 3=North

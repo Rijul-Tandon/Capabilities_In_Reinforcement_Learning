@@ -339,8 +339,13 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
         (f"Difference ({label_a} − {label_b})", diff_grid_max, diff_grid, "RdBu_r", "diverging"),
     ]
 
-    # Action labels for the text overlay
-    action_labels = ["L", "R", "F", "P", "D", "T", "Dn"]
+    # Dynamically derive action labels and legend for the active action set
+    names = action_names(env_id, "task", num_actions)
+    abbr_map = {
+        "left": "L", "right": "R", "forward": "F",
+        "pickup": "P", "drop": "Dp", "toggle": "T", "done": "Dn"
+    }
+    action_labels = [abbr_map.get(n, n[:1].upper()) for n in names]
 
     for col, (title, grid_max, grid_full, cmap, style) in enumerate(panels):
         ax = axes[col]
@@ -403,7 +408,18 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
         ax.set_yticks(np.arange(0, height, 1))
         ax.set_title(title, fontsize=11)
 
-    plt.tight_layout(rect=[0, 0, 1, 0.93])
+    # Add Action & Layout Key Legend at the bottom
+    legend_parts = [f"{abbr_map.get(n, n[:1].upper())} = {n}" for n in names]
+    legend_text = "   |   ".join(legend_parts)
+    fig.text(
+        0.5, 0.015,
+        f"Action Key:  {legend_text}    ---    Layout Annotations: S = Start, G = Goal, K = Key, D = Door",
+        ha="center", va="bottom",
+        fontsize=11, style="italic",
+        bbox=dict(boxstyle="round,pad=0.3", facecolor="#f0f0f0", edgecolor="#aaaaaa", alpha=0.8),
+    )
+
+    plt.tight_layout(rect=[0, 0.05, 1, 0.93])
 
     output_dir = Path("plots") / comparison_tag if comparison_tag else Path("plots")
     output_dir.mkdir(parents=True, exist_ok=True)

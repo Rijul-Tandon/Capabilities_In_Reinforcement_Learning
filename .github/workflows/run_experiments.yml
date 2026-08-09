@@ -22,23 +22,73 @@ jobs:
     strategy:
       fail-fast: false  # If one run fails, keep running the others
       matrix:
-        env_id:
-          - MiniGrid-Empty-6x6-v0
-          - MiniGrid-DoorKey-6x6-v0
-          # - MiniGrid-FourRooms-v0
-          # - MiniGrid-MultiRoom-N2-S4-v0
-        agent:
-          - random_agent
-          - ddqn_baseline
-          - ddqn_reward_shaping
-        seed:
-          - 1
-          - 2
-          - 3
-        exclude:
-          - agent: random_agent
+        include:
+          # --- Random Agent ---
+          - env_id: MiniGrid-Empty-6x6-v0
+            agent: random_agent
+            decay: linear
+            seed: 1
+          - env_id: MiniGrid-DoorKey-6x6-v0
+            agent: random_agent
+            decay: linear
+            seed: 1
+
+          # --- MiniGrid-Empty-6x6-v0 ---
+          # Baseline: linear decay
+          - env_id: MiniGrid-Empty-6x6-v0
+            agent: ddqn_baseline
+            decay: linear
+            seed: 1
+          - env_id: MiniGrid-Empty-6x6-v0
+            agent: ddqn_baseline
+            decay: linear
             seed: 2
-          - agent: random_agent
+          - env_id: MiniGrid-Empty-6x6-v0
+            agent: ddqn_baseline
+            decay: linear
+            seed: 3
+
+          # Reward Shaped: polynomial decay
+          - env_id: MiniGrid-Empty-6x6-v0
+            agent: ddqn_reward_shaping
+            decay: polynomial
+            seed: 1
+          - env_id: MiniGrid-Empty-6x6-v0
+            agent: ddqn_reward_shaping
+            decay: polynomial
+            seed: 2
+          - env_id: MiniGrid-Empty-6x6-v0
+            agent: ddqn_reward_shaping
+            decay: polynomial
+            seed: 3
+
+          # --- MiniGrid-DoorKey-6x6-v0 ---
+          # Baseline: exponential decay
+          - env_id: MiniGrid-DoorKey-6x6-v0
+            agent: ddqn_baseline
+            decay: exponential
+            seed: 1
+          - env_id: MiniGrid-DoorKey-6x6-v0
+            agent: ddqn_baseline
+            decay: exponential
+            seed: 2
+          - env_id: MiniGrid-DoorKey-6x6-v0
+            agent: ddqn_baseline
+            decay: exponential
+            seed: 3
+
+          # Reward Shaped: cosine decay
+          - env_id: MiniGrid-DoorKey-6x6-v0
+            agent: ddqn_reward_shaping
+            decay: cosine
+            seed: 1
+          - env_id: MiniGrid-DoorKey-6x6-v0
+            agent: ddqn_reward_shaping
+            decay: cosine
+            seed: 2
+          - env_id: MiniGrid-DoorKey-6x6-v0
+            agent: ddqn_reward_shaping
+            decay: cosine
             seed: 3
 
     steps:
@@ -54,7 +104,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
         
-      - name: "Run Agent (300k Steps, all defaults)"
+      - name: "Run Agent (300k Steps, environment-specific decay schedules)"
         run: |
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
           TIMESTEPS=300000
@@ -67,7 +117,7 @@ jobs:
             --seed ${{ matrix.seed }} \
             --max-steps $MAX_STEPS \
             --exploration-fraction $EXPLORE_FRAC \
-            --epsilon-schedule polynomial \
+            --epsilon-schedule ${{ matrix.decay }} \
             --end-e 0.1 \
             --exploration-strategy $STRATEGY \
             --fixed-layout

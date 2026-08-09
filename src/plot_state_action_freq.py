@@ -238,6 +238,21 @@ def get_agent_data(env, q_net, episodes, seed, num_actions, device):
 # MAIN PLOTTING FUNCTION
 # ============================================================================
 
+def get_decay_str(model_path):
+    if not model_path:
+        return ""
+    cfg_path = model_path.parent / "config.json"
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                c = json.load(f)
+            sched = c.get("epsilon_schedule", "")
+            if sched:
+                return f" ({sched})"
+        except Exception:
+            pass
+    return ""
+
 def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=256, action_set="task", include_random=True):
     """
     Generates the state/action comparison plot for a specific seed.
@@ -302,7 +317,7 @@ def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=25
         # Set to evaluation mode: disables dropout and batch normalization layers
         # (our current network doesn't have these, but it's good practice)
         q_net_base.eval()
-        agents.append(("Baseline DQN", q_net_base))
+        agents.append((f"Baseline DQN{get_decay_str(baseline_model_path)}", q_net_base))
     else:
         agents.append(("Baseline DQN (Not Found)", None))
 
@@ -311,17 +326,17 @@ def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=25
         q_net_shape = QNetwork(obs_dim, num_actions, hidden_size).to(device)
         q_net_shape.load_state_dict(torch.load(shaped_model_path, map_location=device))
         q_net_shape.eval()
-        agents.append(("Reward Shaped DQN", q_net_shape))
+        agents.append((f"Reward Shaped DQN{get_decay_str(shaped_model_path)}", q_net_shape))
     else:
         agents.append(("Reward Shaped (Not Found)", None))
 
     # --- Create the Figure ---
-    # Two rows and one column per plotted agent.
-    fig, axes = plt.subplots(2, len(agents), figsize=(9 * len(agents), 14), squeeze=False)
+    # Two rows and one column per plotted agent. Larger figure size so cell text fits comfortably.
+    fig, axes = plt.subplots(2, len(agents), figsize=(12 * len(agents), 16), squeeze=False)
     # suptitle adds a title above all subplots
     fig.suptitle(
         f"{env_id} - State/Action Frequencies ({episodes} episodes, DQN seed={seed})",
-        fontsize=14
+        fontsize=16, fontweight="bold"
     )
 
     # --- Generate Plots for Each Agent ---
@@ -338,14 +353,8 @@ def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=25
         )
 
         # --- Top Row: Visit Frequency Heatmap ---
-        # imshow() displays a 2D numpy array as a colored image.
-        # .T transposes the array so that x=columns and y=rows (matching the grid layout).
-        # origin="upper" puts (0,0) at the top-left corner (standard for grids).
-        # cmap="YlOrRd" uses a Yellow-Orange-Red color map (brighter = more visits).
         im = axes[0, col].imshow(visit_counts.T, origin="upper", cmap="YlOrRd")
         axes[0, col].set_title(f"{title}\nVisit Frequencies")
-        # colorbar adds a legend showing what colors map to what visit counts
-        # fraction and pad control the colorbar's size and spacing
         fig.colorbar(im, ax=axes[0, col], fraction=0.046, pad=0.04)
 
         # --- Overlay Layout Features ---
@@ -365,12 +374,11 @@ def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=25
             axes[0, col].legend(loc="upper left", bbox_to_anchor=(0, 1.3), ncol=3, fontsize=9, frameon=False)
 
         # --- Bottom Row: All Action Frequencies ---
-        # Light blue background heatmap (just for visual context, not the main data)
         axes[1, col].imshow(visit_counts.T, origin="upper", cmap="Blues", alpha=0.3)
         axes[1, col].set_title(f"{title}\nAction Counts")
 
-        # Map full action names to 1-letter abbreviations to save space
-        abbr_map = {"left": "L", "right": "R", "forward": "F", "pickup": "P", "drop": "D", "toggle": "T", "done": "DN"}
+        # Map full action names to abbreviations
+        abbr_map = {"left": "L", "right": "R", "forward": "F", "pickup": "P", "drop": "Dp", "toggle": "T", "done": "Dn"}
         dir_map = {0: "E", 1: "S", 2: "W", 3: "N"}  # MiniGrid directions
 
         # Overlay text on each cell showing the count for EVERY action
@@ -400,7 +408,7 @@ def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=25
                 
                 axes[1, col].text(
                     x, y, cell_text,
-                    ha="center", va="center", fontsize=5, fontweight="bold", alpha=alpha_val
+                    ha="center", va="center", fontsize=4, fontweight="bold", alpha=alpha_val
                 )
 
         # --- Draw Grid Lines ---
