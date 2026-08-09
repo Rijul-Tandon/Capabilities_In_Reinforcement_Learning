@@ -70,7 +70,7 @@ def extract_layout(env):
                 
     return wall_mask, annotations, width, height
 
-def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title_suffix="(All Steps)", include_random=True):
+def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title_suffix="(All Steps)", include_random=True, plots_dir="plots/action_freq_plots"):
     # Find directories
     random_dirs = get_dirs_by_seed(results_dir, env_id, "random_agent")
     baseline_dirs = get_dirs_by_seed(results_dir, env_id, "ddqn_baseline")
@@ -138,7 +138,6 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title
                 ax.set_title(f"Facing {d_name}", fontsize=16)
 
             # Color each cell by total active-action frequency for this facing direction.
-            # Empty has only navigation actions, so plotting only pickup/toggle would be blank.
             action_total = counts[:, :, d_idx, :].sum(axis=-1)
             
             # Create a heatmap background (transpose because imshow expects (y, x))
@@ -168,7 +167,6 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title
                             
                     if lines:
                         text = "\n".join(lines)
-                        # If the cell is very dark (high count), use white text
                         max_total = action_total.max()
                         text_color = "white" if max_total > 0 and np.log1p(action_total[x, y]) > np.log1p(max_total) * 0.5 else "black"
                         ax.text(x, y, text, ha="center", va="center", fontsize=8, color=text_color, fontweight="bold")
@@ -176,7 +174,6 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title
                     # Add annotation (S, G, K, D) if present
                     if (x, y) in annotations:
                         label = annotations[(x, y)]
-                        # Draw label in bottom-right corner of the cell
                         ax.text(x + 0.35, y + 0.35, label, color='red', fontsize=10, 
                                 fontweight='bold', ha='center', va='center')
 
@@ -193,8 +190,8 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title
 
     plt.tight_layout(rect=[0, 0.05, 1, 0.93])
     
-    # Save inside the sub-folder requested by the user
-    output_dir = Path("plots/action_freq_plots")
+    # Save inside the output folder requested
+    output_dir = Path(plots_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = output_dir / f"{env_id}_training_action_freq{suffix}_seed{seed}_{timestamp}.png"
@@ -207,6 +204,7 @@ if __name__ == "__main__":
     parser.add_argument("--env-id", type=str, default="MiniGrid-Empty-8x8-v0")
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--action-set", choices=["task", "full"], default="task")
+    parser.add_argument("--plots-dir", type=str, default="plots/action_freq_plots")
     args = parser.parse_args()
 
     # Find seeds available in baseline models
@@ -223,6 +221,6 @@ if __name__ == "__main__":
     for seed in seeds:
         include_random = seed == first_seed
         print(f"Generating training action freq plot for {args.env_id} seed={seed} (All Steps) ...")
-        plot_3x4_frequencies(args.env_id, args.results_dir, seed, args.action_set, suffix="", title_suffix="(All Steps)", include_random=include_random)
+        plot_3x4_frequencies(args.env_id, args.results_dir, seed, args.action_set, suffix="", title_suffix="(All Steps)", include_random=include_random, plots_dir=args.plots_dir)
         print(f"Generating training action freq plot for {args.env_id} seed={seed} (Last 25%) ...")
-        plot_3x4_frequencies(args.env_id, args.results_dir, seed, args.action_set, suffix="_last_quarter", title_suffix="(Last 25%)", include_random=include_random)
+        plot_3x4_frequencies(args.env_id, args.results_dir, seed, args.action_set, suffix="_last_quarter", title_suffix="(Last 25%)", include_random=include_random, plots_dir=args.plots_dir)

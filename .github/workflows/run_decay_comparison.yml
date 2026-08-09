@@ -103,7 +103,7 @@ jobs:
         run: |
           for env in "MiniGrid-Empty-6x6-v0" "MiniGrid-DoorKey-6x6-v0"; do
             echo "Plotting decay curves for $env..."
-            python src/plot_comparison.py --env-id $env
+            python src/plot_comparison.py --env-id $env --decay-comparison
           done
           
       - name: Commit and Push Plots
