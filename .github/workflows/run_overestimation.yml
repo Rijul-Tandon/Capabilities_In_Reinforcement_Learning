@@ -1,8 +1,12 @@
-name: Q-Value Overestimation & Strategy Comparison
+name: Q-Value Overestimation Comparison
 
 on:
   workflow_dispatch:  # Trigger manually from GitHub UI or `gh workflow run`
     inputs:
+      num_seeds:
+        description: 'Number of seeds to run (1 to 5)'
+        required: false
+        default: '3'
       max_steps:
         description: 'Max steps per episode (-1 = env default)'
         required: false
@@ -27,22 +31,12 @@ jobs:
             exploration: epsilon_greedy
             exp_name: ddqn_baseline
             decay: linear
-          - env_id: MiniGrid-Empty-6x6-v0
-            agent: ddqn_baseline
-            exploration: softmax
-            exp_name: ddqn_baseline_softmax
-            decay: linear
 
           # Reward Shaped: polynomial decay
           - env_id: MiniGrid-Empty-6x6-v0
             agent: ddqn_reward_shaping
             exploration: epsilon_greedy
             exp_name: ddqn_reward_shaping
-            decay: polynomial
-          - env_id: MiniGrid-Empty-6x6-v0
-            agent: ddqn_reward_shaping
-            exploration: softmax
-            exp_name: ddqn_reward_shaping_softmax
             decay: polynomial
 
           # --- MiniGrid-DoorKey-6x6-v0 ---
@@ -52,22 +46,12 @@ jobs:
             exploration: epsilon_greedy
             exp_name: ddqn_baseline
             decay: exponential
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_baseline
-            exploration: softmax
-            exp_name: ddqn_baseline_softmax
-            decay: exponential
 
           # Reward Shaped: cosine decay
           - env_id: MiniGrid-DoorKey-6x6-v0
             agent: ddqn_reward_shaping
             exploration: epsilon_greedy
             exp_name: ddqn_reward_shaping
-            decay: cosine
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_reward_shaping
-            exploration: softmax
-            exp_name: ddqn_reward_shaping_softmax
             decay: cosine
 
     steps:
@@ -85,6 +69,12 @@ jobs:
         
       - name: Run Agent
         run: |
+          NUM_SEEDS="${{ github.event.inputs.num_seeds || '3' }}"
+          if [ "${{ matrix.seed }}" -gt "$NUM_SEEDS" ]; then
+            echo "Skipping seed ${{ matrix.seed }} (requested num_seeds=$NUM_SEEDS)"
+            exit 0
+          fi
+
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
           TIMESTEPS=300000
           EXPLORE_FRAC=0.50
@@ -106,6 +96,7 @@ jobs:
         with:
           name: overestimation_${{ matrix.exp_name }}_${{ matrix.env_id }}_seed${{ matrix.seed }}
           path: results/
+          if-no-files-found: ignore
           retention-days: 14
 
   plot:
@@ -136,29 +127,10 @@ jobs:
           
       - name: Generate Q-Overestimation Plots
         run: |
-          # 1. Baseline DDQN (eps-greedy) vs Reward-Shaped DDQN (eps-greedy) [Same exploration]
           python src/plot_q_overestimation.py \
             --compare ddqn_baseline ddqn_reward_shaping \
-            --label-a "Baseline (eps-greedy)" \
-            --label-b "Shaped (eps-greedy)"
-
-          # 2. Baseline DDQN (softmax) vs Reward-Shaped DDQN (softmax) [Same exploration]
-          python src/plot_q_overestimation.py \
-            --compare ddqn_baseline_softmax ddqn_reward_shaping_softmax \
-            --label-a "Baseline (softmax)" \
-            --label-b "Shaped (softmax)"
-
-          # 3. Baseline DDQN (eps-greedy) vs Reward-Shaped DDQN (softmax) [Cross exploration]
-          python src/plot_q_overestimation.py \
-            --compare ddqn_baseline ddqn_reward_shaping_softmax \
-            --label-a "Baseline (eps-greedy)" \
-            --label-b "Shaped (softmax)"
-
-          # 4. Baseline DDQN (softmax) vs Reward-Shaped DDQN (eps-greedy) [Cross exploration]
-          python src/plot_q_overestimation.py \
-            --compare ddqn_baseline_softmax ddqn_reward_shaping \
-            --label-a "Baseline (softmax)" \
-            --label-b "Shaped (eps-greedy)"
+            --label-a "Baseline DDQN" \
+            --label-b "Shaped DDQN"
 
       - name: Commit and Push Plots
         run: |
@@ -169,6 +141,7 @@ jobs:
           
           # Move all generated comparison folders into the new directory
           mv plots/*_vs_*/ $DIR_NAME/ 2>/dev/null || true
+          mv plots/*.png $DIR_NAME/ 2>/dev/null || true
           
           # Configure git
           git config --global user.name "github-actions[bot]"

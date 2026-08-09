@@ -5,22 +5,12 @@ Visualises how much standard (vanilla) DQN overestimates Q-values compared
 to Double DQN (DDQN) across multiple MiniGrid environments.
 
 For every reachable (non-wall) cell in the grid, and for all 4 agent
-directions (E=0, S=1, W=2, N=3), the script:
+directions (North, East, South, West), the script:
   1. Constructs the wrapped observation by setting agent_pos / agent_dir
      on the unwrapped environment and running it through the wrapper pipeline.
-  2. Passes the observation through the trained Q-network and records
-     max_a Q(s, a).
-  3. Averages the max-Q across the 4 directions to get a single value per cell.
-
-Two types of plots are produced:
-
-  A) Per-environment heatmap grid (1×3):
-       DQN Max Q  |  DDQN Max Q  |  Difference (DQN − DDQN)
-     Wall cells are shown in dark gray. A diverging colour map highlights
-     cells where DQN overestimates most.
-
-  B) A grouped bar chart across all environments:
-       Average max-Q for DQN vs DDQN, with one group per environment.
+  2. Passes the observation through the trained Q-network and records Q(s, a).
+  3. Displays a 4×3 grid of heatmaps for each facing direction (Rows = North, East,
+     South, West; Columns = Agent A Max-Q, Agent B Max-Q, Difference A − B).
 
 Usage:
   python plot_q_overestimation.py
@@ -120,13 +110,14 @@ def get_wrapped_obs(env):
 
 
 def compute_q_values_grid(env, q_net, seed, device):
-    """Computes max_a Q(s, a) for reachable cells across all 4 directions."""
+    """Computes Q(s, a) for reachable cells across all 4 facing directions."""
     env.reset(seed=seed)
     width = env.unwrapped.width
     height = env.unwrapped.height
     num_actions = env.action_space.n
 
-    q_grid = np.full((width, height, num_actions), np.nan, dtype=np.float32)
+    # shape = (width, height, 4_directions, num_actions)
+    q_grid = np.full((width, height, 4, num_actions), np.nan, dtype=np.float32)
     wall_mask = np.zeros((width, height), dtype=bool)
     annotations = {}
 
@@ -152,7 +143,6 @@ def compute_q_values_grid(env, q_net, seed, device):
                 if wall_mask[x, y]:
                     continue
 
-                dir_qvals = []
                 for d in range(NUM_DIRECTIONS):
                     env.unwrapped.agent_pos = np.array([x, y])
                     env.unwrapped.agent_dir = d
@@ -160,9 +150,7 @@ def compute_q_values_grid(env, q_net, seed, device):
                     obs = get_wrapped_obs(env)
                     obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
                     q_values = q_net(obs_t).squeeze(0)
-                    dir_qvals.append(q_values.cpu().numpy())
-
-                q_grid[x, y, :] = np.mean(dir_qvals, axis=0)
+                    q_grid[x, y, d, :] = q_values.cpu().numpy()
 
     return q_grid, wall_mask, annotations
 
@@ -173,29 +161,36 @@ def compute_q_values_grid(env, q_net, seed, device):
 
 def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
                         label_a="Agent A", label_b="Agent B", comparison_tag=""):
-    width, height, num_actions = grid_a.shape
+    width, height, num_dirs, num_actions = grid_a.shape
     
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
-        grid_a_max = np.nanmax(grid_a, axis=2)
-        grid_b_max = np.nanmax(grid_b, axis=2)
+        grid_a_max = np.nanmax(grid_a, axis=3) # shape (W, H, 4)
+        grid_b_max = np.nanmax(grid_b, axis=3) # shape (W, H, 4)
     
-    diff_grid_max = grid_a_max - grid_b_max
-    diff_grid = grid_a - grid_b
+    diff_grid_max = grid_a_max - grid_b_max # shape (W, H, 4)
+    diff_grid = grid_a - grid_b             # shape (W, H, 4, num_actions)
 
-    fig, axes = plt.subplots(1, 3, figsize=(24, 7))
+    dir_info = [
+        (3, "North"),
+        (0, "East"),
+        (1, "South"),
+        (2, "West")
+    ]
+
+    fig, axes = plt.subplots(4, 3, figsize=(24, 20))
     fig.suptitle(
         f"{env_id}  —  {label_a} vs {label_b}  (seed={seed})",
-        fontsize=16, fontweight="bold",
+        fontsize=18, fontweight="bold", y=0.98
     )
 
     vmin_q = np.nanmin([grid_a_max, grid_b_max])
     vmax_q = np.nanmax([grid_a_max, grid_b_max])
 
-    panels = [
-        (f"{label_a}  Max Q", grid_a_max, grid_a, "viridis", None),
-        (f"{label_b}  Max Q", grid_b_max, grid_b, "viridis", None),
-        (f"Difference ({label_a} − {label_b})", diff_grid_max, diff_grid, "RdBu_r", "diverging"),
+    col_titles = [
+        f"{label_a}  Max Q",
+        f"{label_b}  Max Q",
+        f"Difference ({label_a} − {label_b})"
     ]
 
     names = action_names(env_id, "task", num_actions)
@@ -205,54 +200,66 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
     }
     action_labels = [abbr_map.get(n, n[:1].upper()) for n in names]
 
-    for col, (title, grid_max, grid_full, cmap, style) in enumerate(panels):
-        ax = axes[col]
-        display = grid_max.T.copy()
+    for row, (d_idx, d_name) in enumerate(dir_info):
+        panels = [
+            (grid_a_max[:, :, d_idx], grid_a[:, :, d_idx, :], "viridis", None),
+            (grid_b_max[:, :, d_idx], grid_b[:, :, d_idx, :], "viridis", None),
+            (diff_grid_max[:, :, d_idx], diff_grid[:, :, d_idx, :], "RdBu_r", "diverging"),
+        ]
 
-        if style == "diverging":
-            abs_max = np.nanmax(np.abs(diff_grid))
-            if abs_max == 0:
-                abs_max = 1.0
-            norm = mcolors.TwoSlopeNorm(vmin=-abs_max, vcenter=0, vmax=abs_max)
-            im = ax.imshow(display, origin="upper", cmap=cmap, norm=norm)
-        else:
-            im = ax.imshow(display, origin="upper", cmap=cmap, vmin=vmin_q, vmax=vmax_q)
+        for col, (grid_max_d, grid_full_d, cmap, style) in enumerate(panels):
+            ax = axes[row, col]
+            display = grid_max_d.T.copy()
 
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            if style == "diverging":
+                abs_max = np.nanmax(np.abs(diff_grid[:, :, d_idx, :]))
+                if abs_max == 0:
+                    abs_max = 1.0
+                norm = mcolors.TwoSlopeNorm(vmin=-abs_max, vcenter=0, vmax=abs_max)
+                im = ax.imshow(display, origin="upper", cmap=cmap, norm=norm)
+            else:
+                im = ax.imshow(display, origin="upper", cmap=cmap, vmin=vmin_q, vmax=vmax_q)
 
-        for x in range(width):
-            for y in range(height):
-                if wall_mask[x, y]:
-                    ax.add_patch(plt.Rectangle(
-                        (x - 0.5, y - 0.5), 1, 1,
-                        facecolor="dimgray", edgecolor="none",
-                    ))
-                else:
-                    if (x, y) in annotations:
-                        ax.text(x + 0.45, y - 0.45, annotations[(x, y)],
-                                ha='right', va='top', color='white', 
-                                fontsize=10, fontweight='bold',
-                                path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
-                    
-                    q_vals = grid_full[x, y, :]
-                    text_lines = []
-                    for a in range(len(q_vals)):
-                        if a < len(action_labels):
-                            val_str = f"{q_vals[a]:+.2f}" if style == "diverging" else f"{q_vals[a]:.2f}"
-                            text_lines.append(f"{action_labels[a]}: {val_str}")
-                    
-                    text_str = "\n".join(text_lines)
-                    bbox_props = dict(boxstyle="round,pad=0.2", fc="white", alpha=0.75, ec="none")
-                    ax.text(x, y, text_str, ha='center', va='center', 
-                            color='black', fontsize=6, bbox=bbox_props)
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-        ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
-        ax.set_yticks(np.arange(-0.5, height, 1), minor=True)
-        ax.grid(which="minor", color="black", linestyle="-", linewidth=0.5)
-        ax.tick_params(which="minor", bottom=False, left=False)
-        ax.set_xticks(np.arange(0, width, 1))
-        ax.set_yticks(np.arange(0, height, 1))
-        ax.set_title(title, fontsize=11)
+            if row == 0:
+                ax.set_title(col_titles[col], fontsize=14, fontweight="bold")
+
+            if col == 0:
+                ax.set_ylabel(f"Facing {d_name}", fontsize=14, fontweight="bold")
+
+            for x in range(width):
+                for y in range(height):
+                    if wall_mask[x, y]:
+                        ax.add_patch(plt.Rectangle(
+                            (x - 0.5, y - 0.5), 1, 1,
+                            facecolor="dimgray", edgecolor="none",
+                        ))
+                    else:
+                        if (x, y) in annotations:
+                            ax.text(x + 0.45, y - 0.45, annotations[(x, y)],
+                                    ha='right', va='top', color='white', 
+                                    fontsize=10, fontweight='bold',
+                                    path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
+                        
+                        q_vals = grid_full_d[x, y, :]
+                        text_lines = []
+                        for a in range(len(q_vals)):
+                            if a < len(action_labels):
+                                val_str = f"{q_vals[a]:+.2f}" if style == "diverging" else f"{q_vals[a]:.2f}"
+                                text_lines.append(f"{action_labels[a]}: {val_str}")
+                        
+                        text_str = "\n".join(text_lines)
+                        bbox_props = dict(boxstyle="round,pad=0.2", fc="white", alpha=0.75, ec="none")
+                        ax.text(x, y, text_str, ha='center', va='center', 
+                                color='black', fontsize=6, bbox=bbox_props)
+
+            ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
+            ax.set_yticks(np.arange(-0.5, height, 1), minor=True)
+            ax.grid(which="minor", color="black", linestyle="-", linewidth=0.5)
+            ax.tick_params(which="minor", bottom=False, left=False)
+            ax.set_xticks(np.arange(0, width, 1))
+            ax.set_yticks(np.arange(0, height, 1))
 
     legend_parts = [f"{abbr_map.get(n, n[:1].upper())} = {n}" for n in names]
     legend_text = "   |   ".join(legend_parts)
@@ -264,7 +271,7 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
         bbox=dict(boxstyle="round,pad=0.3", facecolor="#f0f0f0", edgecolor="#aaaaaa", alpha=0.8),
     )
 
-    plt.tight_layout(rect=[0, 0.05, 1, 0.93])
+    plt.tight_layout(rect=[0, 0.04, 1, 0.96])
 
     output_dir = Path("plots") / comparison_tag if comparison_tag else Path("plots")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -417,8 +424,8 @@ def main():
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", category=RuntimeWarning)
-                grid_a_max = np.nanmax(grid_a, axis=2)
-                grid_b_max = np.nanmax(grid_b, axis=2)
+                grid_a_max = np.nanmax(grid_a, axis=3)
+                grid_b_max = np.nanmax(grid_b, axis=3)
 
             seed_a_avgs.append(np.nanmean(grid_a_max))
             seed_b_avgs.append(np.nanmean(grid_b_max))
@@ -427,7 +434,7 @@ def main():
             seed_label_a = f"{label_a}{get_decay_str(models_a[seed])}"
             seed_label_b = f"{label_b}{get_decay_str(models_b[seed])}"
 
-            print("    Generating heatmap plot …")
+            print("    Generating 4×3 directional heatmap plot …")
             plot_heatmap_for_env(
                 env_id, grid_a, grid_b, wall_mask, annotations, seed,
                 label_a=seed_label_a, label_b=seed_label_b, comparison_tag=comparison_tag,

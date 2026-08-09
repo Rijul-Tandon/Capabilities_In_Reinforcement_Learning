@@ -3,6 +3,10 @@ name: Run Experiments (300k Steps)
 on:
   workflow_dispatch:  # Trigger manually from GitHub UI or `gh workflow run`
     inputs:
+      num_seeds:
+        description: 'Number of seeds to run (1 to 5)'
+        required: false
+        default: '3'
       max_steps:
         description: 'Max steps per episode (-1 = env default)'
         required: false
@@ -138,6 +142,12 @@ jobs:
         
       - name: "Run Agent (300k Steps, environment-specific decay schedules)"
         run: |
+          NUM_SEEDS="${{ github.event.inputs.num_seeds || '3' }}"
+          if [ "${{ matrix.seed }}" -gt "$NUM_SEEDS" ]; then
+            echo "Skipping seed ${{ matrix.seed }} (requested num_seeds=$NUM_SEEDS)"
+            exit 0
+          fi
+
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
           TIMESTEPS=300000
           EXPLORE_FRAC=0.50
@@ -159,6 +169,7 @@ jobs:
         with:
           name: result_${{ matrix.agent }}_${{ matrix.env_id }}_seed${{ matrix.seed }}
           path: results/
+          if-no-files-found: ignore
           retention-days: 14
 
   plot:
