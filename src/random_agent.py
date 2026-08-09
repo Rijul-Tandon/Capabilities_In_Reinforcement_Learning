@@ -116,7 +116,7 @@ def parse_args():
     # These control the fake epsilon computation for consistent plot X-axes.
     # They should match the defaults in dqn_common.parse_args() exactly.
     parser.add_argument("--start-e", type=float, default=1.0)
-    parser.add_argument("--end-e", type=float, default=0.05)
+    parser.add_argument("--end-e", type=float, default=0.1)
     # --exploration-fraction: What fraction of training to decay epsilon over
     parser.add_argument("--exploration-fraction", type=float, default=0.50)
     

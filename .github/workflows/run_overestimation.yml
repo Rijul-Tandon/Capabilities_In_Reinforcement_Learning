@@ -24,23 +24,23 @@ jobs:
           # - MiniGrid-FourRooms-v0
           # - MiniGrid-MultiRoom-N2-S4-v0
         agent:
-          - dqn_baseline
-          - dqn_reward_shaping
+          - ddqn_baseline
+          - ddqn_reward_shaping
         exploration:
           - epsilon_greedy
           - softmax
         include:
           # Override exp_name for each combination so run directories are unique
-          - agent: dqn_baseline
+          - agent: ddqn_baseline
             exploration: epsilon_greedy
             exp_name: ddqn_baseline
-          - agent: dqn_baseline
+          - agent: ddqn_baseline
             exploration: softmax
             exp_name: ddqn_baseline_softmax
-          - agent: dqn_reward_shaping
+          - agent: ddqn_reward_shaping
             exploration: epsilon_greedy
             exp_name: ddqn_reward_shaping
-          - agent: dqn_reward_shaping
+          - agent: ddqn_reward_shaping
             exploration: softmax
             exp_name: ddqn_reward_shaping_softmax
 
@@ -146,8 +146,8 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Pull latest changes to avoid conflicts, add plots, commit, and push
-          git pull origin main
+          # Add plots, commit, pull rebase to resolve concurrent pushes, and push
           git add $DIR_NAME/
           git commit -m "Auto-generated Baseline vs Shaped overestimation plots ($TIMESTAMP)" || echo "No changes to commit"
+          git pull --rebase origin main
           git push origin main

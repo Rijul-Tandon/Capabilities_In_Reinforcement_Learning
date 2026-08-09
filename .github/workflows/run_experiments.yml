@@ -29,8 +29,8 @@ jobs:
           # - MiniGrid-MultiRoom-N2-S4-v0
         agent:
           - random_agent
-          - dqn_baseline
-          - dqn_reward_shaping
+          - ddqn_baseline
+          - ddqn_reward_shaping
         seed:
           - 1
           - 2
@@ -68,7 +68,7 @@ jobs:
             --max-steps $MAX_STEPS \
             --exploration-fraction $EXPLORE_FRAC \
             --epsilon-schedule polynomial \
-            --end-e 0.05 \
+            --end-e 0.1 \
             --exploration-strategy $STRATEGY \
             --fixed-layout
           
@@ -131,9 +131,9 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Pull latest changes to avoid conflicts, add plots, commit, and push
-          git pull origin main
+          # Add plots, commit, pull rebase to resolve concurrent pushes, and push
           git add $DIR_NAME/
-          git add plots/action_freq_plots/
+          git add plots/action_freq_plots/ 2>/dev/null || true
           git commit -m "Auto-generated plots for 300k steps ($TIMESTAMP)" || echo "No changes to commit"
+          git pull --rebase origin main
           git push origin main

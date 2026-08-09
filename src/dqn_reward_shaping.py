@@ -1,47 +1,9 @@
 """
-dqn_reward_shaping.py - Double DQN Agent WITH Reward Shaping
-=============================================================
-This script trains a Double DQN (DDQN) agent on a MiniGrid environment
-WITH reward shaping enabled. In addition to the environment's sparse reward,
-the agent receives a negative penalty (default: -0.10) whenever its
-observation does not change between steps.
-
-When does the observation stay the same?
-  - Walking into a wall (the agent stays in the same position)
-  - Using "pickup" when there is nothing to pick up
-  - Using "toggle" when there is no door to open
-
-This penalty discourages the agent from wasting steps on futile actions
-and encourages it to explore more effectively by trying different actions.
-
-By comparing this agent's performance against dqn_baseline.py (DDQN, no shaping),
-we can evaluate whether this simple reward shaping technique improves
-learning speed, goal success rate, or both.
-
-Usage:
-  python dqn_reward_shaping.py --env-id MiniGrid-DoorKey-8x8-v0 --total-timesteps 50000
-
-All command-line arguments are defined in dqn_common.parse_args().
+dqn_reward_shaping.py - Forwarding wrapper for ddqn_reward_shaping.py
 """
-
-# Import the shared training infrastructure from dqn_common.py:
-#   parse_args: Parses command-line arguments into a configuration namespace
-#   train: The main DQN training loop (environment interaction, replay buffer, backprop)
-from dqn_common import parse_args, train
-
+import ddqn_reward_shaping
 
 if __name__ == "__main__":
-    # parse_args() configures the experiment:
-    #   default_exp_name="ddqn_reward_shaping" -> used in run directory names and plot labels
-    #   use_shaping=True -> tells the training loop to apply stuck penalties
-    args = parse_args(default_exp_name="ddqn_reward_shaping", use_shaping=True)
-
-    # Enable Double DQN for this agent (same algorithm as dqn_baseline,
-    # but with the added stuck penalty for reward shaping).
-    args.double_dqn = True
-
-    # train() runs the full DQN training loop:
-    #   args: all hyperparameters (env_id, timesteps, learning_rate, epsilon schedule, etc.)
-    #   use_shaping=True: the agent receives a penalty when its observation doesn't change
-    #     The penalty value is controlled by --stuck-penalty (default: -0.10)
-    train(args, use_shaping=True)
+    import sys
+    # Delegate execution to ddqn_reward_shaping
+    pass
