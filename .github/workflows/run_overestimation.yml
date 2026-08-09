@@ -1,4 +1,4 @@
-name: Run Overestimation Comparison (DQN vs DDQN)
+name: Run Overestimation Comparison (Baseline vs Shaped × Exploration)
 
 on:
   workflow_dispatch:  # Trigger manually from GitHub UI or `gh workflow run`
@@ -13,7 +13,7 @@ env:
 
 jobs:
   train:
-    name: Train (${{ matrix.agent }}, ${{ matrix.env_id }})
+    name: Train (${{ matrix.exp_name }}, ${{ matrix.env_id }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false  # If one run fails, keep running the others
@@ -24,8 +24,25 @@ jobs:
           # - MiniGrid-FourRooms-v0
           # - MiniGrid-MultiRoom-N2-S4-v0
         agent:
-          - dqn_vanilla
           - dqn_baseline
+          - dqn_reward_shaping
+        exploration:
+          - epsilon_greedy
+          - softmax
+        include:
+          # Override exp_name for each combination so run directories are unique
+          - agent: dqn_baseline
+            exploration: epsilon_greedy
+            exp_name: ddqn_baseline
+          - agent: dqn_baseline
+            exploration: softmax
+            exp_name: ddqn_baseline_softmax
+          - agent: dqn_reward_shaping
+            exploration: epsilon_greedy
+            exp_name: ddqn_reward_shaping
+          - agent: dqn_reward_shaping
+            exploration: softmax
+            exp_name: ddqn_reward_shaping_softmax
 
     steps:
       - name: Checkout Code
@@ -52,12 +69,14 @@ jobs:
             --seed 1 \
             --max-steps $MAX_STEPS \
             --exploration-fraction $EXPLORE_FRAC \
+            --exploration-strategy ${{ matrix.exploration }} \
+            --exp-name ${{ matrix.exp_name }} \
             --fixed-layout
           
       - name: Upload Run Results
         uses: actions/upload-artifact@v4
         with:
-          name: overestimation_${{ matrix.agent }}_${{ matrix.env_id }}
+          name: overestimation_${{ matrix.exp_name }}_${{ matrix.env_id }}
           path: results/
           retention-days: 14
 
@@ -89,7 +108,29 @@ jobs:
           
       - name: Generate Q-Value Overestimation Plots
         run: |
-          python src/plot_q_overestimation.py
+          # Comparison 1: Same exploration (epsilon-greedy)
+          python src/plot_q_overestimation.py \
+            --compare ddqn_baseline ddqn_reward_shaping \
+            --label-a "Baseline (ε-greedy)" \
+            --label-b "Shaped (ε-greedy)"
+
+          # Comparison 2: Cross-strategy — Baseline ε-greedy vs Shaped softmax
+          python src/plot_q_overestimation.py \
+            --compare ddqn_baseline ddqn_reward_shaping_softmax \
+            --label-a "Baseline (ε-greedy)" \
+            --label-b "Shaped (Softmax)"
+
+          # Comparison 3: Cross-strategy — Baseline softmax vs Shaped ε-greedy
+          python src/plot_q_overestimation.py \
+            --compare ddqn_baseline_softmax ddqn_reward_shaping \
+            --label-a "Baseline (Softmax)" \
+            --label-b "Shaped (ε-greedy)"
+
+          # Comparison 4: Same exploration (softmax)
+          python src/plot_q_overestimation.py \
+            --compare ddqn_baseline_softmax ddqn_reward_shaping_softmax \
+            --label-a "Baseline (Softmax)" \
+            --label-b "Shaped (Softmax)"
           
       - name: Commit and Push Plots
         run: |
@@ -98,8 +139,8 @@ jobs:
           DIR_NAME="plots/overestimation_$TIMESTAMP"
           mkdir -p $DIR_NAME
           
-          # Move all generated overestimation .png files into the new directory
-          mv plots/*overestimation*.png $DIR_NAME/ 2>/dev/null || true
+          # Move all generated comparison folders into the new directory
+          mv plots/*_vs_*/ $DIR_NAME/ 2>/dev/null || true
           
           # Configure git
           git config --global user.name "github-actions[bot]"
@@ -108,5 +149,5 @@ jobs:
           # Pull latest changes to avoid conflicts, add plots, commit, and push
           git pull origin main
           git add $DIR_NAME/
-          git commit -m "Auto-generated DQN vs DDQN overestimation plots ($TIMESTAMP)" || echo "No changes to commit"
+          git commit -m "Auto-generated Baseline vs Shaped overestimation plots ($TIMESTAMP)" || echo "No changes to commit"
           git push origin main

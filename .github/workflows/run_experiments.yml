@@ -116,13 +116,16 @@ jobs:
           
       - name: Commit and Push Plots
         run: |
+          # Get strategy to name the parent folder cleanly
+          STRATEGY="${{ github.event.inputs.exploration_strategy || 'epsilon_greedy' }}"
+          
           # Create timestamped plots directory inside plots/
           TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
-          DIR_NAME="plots/plots_$TIMESTAMP"
+          DIR_NAME="plots/reward_comparison_${STRATEGY}_$TIMESTAMP"
           mkdir -p $DIR_NAME
           
           # Move all generated .png files into the new directory
-          mv plots/*.png $DIR_NAME/
+          mv plots/*.png $DIR_NAME/ 2>/dev/null || true
           
           # Configure git
           git config --global user.name "github-actions[bot]"

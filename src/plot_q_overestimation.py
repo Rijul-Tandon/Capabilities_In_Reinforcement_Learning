@@ -265,8 +265,6 @@ def compute_q_values_grid(env, q_net, seed, device):
                     q_values = q_net(obs_t).squeeze(0) # shape (num_actions,)
                     dir_qvals.append(q_values.cpu().numpy())
 
-                # Average across the 4 directions.
-                # Resulting shape: (num_actions,)
                 q_grid[x, y, :] = np.mean(dir_qvals, axis=0)
 
     return q_grid, wall_mask, annotations
@@ -276,12 +274,13 @@ def compute_q_values_grid(env, q_net, seed, device):
 # PER-ENVIRONMENT HEATMAP PLOT
 # ============================================================================
 
-def plot_heatmap_for_env(env_id, dqn_grid, ddqn_grid, wall_mask, annotations, seed):
+def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
+                        label_a="Agent A", label_b="Agent B", comparison_tag=""):
     """
     Creates a 1×3 heatmap figure for a single environment and seed:
-        Panel 0: DQN Max Q
-        Panel 1: DDQN Max Q
-        Panel 2: Difference (DQN − DDQN)
+        Panel 0: Agent A Max Q
+        Panel 1: Agent B Max Q
+        Panel 2: Difference (A − B)
 
     Wall cells are overlaid in dark gray.  The difference panel uses a
     diverging colour map centred at zero so that overestimation (positive
@@ -292,46 +291,52 @@ def plot_heatmap_for_env(env_id, dqn_grid, ddqn_grid, wall_mask, annotations, se
     ----------
     env_id : str
         Environment name (used in title and filename).
-    dqn_grid : np.ndarray, shape (W, H, num_actions)
-        Average Q-values for all actions from vanilla DQN.  Walls are np.nan.
-    ddqn_grid : np.ndarray, shape (W, H, num_actions)
-        Average Q-values for all actions from Double DQN.  Walls are np.nan.
+    grid_a : np.ndarray, shape (W, H, num_actions)
+        Average Q-values for all actions from agent A.  Walls are np.nan.
+    grid_b : np.ndarray, shape (W, H, num_actions)
+        Average Q-values for all actions from agent B.  Walls are np.nan.
     wall_mask : np.ndarray, shape (W, H), dtype bool
         True for wall cells.
     annotations : dict[tuple, str]
         Mapping of (x,y) to layout labels (S, G, K, D).
     seed : int
         Training seed (shown in title and filename).
+    label_a : str
+        Human-readable label for agent A (used in panel titles).
+    label_b : str
+        Human-readable label for agent B (used in panel titles).
+    comparison_tag : str
+        Short tag appended to the output filename to distinguish comparisons.
     """
-    width, height, num_actions = dqn_grid.shape
+    width, height, num_actions = grid_a.shape
     
     # The background color of the cell will be based on the maximum Q-value
     # Use warnings.catch_warnings to ignore the expected all-NaN slice warnings for wall cells
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
-        dqn_grid_max = np.nanmax(dqn_grid, axis=2)
-        ddqn_grid_max = np.nanmax(ddqn_grid, axis=2)
+        grid_a_max = np.nanmax(grid_a, axis=2)
+        grid_b_max = np.nanmax(grid_b, axis=2)
     
-    diff_grid_max = dqn_grid_max - ddqn_grid_max  # positive ⇒ DQN overestimates
+    diff_grid_max = grid_a_max - grid_b_max  # positive ⇒ A overestimates vs B
     
     # For the text inside the cell, we want the specific Q-values or difference
-    diff_grid = dqn_grid - ddqn_grid
+    diff_grid = grid_a - grid_b
 
     # Make the figure larger so the text fits comfortably
     fig, axes = plt.subplots(1, 3, figsize=(24, 7))
     fig.suptitle(
-        f"{env_id}  —  Q-Value Overestimation  (seed={seed})",
+        f"{env_id}  —  {label_a} vs {label_b}  (seed={seed})",
         fontsize=16, fontweight="bold",
     )
 
-    # Shared min/max across DQN and DDQN panels for comparable colour scales.
-    vmin_q = np.nanmin([dqn_grid_max, ddqn_grid_max])
-    vmax_q = np.nanmax([dqn_grid_max, ddqn_grid_max])
+    # Shared min/max across both agent panels for comparable colour scales.
+    vmin_q = np.nanmin([grid_a_max, grid_b_max])
+    vmax_q = np.nanmax([grid_a_max, grid_b_max])
 
     panels = [
-        ("DQN (Vanilla)  Max Q", dqn_grid_max, dqn_grid, "viridis", None),
-        ("DDQN  Max Q",          ddqn_grid_max, ddqn_grid, "viridis", None),
-        ("Difference (DQN − DDQN)", diff_grid_max, diff_grid, "RdBu_r", "diverging"),
+        (f"{label_a}  Max Q", grid_a_max, grid_a, "viridis", None),
+        (f"{label_b}  Max Q", grid_b_max, grid_b, "viridis", None),
+        (f"Difference ({label_a} − {label_b})", diff_grid_max, diff_grid, "RdBu_r", "diverging"),
     ]
 
     # Action labels for the text overlay
@@ -400,8 +405,9 @@ def plot_heatmap_for_env(env_id, dqn_grid, ddqn_grid, wall_mask, annotations, se
 
     plt.tight_layout(rect=[0, 0, 1, 0.93])
 
-    output_path = Path("plots") / f"{env_id}_q_overestimation_seed{seed}.png"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_dir = Path("plots") / comparison_tag if comparison_tag else Path("plots")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{env_id}_q_overestimation_seed{seed}.png"
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  Heatmap saved → {output_path}")
@@ -411,48 +417,54 @@ def plot_heatmap_for_env(env_id, dqn_grid, ddqn_grid, wall_mask, annotations, se
 # SUMMARY BAR CHART
 # ============================================================================
 
-def plot_bar_chart(summary):
+def plot_bar_chart(summary, label_a="Agent A", label_b="Agent B", comparison_tag=""):
     """
-    Creates a grouped bar chart comparing average max-Q for DQN vs DDQN
+    Creates a grouped bar chart comparing average max-Q for two agents
     across all environments.
 
     Parameters
     ----------
     summary : list[dict]
-        Each entry has keys: "env_id", "dqn_mean", "ddqn_mean",
-        and optionally "dqn_std", "ddqn_std" for error bars when multiple
+        Each entry has keys: "env_id", "a_mean", "b_mean",
+        and optionally "a_std", "b_std" for error bars when multiple
         seeds are available.
+    label_a : str
+        Human-readable label for agent A.
+    label_b : str
+        Human-readable label for agent B.
+    comparison_tag : str
+        Short tag appended to the output filename to distinguish comparisons.
     """
     if not summary:
         print("No data for summary bar chart — skipping.")
         return
 
     env_labels = [s["env_id"].replace("MiniGrid-", "") for s in summary]
-    dqn_means  = [s["dqn_mean"]  for s in summary]
-    ddqn_means = [s["ddqn_mean"] for s in summary]
-    dqn_stds   = [s.get("dqn_std", 0)  for s in summary]
-    ddqn_stds  = [s.get("ddqn_std", 0) for s in summary]
+    a_means  = [s["a_mean"]  for s in summary]
+    b_means  = [s["b_mean"]  for s in summary]
+    a_stds   = [s.get("a_std", 0)  for s in summary]
+    b_stds   = [s.get("b_std", 0)  for s in summary]
 
     x = np.arange(len(env_labels))
     bar_width = 0.35
 
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    bars_dqn = ax.bar(
-        x - bar_width / 2, dqn_means, bar_width,
-        yerr=dqn_stds, capsize=4,
-        label="DQN (Vanilla)", color="#E74C3C", edgecolor="black", linewidth=0.6,
+    bars_a = ax.bar(
+        x - bar_width / 2, a_means, bar_width,
+        yerr=a_stds, capsize=4,
+        label=label_a, color="#E74C3C", edgecolor="black", linewidth=0.6,
     )
-    bars_ddqn = ax.bar(
-        x + bar_width / 2, ddqn_means, bar_width,
-        yerr=ddqn_stds, capsize=4,
-        label="Double DQN", color="#3498DB", edgecolor="black", linewidth=0.6,
+    bars_b = ax.bar(
+        x + bar_width / 2, b_means, bar_width,
+        yerr=b_stds, capsize=4,
+        label=label_b, color="#3498DB", edgecolor="black", linewidth=0.6,
     )
 
     ax.set_xlabel("Environment", fontsize=12)
     ax.set_ylabel("Average Max Q-Value", fontsize=12)
     ax.set_title(
-        "Q-Value Overestimation: DQN vs Double DQN",
+        f"Q-Value Comparison: {label_a} vs {label_b}",
         fontsize=14, fontweight="bold",
     )
     ax.set_xticks(x)
@@ -461,7 +473,7 @@ def plot_bar_chart(summary):
     ax.grid(axis="y", alpha=0.3)
 
     # Annotate each bar with its numeric value.
-    for bars in [bars_dqn, bars_ddqn]:
+    for bars in [bars_a, bars_b]:
         for bar in bars:
             h = bar.get_height()
             ax.annotate(
@@ -472,8 +484,9 @@ def plot_bar_chart(summary):
             )
 
     plt.tight_layout()
-    output_path = Path("plots") / "q_overestimation_comparison.png"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_dir = Path("plots") / comparison_tag if comparison_tag else Path("plots")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "q_overestimation_comparison.png"
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"\nBar chart saved → {output_path}")
@@ -486,11 +499,11 @@ def plot_bar_chart(summary):
 def main():
     """
     Entry point: parses arguments, iterates over environments & seeds,
-    computes Q-value grids for both DQN and DDQN, and produces all plots.
+    computes Q-value grids for both agents, and produces all plots.
     """
     # --- Argument Parsing ---
     parser = argparse.ArgumentParser(
-        description="Compare Q-value overestimation between DQN and Double DQN."
+        description="Compare Q-value overestimation between two trained agents."
     )
     # --results-dir: Parent directory where run folders live.
     parser.add_argument("--results-dir", type=str, default="results",
@@ -501,18 +514,34 @@ def main():
     # --hidden-size: Must match the hidden layer width used during training.
     parser.add_argument("--hidden-size", type=int, default=256,
                         help="Hidden layer size of the Q-Network (must match training).")
+    # --compare: Two experiment names to compare (replaces hardcoded dqn_vanilla/ddqn_baseline).
+    parser.add_argument("--compare", nargs=2, metavar=("EXP_A", "EXP_B"),
+                        default=["dqn_vanilla", "ddqn_baseline"],
+                        help="Experiment names of the two agents to compare.")
+    # --label-a / --label-b: Human-readable labels for plot titles and legend.
+    parser.add_argument("--label-a", type=str, default=None,
+                        help="Display label for agent A (defaults to exp name).")
+    parser.add_argument("--label-b", type=str, default=None,
+                        help="Display label for agent B (defaults to exp name).")
 
     args = parser.parse_args()
+
+    exp_a, exp_b = args.compare
+    label_a = args.label_a or exp_a
+    label_b = args.label_b or exp_b
+    # Create a filesystem-safe tag from the two experiment names
+    comparison_tag = f"{exp_a}_vs_{exp_b}"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     print(f"Results directory: {args.results_dir}")
     print(f"Action set: {args.action_set}")
     print(f"Hidden size: {args.hidden_size}")
+    print(f"Comparing: {label_a}  vs  {label_b}")
+    print(f"  (exp names: {exp_a}  vs  {exp_b})")
     print()
 
     # Accumulate per-environment summary statistics for the bar chart.
-    # Each entry: {"env_id", "dqn_mean", "ddqn_mean", "dqn_std", "ddqn_std"}
     bar_chart_summary = []
 
     # --- Iterate Over Environments ---
@@ -521,12 +550,12 @@ def main():
         print(f"Environment: {env_id}")
         print(f"{'=' * 60}")
 
-        # Discover trained models for both DQN variants.
-        dqn_models  = get_models_by_seed(args.results_dir, env_id, "dqn_vanilla")
-        ddqn_models = get_models_by_seed(args.results_dir, env_id, "ddqn_baseline")
+        # Discover trained models for both agents.
+        models_a = get_models_by_seed(args.results_dir, env_id, exp_a)
+        models_b = get_models_by_seed(args.results_dir, env_id, exp_b)
 
-        # We need both a DQN and a DDQN model for at least one common seed.
-        common_seeds = sorted(set(dqn_models.keys()) & set(ddqn_models.keys()))
+        # We need both agents for at least one common seed.
+        common_seeds = sorted(set(models_a.keys()) & set(models_b.keys()))
         if not common_seeds:
             print(f"  ⚠  No matching seed pair found for {env_id} — skipping.\n")
             continue
@@ -534,82 +563,81 @@ def main():
         print(f"  Common seeds: {common_seeds}")
 
         # Create the environment once to get observation/action dimensions.
-        # We use the first common seed; the layout will be re-generated per seed.
         env = make_env(env_id, common_seeds[0], args.action_set)
         obs_dim     = int(np.prod(env.observation_space.shape))
         num_actions = env.action_space.n
 
         # Track per-seed averages for the bar chart error bars.
-        seed_dqn_avgs  = []
-        seed_ddqn_avgs = []
+        seed_a_avgs = []
+        seed_b_avgs = []
 
         for seed in common_seeds:
             print(f"\n  Seed {seed}:")
 
-            # --- Load DQN (Vanilla) Model ---
-            q_net_dqn = QNetwork(obs_dim, num_actions, args.hidden_size).to(device)
-            q_net_dqn.load_state_dict(
-                torch.load(dqn_models[seed], map_location=device, weights_only=True)
+            # --- Load Agent A Model ---
+            q_net_a = QNetwork(obs_dim, num_actions, args.hidden_size).to(device)
+            q_net_a.load_state_dict(
+                torch.load(models_a[seed], map_location=device, weights_only=True)
             )
-            q_net_dqn.eval()
-            print(f"    Loaded DQN  : {dqn_models[seed]}")
+            q_net_a.eval()
+            print(f"    Loaded {label_a}: {models_a[seed]}")
 
-            # --- Load Double DQN Model ---
-            q_net_ddqn = QNetwork(obs_dim, num_actions, args.hidden_size).to(device)
-            q_net_ddqn.load_state_dict(
-                torch.load(ddqn_models[seed], map_location=device, weights_only=True)
+            # --- Load Agent B Model ---
+            q_net_b = QNetwork(obs_dim, num_actions, args.hidden_size).to(device)
+            q_net_b.load_state_dict(
+                torch.load(models_b[seed], map_location=device, weights_only=True)
             )
-            q_net_ddqn.eval()
-            print(f"    Loaded DDQN : {ddqn_models[seed]}")
+            q_net_b.eval()
+            print(f"    Loaded {label_b}: {models_b[seed]}")
 
             # --- Compute Q-Value Grids ---
-            # Re-create env for this specific seed so the layout matches training.
             env_seed = make_env(env_id, seed, args.action_set)
 
-            print("    Computing DQN  Q-values …")
-            dqn_grid, wall_mask, annotations = compute_q_values_grid(
-                env_seed, q_net_dqn, seed, device
+            print(f"    Computing {label_a} Q-values …")
+            grid_a, wall_mask, annotations = compute_q_values_grid(
+                env_seed, q_net_a, seed, device
             )
 
-            print("    Computing DDQN Q-values …")
-            ddqn_grid, _, _ = compute_q_values_grid(
-                env_seed, q_net_ddqn, seed, device
+            print(f"    Computing {label_b} Q-values …")
+            grid_b, _, _ = compute_q_values_grid(
+                env_seed, q_net_b, seed, device
             )
 
-            # The q_grids are (W, H, num_actions). 
-            # We take the max over actions to compute the average overestimation 
-            # for the bar chart.
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", category=RuntimeWarning)
-                dqn_grid_max = np.nanmax(dqn_grid, axis=2)
-                ddqn_grid_max = np.nanmax(ddqn_grid, axis=2)
+                grid_a_max = np.nanmax(grid_a, axis=2)
+                grid_b_max = np.nanmax(grid_b, axis=2)
 
-            seed_dqn_avgs.append(np.nanmean(dqn_grid_max))
-            seed_ddqn_avgs.append(np.nanmean(ddqn_grid_max))
+            seed_a_avgs.append(np.nanmean(grid_a_max))
+            seed_b_avgs.append(np.nanmean(grid_b_max))
 
             # Generate the visualization heatmap.
             print("    Generating heatmap plot …")
-            plot_heatmap_for_env(env_id, dqn_grid, ddqn_grid, wall_mask, annotations, seed)
+            plot_heatmap_for_env(
+                env_id, grid_a, grid_b, wall_mask, annotations, seed,
+                label_a=label_a, label_b=label_b, comparison_tag=comparison_tag,
+            )
             
-            diff_avg = np.nanmean(dqn_grid_max) - np.nanmean(ddqn_grid_max)
-            print(f"    DQN  avg max Q : {np.nanmean(dqn_grid_max):.4f}")
-            print(f"    DDQN avg max Q : {np.nanmean(ddqn_grid_max):.4f}")
-            print(f"    Difference     : {diff_avg:+.4f}")
+            diff_avg = np.nanmean(grid_a_max) - np.nanmean(grid_b_max)
+            print(f"    {label_a} avg max Q : {np.nanmean(grid_a_max):.4f}")
+            print(f"    {label_b} avg max Q : {np.nanmean(grid_b_max):.4f}")
+            print(f"    Difference          : {diff_avg:+.4f}")
 
 
         env.close()
 
         # --- Aggregate Across Seeds for the Bar Chart ---
         bar_chart_summary.append({
-            "env_id":    env_id,
-            "dqn_mean":  float(np.mean(seed_dqn_avgs)),
-            "ddqn_mean": float(np.mean(seed_ddqn_avgs)),
-            "dqn_std":   float(np.std(seed_dqn_avgs))  if len(seed_dqn_avgs) > 1 else 0.0,
-            "ddqn_std":  float(np.std(seed_ddqn_avgs)) if len(seed_ddqn_avgs) > 1 else 0.0,
+            "env_id":  env_id,
+            "a_mean":  float(np.mean(seed_a_avgs)),
+            "b_mean":  float(np.mean(seed_b_avgs)),
+            "a_std":   float(np.std(seed_a_avgs))  if len(seed_a_avgs) > 1 else 0.0,
+            "b_std":   float(np.std(seed_b_avgs))   if len(seed_b_avgs) > 1 else 0.0,
         })
 
     # --- Generate Summary Bar Chart ---
-    plot_bar_chart(bar_chart_summary)
+    plot_bar_chart(bar_chart_summary, label_a=label_a, label_b=label_b,
+                   comparison_tag=comparison_tag)
 
     print("\nAll done.")
 
