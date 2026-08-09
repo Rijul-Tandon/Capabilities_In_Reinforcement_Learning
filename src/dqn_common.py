@@ -1138,11 +1138,12 @@ def train(args, use_shaping):
                 action = env.action_space.sample()
                 was_random = True
             else:
-                # Exploit: pick the action with the highest predicted Q-value
+                # Exploit: pick action via Softmax distribution (tau = 1.0)
                 with torch.no_grad():
                     obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
                     q_values = q_net(obs_tensor)
-                    action = int(torch.argmax(q_values, dim=1).item())
+                    probs = torch.softmax(q_values / 1.0, dim=1)
+                    action = int(torch.multinomial(probs, 1).item())
 
         # Track the action taken at the current state
         # (Must do this before env.step() since env.step() changes agent_pos/dir)

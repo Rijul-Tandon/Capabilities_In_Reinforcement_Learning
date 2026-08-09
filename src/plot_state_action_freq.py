@@ -220,8 +220,9 @@ def get_agent_data(env, q_net, episodes, seed, num_actions, device):
                         # unsqueeze(0) adds batch dimension: (obs_dim,) -> (1, obs_dim)
                         # Forward pass returns Q-values for all actions: shape (1, num_actions)
                         q_values = q_net(obs_tensor)
-                        # argmax returns the action index with the highest Q-value
-                        action = int(torch.argmax(q_values, dim=1).item())
+                        # Softmax (tau = 1.0) policy to sample actions according to their probability
+                        probs = torch.softmax(q_values / 1.0, dim=1)
+                        action = int(torch.multinomial(probs, 1).item())
 
                 # Record which action was taken at this position, and the direction the agent was facing
                 agent_dir = env.unwrapped.agent_dir
