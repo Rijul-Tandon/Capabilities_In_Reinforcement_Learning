@@ -151,8 +151,8 @@ def format_exp_label(exp_name):
 
 def get_best_exp(exp_dict):
     """
-    Given a dict of {exp_name: run_list}, computes the average goal_reached rate
-    in the last 20% of training steps for each experiment, and returns the exp_name
+    Given a dict of {exp_name: run_list}, computes the average performance
+    in the FIRST 40% of training steps for each experiment, and returns the exp_name
     with the highest performance.
     """
     best_exp = None
@@ -164,11 +164,11 @@ def get_best_exp(exp_dict):
             if not rows:
                 continue
             num_rows = len(rows)
-            last_quarter = rows[int(num_rows * 0.8):]
-            if not last_quarter:
-                last_quarter = rows
-            avg_goal = np.mean([r["goal_reached"] for r in last_quarter])
-            avg_ret = np.mean([r["episodic_return"] for r in last_quarter])
+            first_portion = rows[:max(1, int(num_rows * 0.4))]
+            if not first_portion:
+                first_portion = rows
+            avg_goal = np.mean([r["goal_reached"] for r in first_portion])
+            avg_ret = np.mean([r["episodic_return"] for r in first_portion])
             score = avg_goal + 0.1 * avg_ret
             scores.append(score)
             
@@ -305,7 +305,7 @@ def main():
     is_decay_run = args.decay_comparison or any("_decay_" in exp for exp in runs_by_exp.keys())
 
     if is_decay_run:
-        print(f"=== Generating Epsilon Decay Comparisons for {args.env_id} ===")
+        print(f"=== Generating Per-Seed Epsilon Decay Comparisons for {args.env_id} ===")
 
         # Collect all seeds present across decay runs
         decay_seeds = set()
@@ -322,63 +322,39 @@ def main():
                     res[exp] = s_runs
             return res
 
-        # 1. Compare all decay strategies for Baseline DDQN
         baseline_runs = {exp: runs for exp, runs in runs_by_exp.items() if "ddqn_baseline" in exp or "dqn_baseline" in exp}
-        if baseline_runs:
-            out_baseline = plots_dir / f"{args.env_id}_decay_comparison_baseline.png"
-            plot_figure(baseline_runs, args.env_id, out_baseline, args.rolling_window,
-                        title_suffix=" | Baseline DDQN (All Decays)")
-
-            for s in decay_seeds:
-                seed_baseline = filter_by_seed(baseline_runs, s)
-                if seed_baseline:
-                    out_s = plots_dir / f"{args.env_id}_decay_comparison_baseline_seed{s}.png"
-                    plot_figure(seed_baseline, args.env_id, out_s, args.rolling_window,
-                                title_suffix=f" | Baseline DDQN (Seed {s})")
-
-        # 2. Compare all decay strategies for Reward Shaped DDQN
         shaped_runs = {exp: runs for exp, runs in runs_by_exp.items() if "ddqn_reward_shaping" in exp or "dqn_reward_shaping" in exp}
-        if shaped_runs:
-            out_shaped = plots_dir / f"{args.env_id}_decay_comparison_reward_shaping.png"
-            plot_figure(shaped_runs, args.env_id, out_shaped, args.rolling_window,
-                        title_suffix=" | Reward Shaped DDQN (All Decays)")
 
-            for s in decay_seeds:
-                seed_shaped = filter_by_seed(shaped_runs, s)
-                if seed_shaped:
-                    out_s = plots_dir / f"{args.env_id}_decay_comparison_reward_shaping_seed{s}.png"
-                    plot_figure(seed_shaped, args.env_id, out_s, args.rolling_window,
-                                title_suffix=f" | Reward Shaped DDQN (Seed {s})")
+        for s in decay_seeds:
+            seed_b_runs = filter_by_seed(baseline_runs, s)
+            seed_s_runs = filter_by_seed(shaped_runs, s)
 
-        # 3. Compare Best Decay of Baseline vs Best Decay of Reward Shaped
-        best_baseline_exp = get_best_exp(baseline_runs) if baseline_runs else None
-        best_shaped_exp = get_best_exp(shaped_runs) if shaped_runs else None
+            # 1. Compare all decay strategies for Baseline DDQN on seed `s`
+            if seed_b_runs:
+                out_b_s = plots_dir / f"{args.env_id}_decay_comparison_baseline_seed{s}.png"
+                plot_figure(seed_b_runs, args.env_id, out_b_s, args.rolling_window,
+                            title_suffix=f" | Baseline DDQN (Seed {s})")
 
-        best_of_both = {}
-        if best_baseline_exp and best_baseline_exp in baseline_runs:
-            best_of_both[best_baseline_exp] = baseline_runs[best_baseline_exp]
-        if best_shaped_exp and best_shaped_exp in shaped_runs:
-            best_of_both[best_shaped_exp] = shaped_runs[best_shaped_exp]
+            # 2. Compare all decay strategies for Reward Shaped DDQN on seed `s`
+            if seed_s_runs:
+                out_s_s = plots_dir / f"{args.env_id}_decay_comparison_reward_shaping_seed{s}.png"
+                plot_figure(seed_s_runs, args.env_id, out_s_s, args.rolling_window,
+                            title_suffix=f" | Reward Shaped DDQN (Seed {s})")
 
-        if best_of_both:
-            out_best = plots_dir / f"{args.env_id}_decay_comparison_best_of_both.png"
-            plot_figure(best_of_both, args.env_id, out_best, args.rolling_window,
-                        title_suffix=" | Best Baseline Decay vs Best Reward Shaped Decay")
+            # 3. Compare Winner Baseline Decay vs Winner Reward Shaped Decay on seed `s`
+            winner_b_s = get_best_exp(seed_b_runs) if seed_b_runs else None
+            winner_s_s = get_best_exp(seed_s_runs) if seed_s_runs else None
+            
+            best_s_dict = {}
+            if winner_b_s and winner_b_s in seed_b_runs:
+                best_s_dict[winner_b_s] = seed_b_runs[winner_b_s]
+            if winner_s_s and winner_s_s in seed_s_runs:
+                best_s_dict[winner_s_s] = seed_s_runs[winner_s_s]
 
-            for s in decay_seeds:
-                seed_b_runs = filter_by_seed(baseline_runs, s)
-                seed_s_runs = filter_by_seed(shaped_runs, s)
-                best_b_s = get_best_exp(seed_b_runs) if seed_b_runs else None
-                best_s_s = get_best_exp(seed_s_runs) if seed_s_runs else None
-                best_s_dict = {}
-                if best_b_s and best_b_s in seed_b_runs:
-                    best_s_dict[best_b_s] = seed_b_runs[best_b_s]
-                if best_s_s and best_s_s in seed_s_runs:
-                    best_s_dict[best_s_s] = seed_s_runs[best_s_s]
-                if best_s_dict:
-                    out_best_s = plots_dir / f"{args.env_id}_decay_comparison_best_of_both_seed{s}.png"
-                    plot_figure(best_s_dict, args.env_id, out_best_s, args.rolling_window,
-                                title_suffix=f" | Best Baseline vs Best Shaped (Seed {s})")
+            if best_s_dict:
+                out_best_s = plots_dir / f"{args.env_id}_decay_comparison_best_of_both_seed{s}.png"
+                plot_figure(best_s_dict, args.env_id, out_best_s, args.rolling_window,
+                            title_suffix=f" | Best Baseline vs Best Shaped (Seed {s})")
 
     else:
         # Standard seed-by-seed agent comparison plots

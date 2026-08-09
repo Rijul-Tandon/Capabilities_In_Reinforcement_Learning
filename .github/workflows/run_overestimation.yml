@@ -17,42 +17,14 @@ env:
 
 jobs:
   train:
-    name: Train (${{ matrix.exp_name }}, ${{ matrix.env_id }}, seed ${{ matrix.seed }})
+    name: Train (${{ matrix.agent }}, ${{ matrix.env_id }}, seed ${{ matrix.seed }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false  # If one run fails, keep running the others
       matrix:
+        env_id: [MiniGrid-Empty-6x6-v0, MiniGrid-DoorKey-6x6-v0]
+        agent: [ddqn_baseline, ddqn_reward_shaping]
         seed: [1, 2, 3, 4, 5]
-        include:
-          # --- MiniGrid-Empty-6x6-v0 ---
-          # Baseline: linear decay
-          - env_id: MiniGrid-Empty-6x6-v0
-            agent: ddqn_baseline
-            exploration: epsilon_greedy
-            exp_name: ddqn_baseline
-            decay: linear
-
-          # Reward Shaped: polynomial decay
-          - env_id: MiniGrid-Empty-6x6-v0
-            agent: ddqn_reward_shaping
-            exploration: epsilon_greedy
-            exp_name: ddqn_reward_shaping
-            decay: polynomial
-
-          # --- MiniGrid-DoorKey-6x6-v0 ---
-          # Baseline: exponential decay
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_baseline
-            exploration: epsilon_greedy
-            exp_name: ddqn_baseline
-            decay: exponential
-
-          # Reward Shaped: cosine decay
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_reward_shaping
-            exploration: epsilon_greedy
-            exp_name: ddqn_reward_shaping
-            decay: cosine
 
     steps:
       - name: Checkout Code
@@ -75,6 +47,22 @@ jobs:
             exit 0
           fi
 
+          # Determine specific decay schedule based on environment and agent
+          DECAY="polynomial"
+          if [ "${{ matrix.env_id }}" = "MiniGrid-Empty-6x6-v0" ]; then
+            if [ "${{ matrix.agent }}" = "ddqn_baseline" ]; then
+              DECAY="linear"
+            else
+              DECAY="polynomial"
+            fi
+          elif [ "${{ matrix.env_id }}" = "MiniGrid-DoorKey-6x6-v0" ]; then
+            if [ "${{ matrix.agent }}" = "ddqn_baseline" ]; then
+              DECAY="exponential"
+            else
+              DECAY="cosine"
+            fi
+          fi
+
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
           TIMESTEPS=300000
           EXPLORE_FRAC=0.50
@@ -85,16 +73,16 @@ jobs:
             --seed ${{ matrix.seed }} \
             --max-steps $MAX_STEPS \
             --exploration-fraction $EXPLORE_FRAC \
-            --epsilon-schedule ${{ matrix.decay }} \
+            --epsilon-schedule $DECAY \
             --end-e 0.1 \
-            --exploration-strategy ${{ matrix.exploration }} \
-            --exp-name ${{ matrix.exp_name }} \
+            --exploration-strategy epsilon_greedy \
+            --exp-name ${{ matrix.agent }} \
             --fixed-layout
           
       - name: Upload Run Results
         uses: actions/upload-artifact@v4
         with:
-          name: overestimation_${{ matrix.exp_name }}_${{ matrix.env_id }}_seed${{ matrix.seed }}
+          name: overestimation_${{ matrix.agent }}_${{ matrix.env_id }}_seed${{ matrix.seed }}
           path: results/
           if-no-files-found: ignore
           retention-days: 14
