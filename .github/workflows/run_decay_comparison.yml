@@ -13,7 +13,7 @@ env:
 
 jobs:
   train:
-    name: Train (${{ matrix.agent }}, ${{ matrix.decay }}, ${{ matrix.env_id }})
+    name: Train Decay (${{ matrix.agent }}, ${{ matrix.decay }}, ${{ matrix.env_id }}, seed ${{ matrix.seed }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false  # If one run fails, keep running the others
@@ -21,8 +21,6 @@ jobs:
         env_id:
           - MiniGrid-Empty-6x6-v0
           - MiniGrid-DoorKey-6x6-v0
-          # - MiniGrid-FourRooms-v0
-          # - MiniGrid-MultiRoom-N2-S4-v0
         agent:
           - ddqn_baseline
           - ddqn_reward_shaping
@@ -33,6 +31,12 @@ jobs:
           - cosine
           - exponential
           - cyclic
+        seed:
+          - 1
+          - 2
+          - 3
+          - 4
+          - 5
 
     steps:
       - name: Checkout Code
@@ -57,7 +61,7 @@ jobs:
           python src/${{ matrix.agent }}.py \
             --env-id ${{ matrix.env_id }} \
             --total-timesteps $TIMESTEPS \
-            --seed 1 \
+            --seed ${{ matrix.seed }} \
             --max-steps $MAX_STEPS \
             --exploration-fraction $EXPLORE_FRAC \
             --epsilon-schedule ${{ matrix.decay }} \
@@ -69,7 +73,7 @@ jobs:
       - name: Upload Run Results
         uses: actions/upload-artifact@v4
         with:
-          name: decay_${{ matrix.agent }}_${{ matrix.decay }}_${{ matrix.env_id }}
+          name: decay_${{ matrix.agent }}_${{ matrix.decay }}_${{ matrix.env_id }}_seed${{ matrix.seed }}
           path: results/
           retention-days: 14
 
@@ -99,10 +103,10 @@ jobs:
           path: results/
           merge-multiple: true
           
-      - name: Generate Comparison Plots
+      - name: Generate Epsilon Decay Comparison Figures
         run: |
           for env in "MiniGrid-Empty-6x6-v0" "MiniGrid-DoorKey-6x6-v0"; do
-            echo "Plotting decay curves for $env..."
+            echo "Generating Decay Comparison plots for $env..."
             python src/plot_comparison.py --env-id $env --decay-comparison
           done
           
@@ -113,15 +117,15 @@ jobs:
           DIR_NAME="plots/decay_comparison_$TIMESTAMP"
           mkdir -p $DIR_NAME
           
-          # Move all generated comparison plots into the new directory
-          mv plots/*.png $DIR_NAME/ 2>/dev/null || true
+          # Move all generated decay comparison .png files into the new directory
+          mv plots/*decay_comparison*.png $DIR_NAME/ 2>/dev/null || true
           
           # Configure git
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Commit, pull rebase to avoid push conflicts, and push
+          # Add plots, commit, pull rebase to resolve concurrent pushes, and push
           git add $DIR_NAME/
-          git commit -m "Auto-generated Epsilon Decay comparison plots ($TIMESTAMP)" || echo "No changes to commit"
+          git commit -m "Auto-generated Epsilon Decay Comparison plots ($TIMESTAMP)" || echo "No changes to commit"
           git pull --rebase origin main
           git push origin main

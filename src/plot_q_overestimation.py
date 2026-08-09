@@ -36,124 +36,76 @@ Output:
 # STANDARD LIBRARY IMPORTS
 # ============================================================================
 
-# argparse: Parses command-line arguments (--results-dir, --action-set, etc.)
 import argparse
-
-# warnings: Used to suppress expected runtime warnings (like all-NaN slices)
+import json
 import warnings
-
-# Path: Object-oriented filesystem paths for locating model files and
-#   creating output directories without manual string concatenation.
 from pathlib import Path
 
 # ============================================================================
 # THIRD-PARTY IMPORTS
 # ============================================================================
 
-# matplotlib.pyplot (plt): The plotting library used for heatmaps and bar
-#   charts.  plt.subplots() creates grids of axes, ax.imshow() renders 2-D
-#   arrays as colour-mapped images, and ax.bar() draws grouped bar charts.
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as path_effects
-
-# matplotlib.colors: Provides Normalize and TwoSlopeNorm for mapping data
-#   values to the [0, 1] colour-map range.  TwoSlopeNorm centres a diverging
-#   colour map at zero so that positive and negative differences are visually
-#   symmetric even when the data range is asymmetric.
 import matplotlib.colors as mcolors
-
-# numpy (np): Numerical computing — used for grid arrays, masking wall cells,
-#   computing means, and constructing bar-chart positions.
 import numpy as np
-
-# torch: PyTorch deep-learning framework.  Used to load saved Q-network
-#   weights (torch.load), run inference (forward pass), and disable gradient
-#   tracking during evaluation (torch.no_grad).
 import torch
 
 # ============================================================================
-# LOCAL IMPORTS (from our own codebase)
+# LOCAL IMPORTS
 # ============================================================================
 
-# QNetwork: The MLP that maps a flattened observation to Q-values for each
-#   action.  Constructor signature: QNetwork(obs_dim, num_actions, hidden_size).
-# make_env: Creates a MiniGrid environment wrapped with FullyObsWrapper →
-#   ImgObsWrapper → FlatImageAndDirectionWrapper → RecordEpisodeStatistics.
-# action_names: Returns human-readable names for the active action subset.
 from dqn_common import QNetwork, make_env, action_names
 
 
 # ============================================================================
-# CONSTANTS
+# CONSTANTS & HELPERS
 # ============================================================================
 
-# The four MiniGrid environments we analyse.  This list mirrors the set of
-# environments used throughout the project's benchmarks.
 ENV_IDS = [
     "MiniGrid-Empty-6x6-v0",
     "MiniGrid-DoorKey-6x6-v0",
-    # "MiniGrid-FourRooms-v0",
-    # "MiniGrid-MultiRoom-N2-S4-v0",
 ]
 
-# MiniGrid direction codes → human-readable labels (used in comments only).
-#   0 = East (right), 1 = South (down), 2 = West (left), 3 = North (up)
 NUM_DIRECTIONS = 4
 
 
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
-
 def get_models_by_seed(results_dir, env_id, exp_name):
-    """
-    Finds all trained model files for a given experiment, grouped by seed.
-
-    The run directories follow the naming convention:
-        {env_id}__{exp_name}__{seed}__{timestamp}
-    If multiple runs exist for the same seed (re-runs), the newest timestamp
-    wins because sorted() processes them in chronological order and the last
-    one overwrites earlier entries.
-
-    Parameters
-    ----------
-    results_dir : str
-        Path to the parent directory containing all run folders.
-    env_id : str
-        The gymnasium environment ID (e.g., "MiniGrid-Empty-6x6-v0").
-    exp_name : str
-        The experiment name (e.g., "dqn_vanilla" or "ddqn_baseline").
-
-    Returns
-    -------
-    dict[int, Path]
-        A dict mapping seed → path to q_net.pt for that seed.
-    """
-    models = {}  # seed → latest model path for that seed
+    """Finds all trained model files for a given experiment, grouped by seed."""
+    models = {}
     for run_dir in sorted(Path(results_dir).glob(f"{env_id}__{exp_name}__*")):
         model_path = run_dir / "q_net.pt"
         if not model_path.exists():
             continue
-        # Directory name format: env__exp__seed__timestamp
         parts = run_dir.name.split("__")
         try:
             seed = int(parts[2])
         except (IndexError, ValueError):
             continue
-        # Overwrite with newer run (sorted order ensures newest is last)
         models[seed] = model_path
-    return models  # {seed: Path}
+    return models
+
+
+def get_decay_str(model_path):
+    """Reads config.json from model parent directory to get epsilon_schedule."""
+    if not model_path:
+        return ""
+    cfg_path = model_path.parent / "config.json"
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                c = json.load(f)
+            sched = c.get("epsilon_schedule", "")
+            if sched:
+                return f" ({sched})"
+        except Exception:
+            pass
+    return ""
 
 
 def get_wrapped_obs(env):
-    """
-    Generates the raw observation and manually pushes it through the pipeline
-    of ObservationWrappers. This avoids AttributeError when the top-level
-    wrapper (like RecordEpisodeStatistics) does not expose an observation() method.
-    """
+    """Generates raw observation and pushes it through observation wrappers."""
     obs = env.unwrapped.gen_obs()
-    
-    # Collect all observation wrappers in the stack (outermost to innermost)
     wrapper = env
     obs_wrappers = []
     while hasattr(wrapper, 'env'):
@@ -161,7 +113,6 @@ def get_wrapped_obs(env):
             obs_wrappers.append(wrapper)
         wrapper = wrapper.env
         
-    # Apply them from innermost to outermost
     for w in reversed(obs_wrappers):
         obs = w.observation(obs)
         
@@ -169,61 +120,19 @@ def get_wrapped_obs(env):
 
 
 def compute_q_values_grid(env, q_net, seed, device):
-    """
-    Computes max_a Q(s, a) for every reachable (non-wall) cell and all 4
-    agent directions, using a trained Q-network.
-
-    Approach:
-      1. Reset the environment with the given seed so the procedural generator
-         produces a deterministic layout (walls, doors, keys, goal).
-      2. Walk every (x, y) cell in the grid; skip walls.
-      3. For each reachable cell and each direction d ∈ {0,1,2,3}:
-         - Directly set env.unwrapped.agent_pos = (x, y)
-         - Directly set env.unwrapped.agent_dir = d
-         - Obtain the wrapped observation via the wrapper pipeline:
-               obs = env.observation(env.unwrapped.gen_obs())
-         - Forward-pass through q_net to get Q-values for all actions.
-         - Record max_a Q(s, a).
-      4. Average the 4 directional max-Q values for each cell.
-
-    Parameters
-    ----------
-    env : gym.Env
-        A fully-wrapped MiniGrid environment (from make_env).
-    q_net : torch.nn.Module
-        A trained QNetwork instance (already in eval mode).
-    seed : int
-        The seed used to reset the environment (determines the layout).
-    device : torch.device
-        CPU or CUDA device for tensor operations.
-
-    Returns
-    -------
-    q_grid : np.ndarray, shape (width, height, num_actions)
-        Average Q-value for each action at each cell. Wall cells contain np.nan.
-    wall_mask : np.ndarray, shape (width, height), dtype bool
-        True where a cell is a wall (used for gray overlay in heatmaps).
-    annotations : dict[tuple(int, int), str]
-        Mapping of (x, y) coordinates to character labels (e.g., 'S' for start,
-        'G' for goal, 'K' for key, 'D' for door).
-    """
-    # Reset env to establish the deterministic grid layout for this seed.
+    """Computes max_a Q(s, a) for reachable cells across all 4 directions."""
     env.reset(seed=seed)
-
     width = env.unwrapped.width
     height = env.unwrapped.height
     num_actions = env.action_space.n
 
-    # Pre-allocate: NaN for walls, will be filled for reachable cells.
     q_grid = np.full((width, height, num_actions), np.nan, dtype=np.float32)
     wall_mask = np.zeros((width, height), dtype=bool)
     annotations = {}
 
-    # Identify the start position
     start_pos = tuple(env.unwrapped.agent_pos)
     annotations[start_pos] = "S"
 
-    # Identify wall cells, goals, keys, and doors from the grid object.
     for x in range(width):
         for y in range(height):
             cell = env.unwrapped.grid.get(x, y)
@@ -237,32 +146,20 @@ def compute_q_values_grid(env, q_net, seed, device):
                 elif cell.type == "door":
                     annotations[(x, y)] = "D"
 
-    # Compute Q-values for every reachable cell, averaged over 4 directions.
     with torch.no_grad():
         for x in range(width):
             for y in range(height):
                 if wall_mask[x, y]:
-                    continue  # skip wall cells
+                    continue
 
                 dir_qvals = []
                 for d in range(NUM_DIRECTIONS):
-                    # Directly set the agent's position and direction on the
-                    # unwrapped (raw MiniGrid) environment.
                     env.unwrapped.agent_pos = np.array([x, y])
                     env.unwrapped.agent_dir = d
 
-                    # Generate the raw MiniGrid observation dict, then push it
-                    # through the full wrapper pipeline (FullyObs → ImgObs →
-                    # FlatImageAndDirection) to get the flat float vector that
-                    # the Q-network expects.
                     obs = get_wrapped_obs(env)
-
-                    # Convert to tensor: (obs_dim,) → (1, obs_dim) with batch dim.
-                    obs_t = torch.tensor(
-                        obs, dtype=torch.float32, device=device
-                    ).unsqueeze(0)
-
-                    q_values = q_net(obs_t).squeeze(0) # shape (num_actions,)
+                    obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+                    q_values = q_net(obs_t).squeeze(0)
                     dir_qvals.append(q_values.cpu().numpy())
 
                 q_grid[x, y, :] = np.mean(dir_qvals, axis=0)
@@ -276,60 +173,22 @@ def compute_q_values_grid(env, q_net, seed, device):
 
 def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
                         label_a="Agent A", label_b="Agent B", comparison_tag=""):
-    """
-    Creates a 1×3 heatmap figure for a single environment and seed:
-        Panel 0: Agent A Max Q
-        Panel 1: Agent B Max Q
-        Panel 2: Difference (A − B)
-
-    Wall cells are overlaid in dark gray.  The difference panel uses a
-    diverging colour map centred at zero so that overestimation (positive
-    values) and underestimation (negative values) are visually symmetric.
-    The specific state-action Q-values are printed inside each cell.
-
-    Parameters
-    ----------
-    env_id : str
-        Environment name (used in title and filename).
-    grid_a : np.ndarray, shape (W, H, num_actions)
-        Average Q-values for all actions from agent A.  Walls are np.nan.
-    grid_b : np.ndarray, shape (W, H, num_actions)
-        Average Q-values for all actions from agent B.  Walls are np.nan.
-    wall_mask : np.ndarray, shape (W, H), dtype bool
-        True for wall cells.
-    annotations : dict[tuple, str]
-        Mapping of (x,y) to layout labels (S, G, K, D).
-    seed : int
-        Training seed (shown in title and filename).
-    label_a : str
-        Human-readable label for agent A (used in panel titles).
-    label_b : str
-        Human-readable label for agent B (used in panel titles).
-    comparison_tag : str
-        Short tag appended to the output filename to distinguish comparisons.
-    """
     width, height, num_actions = grid_a.shape
     
-    # The background color of the cell will be based on the maximum Q-value
-    # Use warnings.catch_warnings to ignore the expected all-NaN slice warnings for wall cells
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
         grid_a_max = np.nanmax(grid_a, axis=2)
         grid_b_max = np.nanmax(grid_b, axis=2)
     
-    diff_grid_max = grid_a_max - grid_b_max  # positive ⇒ A overestimates vs B
-    
-    # For the text inside the cell, we want the specific Q-values or difference
+    diff_grid_max = grid_a_max - grid_b_max
     diff_grid = grid_a - grid_b
 
-    # Make the figure larger so the text fits comfortably
     fig, axes = plt.subplots(1, 3, figsize=(24, 7))
     fig.suptitle(
         f"{env_id}  —  {label_a} vs {label_b}  (seed={seed})",
         fontsize=16, fontweight="bold",
     )
 
-    # Shared min/max across both agent panels for comparable colour scales.
     vmin_q = np.nanmin([grid_a_max, grid_b_max])
     vmax_q = np.nanmax([grid_a_max, grid_b_max])
 
@@ -339,7 +198,6 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
         (f"Difference ({label_a} − {label_b})", diff_grid_max, diff_grid, "RdBu_r", "diverging"),
     ]
 
-    # Dynamically derive action labels and legend for the active action set
     names = action_names(env_id, "task", num_actions)
     abbr_map = {
         "left": "L", "right": "R", "forward": "F",
@@ -349,26 +207,19 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
 
     for col, (title, grid_max, grid_full, cmap, style) in enumerate(panels):
         ax = axes[col]
-
-        # Build a display array.  Walls get a sentinel value so we can paint
-        # them gray after the main imshow call.
-        display = grid_max.T.copy()  # transpose so x→columns, y→rows
+        display = grid_max.T.copy()
 
         if style == "diverging":
-            # Centre the diverging colour map at zero.
             abs_max = np.nanmax(np.abs(diff_grid))
             if abs_max == 0:
-                abs_max = 1.0  # avoid degenerate norm
+                abs_max = 1.0
             norm = mcolors.TwoSlopeNorm(vmin=-abs_max, vcenter=0, vmax=abs_max)
             im = ax.imshow(display, origin="upper", cmap=cmap, norm=norm)
         else:
-            im = ax.imshow(
-                display, origin="upper", cmap=cmap, vmin=vmin_q, vmax=vmax_q
-            )
+            im = ax.imshow(display, origin="upper", cmap=cmap, vmin=vmin_q, vmax=vmax_q)
 
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-        # Overlay dark gray squares on wall cells and add annotations/text to free cells
         for x in range(width):
             for y in range(height):
                 if wall_mask[x, y]:
@@ -377,20 +228,16 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
                         facecolor="dimgray", edgecolor="none",
                     ))
                 else:
-                    # Draw static layout annotations (S, G, K, D)
                     if (x, y) in annotations:
-                        # Place symbol in the top-right corner of the cell
                         ax.text(x + 0.45, y - 0.45, annotations[(x, y)],
                                 ha='right', va='top', color='white', 
                                 fontsize=10, fontweight='bold',
                                 path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
                     
-                    # Draw action Q-values as text inside the cell
                     q_vals = grid_full[x, y, :]
                     text_lines = []
                     for a in range(len(q_vals)):
                         if a < len(action_labels):
-                            # Use +/- sign explicitly for difference plot
                             val_str = f"{q_vals[a]:+.2f}" if style == "diverging" else f"{q_vals[a]:.2f}"
                             text_lines.append(f"{action_labels[a]}: {val_str}")
                     
@@ -399,7 +246,6 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
                     ax.text(x, y, text_str, ha='center', va='center', 
                             color='black', fontsize=6, bbox=bbox_props)
 
-        # Draw grid lines between cells.
         ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
         ax.set_yticks(np.arange(-0.5, height, 1), minor=True)
         ax.grid(which="minor", color="black", linestyle="-", linewidth=0.5)
@@ -408,7 +254,6 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
         ax.set_yticks(np.arange(0, height, 1))
         ax.set_title(title, fontsize=11)
 
-    # Add Action & Layout Key Legend at the bottom
     legend_parts = [f"{abbr_map.get(n, n[:1].upper())} = {n}" for n in names]
     legend_text = "   |   ".join(legend_parts)
     fig.text(
@@ -434,23 +279,6 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
 # ============================================================================
 
 def plot_bar_chart(summary, label_a="Agent A", label_b="Agent B", comparison_tag=""):
-    """
-    Creates a grouped bar chart comparing average max-Q for two agents
-    across all environments.
-
-    Parameters
-    ----------
-    summary : list[dict]
-        Each entry has keys: "env_id", "a_mean", "b_mean",
-        and optionally "a_std", "b_std" for error bars when multiple
-        seeds are available.
-    label_a : str
-        Human-readable label for agent A.
-    label_b : str
-        Human-readable label for agent B.
-    comparison_tag : str
-        Short tag appended to the output filename to distinguish comparisons.
-    """
     if not summary:
         print("No data for summary bar chart — skipping.")
         return
@@ -488,7 +316,6 @@ def plot_bar_chart(summary, label_a="Agent A", label_b="Agent B", comparison_tag
     ax.legend(fontsize=11)
     ax.grid(axis="y", alpha=0.3)
 
-    # Annotate each bar with its numeric value.
     for bars in [bars_a, bars_b]:
         for bar in bars:
             h = bar.get_height()
@@ -513,64 +340,40 @@ def plot_bar_chart(summary, label_a="Agent A", label_b="Agent B", comparison_tag
 # ============================================================================
 
 def main():
-    """
-    Entry point: parses arguments, iterates over environments & seeds,
-    computes Q-value grids for both agents, and produces all plots.
-    """
-    # --- Argument Parsing ---
     parser = argparse.ArgumentParser(
         description="Compare Q-value overestimation between two trained agents."
     )
-    # --results-dir: Parent directory where run folders live.
-    parser.add_argument("--results-dir", type=str, default="results",
-                        help="Directory containing training run folders.")
-    # --action-set: Must match the action set used during training.
-    parser.add_argument("--action-set", choices=["task", "full"], default="task",
-                        help="Action subset used during training ('task' or 'full').")
-    # --hidden-size: Must match the hidden layer width used during training.
-    parser.add_argument("--hidden-size", type=int, default=256,
-                        help="Hidden layer size of the Q-Network (must match training).")
-    # --compare: Two experiment names to compare (replaces hardcoded dqn_vanilla/ddqn_baseline).
+    parser.add_argument("--results-dir", type=str, default="results")
+    parser.add_argument("--action-set", choices=["task", "full"], default="task")
+    parser.add_argument("--hidden-size", type=int, default=256)
     parser.add_argument("--compare", nargs=2, metavar=("EXP_A", "EXP_B"),
-                        default=["dqn_vanilla", "ddqn_baseline"],
-                        help="Experiment names of the two agents to compare.")
-    # --label-a / --label-b: Human-readable labels for plot titles and legend.
-    parser.add_argument("--label-a", type=str, default=None,
-                        help="Display label for agent A (defaults to exp name).")
-    parser.add_argument("--label-b", type=str, default=None,
-                        help="Display label for agent B (defaults to exp name).")
+                        default=["dqn_vanilla", "ddqn_baseline"])
+    parser.add_argument("--label-a", type=str, default=None)
+    parser.add_argument("--label-b", type=str, default=None)
 
     args = parser.parse_args()
 
     exp_a, exp_b = args.compare
     label_a = args.label_a or exp_a
     label_b = args.label_b or exp_b
-    # Create a filesystem-safe tag from the two experiment names
     comparison_tag = f"{exp_a}_vs_{exp_b}"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     print(f"Results directory: {args.results_dir}")
-    print(f"Action set: {args.action_set}")
-    print(f"Hidden size: {args.hidden_size}")
     print(f"Comparing: {label_a}  vs  {label_b}")
-    print(f"  (exp names: {exp_a}  vs  {exp_b})")
     print()
 
-    # Accumulate per-environment summary statistics for the bar chart.
     bar_chart_summary = []
 
-    # --- Iterate Over Environments ---
     for env_id in ENV_IDS:
         print(f"{'=' * 60}")
         print(f"Environment: {env_id}")
         print(f"{'=' * 60}")
 
-        # Discover trained models for both agents.
         models_a = get_models_by_seed(args.results_dir, env_id, exp_a)
         models_b = get_models_by_seed(args.results_dir, env_id, exp_b)
 
-        # We need both agents for at least one common seed.
         common_seeds = sorted(set(models_a.keys()) & set(models_b.keys()))
         if not common_seeds:
             print(f"  ⚠  No matching seed pair found for {env_id} — skipping.\n")
@@ -578,35 +381,28 @@ def main():
 
         print(f"  Common seeds: {common_seeds}")
 
-        # Create the environment once to get observation/action dimensions.
         env = make_env(env_id, common_seeds[0], args.action_set)
         obs_dim     = int(np.prod(env.observation_space.shape))
         num_actions = env.action_space.n
 
-        # Track per-seed averages for the bar chart error bars.
         seed_a_avgs = []
         seed_b_avgs = []
 
         for seed in common_seeds:
             print(f"\n  Seed {seed}:")
 
-            # --- Load Agent A Model ---
             q_net_a = QNetwork(obs_dim, num_actions, args.hidden_size).to(device)
             q_net_a.load_state_dict(
                 torch.load(models_a[seed], map_location=device, weights_only=True)
             )
             q_net_a.eval()
-            print(f"    Loaded {label_a}: {models_a[seed]}")
 
-            # --- Load Agent B Model ---
             q_net_b = QNetwork(obs_dim, num_actions, args.hidden_size).to(device)
             q_net_b.load_state_dict(
                 torch.load(models_b[seed], map_location=device, weights_only=True)
             )
             q_net_b.eval()
-            print(f"    Loaded {label_b}: {models_b[seed]}")
 
-            # --- Compute Q-Value Grids ---
             env_seed = make_env(env_id, seed, args.action_set)
 
             print(f"    Computing {label_a} Q-values …")
@@ -627,22 +423,23 @@ def main():
             seed_a_avgs.append(np.nanmean(grid_a_max))
             seed_b_avgs.append(np.nanmean(grid_b_max))
 
-            # Generate the visualization heatmap.
+            # Dynamically read epsilon_schedule from config.json for each model
+            seed_label_a = f"{label_a}{get_decay_str(models_a[seed])}"
+            seed_label_b = f"{label_b}{get_decay_str(models_b[seed])}"
+
             print("    Generating heatmap plot …")
             plot_heatmap_for_env(
                 env_id, grid_a, grid_b, wall_mask, annotations, seed,
-                label_a=label_a, label_b=label_b, comparison_tag=comparison_tag,
+                label_a=seed_label_a, label_b=seed_label_b, comparison_tag=comparison_tag,
             )
             
             diff_avg = np.nanmean(grid_a_max) - np.nanmean(grid_b_max)
-            print(f"    {label_a} avg max Q : {np.nanmean(grid_a_max):.4f}")
-            print(f"    {label_b} avg max Q : {np.nanmean(grid_b_max):.4f}")
-            print(f"    Difference          : {diff_avg:+.4f}")
-
+            print(f"    {seed_label_a} avg max Q : {np.nanmean(grid_a_max):.4f}")
+            print(f"    {seed_label_b} avg max Q : {np.nanmean(grid_b_max):.4f}")
+            print(f"    Difference                : {diff_avg:+.4f}")
 
         env.close()
 
-        # --- Aggregate Across Seeds for the Bar Chart ---
         bar_chart_summary.append({
             "env_id":  env_id,
             "a_mean":  float(np.mean(seed_a_avgs)),
@@ -651,16 +448,11 @@ def main():
             "b_std":   float(np.std(seed_b_avgs))   if len(seed_b_avgs) > 1 else 0.0,
         })
 
-    # --- Generate Summary Bar Chart ---
     plot_bar_chart(bar_chart_summary, label_a=label_a, label_b=label_b,
                    comparison_tag=comparison_tag)
 
     print("\nAll done.")
 
-
-# ============================================================================
-# ENTRY POINT
-# ============================================================================
 
 if __name__ == "__main__":
     main()

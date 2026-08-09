@@ -47,6 +47,14 @@ jobs:
             agent: ddqn_baseline
             decay: linear
             seed: 3
+          - env_id: MiniGrid-Empty-6x6-v0
+            agent: ddqn_baseline
+            decay: linear
+            seed: 4
+          - env_id: MiniGrid-Empty-6x6-v0
+            agent: ddqn_baseline
+            decay: linear
+            seed: 5
 
           # Reward Shaped: polynomial decay
           - env_id: MiniGrid-Empty-6x6-v0
@@ -61,6 +69,14 @@ jobs:
             agent: ddqn_reward_shaping
             decay: polynomial
             seed: 3
+          - env_id: MiniGrid-Empty-6x6-v0
+            agent: ddqn_reward_shaping
+            decay: polynomial
+            seed: 4
+          - env_id: MiniGrid-Empty-6x6-v0
+            agent: ddqn_reward_shaping
+            decay: polynomial
+            seed: 5
 
           # --- MiniGrid-DoorKey-6x6-v0 ---
           # Baseline: exponential decay
@@ -76,6 +92,14 @@ jobs:
             agent: ddqn_baseline
             decay: exponential
             seed: 3
+          - env_id: MiniGrid-DoorKey-6x6-v0
+            agent: ddqn_baseline
+            decay: exponential
+            seed: 4
+          - env_id: MiniGrid-DoorKey-6x6-v0
+            agent: ddqn_baseline
+            decay: exponential
+            seed: 5
 
           # Reward Shaped: cosine decay
           - env_id: MiniGrid-DoorKey-6x6-v0
@@ -90,6 +114,14 @@ jobs:
             agent: ddqn_reward_shaping
             decay: cosine
             seed: 3
+          - env_id: MiniGrid-DoorKey-6x6-v0
+            agent: ddqn_reward_shaping
+            decay: cosine
+            seed: 4
+          - env_id: MiniGrid-DoorKey-6x6-v0
+            agent: ddqn_reward_shaping
+            decay: cosine
+            seed: 5
 
     steps:
       - name: Checkout Code
