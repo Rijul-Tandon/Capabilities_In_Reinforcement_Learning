@@ -121,7 +121,7 @@ def parse_args():
     parser.add_argument("--exploration-fraction", type=float, default=0.50)
     
     # --epsilon-schedule: Which decay schedule to use for epsilon
-    parser.add_argument("--epsilon-schedule", choices=["linear", "polynomial"], default="linear")
+    parser.add_argument("--epsilon-schedule", choices=["linear", "polynomial", "hardcoded", "cosine", "exponential", "cyclic"], default="polynomial")
 
     # --exploration-strategy: Accepted for CLI compatibility with DQN agents but ignored
     #   (the random agent always acts randomly regardless of exploration strategy).

@@ -697,6 +697,52 @@ def polynomial_schedule(start_e, end_e, duration, step, power=4.0):
     return end_e + (start_e - end_e) * decay
 
 
+def hardcoded_schedule(total_timesteps, step):
+    """
+    Hardcoded piecewise decay:
+      - 1.0 for 0-10% of total steps
+      - 0.7 for 10%-50% of total steps
+      - 0.1 for 50%+ steps
+    """
+    frac = step / total_timesteps
+    if frac < 0.10:
+        return 1.0
+    elif frac < 0.50:
+        return 0.7
+    else:
+        return 0.1
+
+
+def cosine_schedule(start_e, end_e, duration, step):
+    """
+    Cosine annealing decay from start_e to end_e over `duration` steps.
+    """
+    frac = min(step / duration, 1.0)
+    decay = 0.5 * (1.0 + np.cos(np.pi * frac))
+    return end_e + (start_e - end_e) * decay
+
+
+def exponential_schedule(start_e, end_e, duration, step):
+    """
+    Exponential decay from start_e to end_e over `duration` steps.
+    """
+    frac = min(step / duration, 1.0)
+    return start_e * ((end_e / start_e) ** frac)
+
+
+def cyclic_schedule(start_e, end_e, total_timesteps, step, num_cycles=3):
+    """
+    Cyclic / Warm-restart decay:
+    Repeatedly decays epsilon using cosine annealing over `num_cycles` periods,
+    periodically boosting exploration back up to escape local minima.
+    """
+    cycle_length = total_timesteps / num_cycles
+    cycle_step = step % cycle_length
+    frac = cycle_step / cycle_length
+    decay = 0.5 * (1.0 + np.cos(np.pi * frac))
+    return end_e + (start_e - end_e) * decay
+
+
 def softmax_tau_schedule(total_timesteps, step):
     """
     Computes the current temperature (tau) for softmax exploration using a simple linear decay.
@@ -806,7 +852,7 @@ def parse_args(default_exp_name, use_shaping):
     parser.add_argument("--exploration-fraction", type=float, default=0.50)
     
     # --epsilon-schedule: Which decay schedule to use for epsilon
-    parser.add_argument("--epsilon-schedule", choices=["linear", "polynomial"], default="linear")
+    parser.add_argument("--epsilon-schedule", choices=["linear", "polynomial", "hardcoded", "cosine", "exponential", "cyclic"], default="polynomial")
 
     # --exploration-strategy: Whether to use epsilon-greedy or softmax exploration.
     #   epsilon_greedy: standard random action with probability epsilon.
@@ -1071,21 +1117,21 @@ def train(args, use_shaping):
                 action = softmax_action(q_values, tau)
         else:
             # Epsilon-greedy: calculate current exploration rate
+            duration = args.exploration_fraction * args.total_timesteps
             if args.epsilon_schedule == "linear":
-                epsilon = linear_schedule(
-                    args.start_e,
-                    args.end_e,
-                    args.exploration_fraction * args.total_timesteps,
-                    local_step,
-                )
+                epsilon = linear_schedule(args.start_e, args.end_e, duration, local_step)
+            elif args.epsilon_schedule == "polynomial":
+                epsilon = polynomial_schedule(args.start_e, args.end_e, duration, local_step, power=3.0)
+            elif args.epsilon_schedule == "hardcoded":
+                epsilon = hardcoded_schedule(args.total_timesteps, local_step)
+            elif args.epsilon_schedule == "cosine":
+                epsilon = cosine_schedule(args.start_e, args.end_e, duration, local_step)
+            elif args.epsilon_schedule == "exponential":
+                epsilon = exponential_schedule(args.start_e, args.end_e, duration, local_step)
+            elif args.epsilon_schedule == "cyclic":
+                epsilon = cyclic_schedule(args.start_e, args.end_e, args.total_timesteps, local_step)
             else:
-                epsilon = polynomial_schedule(
-                    args.start_e,
-                    args.end_e,
-                    args.exploration_fraction * args.total_timesteps,
-                    local_step,
-                    power=3.0,
-                )
+                epsilon = linear_schedule(args.start_e, args.end_e, duration, local_step)
 
             if random.random() < epsilon:
                 # Explore: pick a random action
