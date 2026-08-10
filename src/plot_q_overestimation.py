@@ -243,20 +243,17 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
                                     path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
                         
                         q_vals = grid_full_d[x, y, :]
-                        if style != "diverging":
-                            # Compute Softmax action selection probabilities (tau = 1.0)
-                            exp_q = np.exp(q_vals - np.max(q_vals))
-                            probs = exp_q / np.sum(exp_q)
+                        best_a = int(np.argmax(q_vals)) if not np.isnan(q_vals).all() else -1
                         text_lines = []
                         for a in range(len(q_vals)):
                             if a < len(action_labels):
+                                star = "*" if (a == best_a and style != "diverging") else ""
                                 if style == "diverging":
                                     val_str = f"{q_vals[a]:+.2f}"
                                     text_lines.append(f"{action_labels[a]}: {val_str}")
                                 else:
                                     val_str = f"{q_vals[a]:.2f}"
-                                    prob_str = f"{probs[a]*100:.0f}%"
-                                    text_lines.append(f"{action_labels[a]}: {val_str} ({prob_str})")
+                                    text_lines.append(f"{action_labels[a]}{star}: {val_str}")
                         
                         text_str = "\n".join(text_lines)
                         bbox_props = dict(boxstyle="round,pad=0.2", fc="white", alpha=0.75, ec="none")

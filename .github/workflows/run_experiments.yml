@@ -1,4 +1,4 @@
-name: Run Experiments (300k Steps)
+name: Run Experiments (200k Steps)
 
 on:
   workflow_dispatch:  # Trigger manually from GitHub UI or `gh workflow run`

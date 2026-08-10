@@ -228,6 +228,9 @@ def plot_figure(runs_by_exp, env_id, output_path, rolling_window, title_suffix="
             if exp_name != "random_agent":
                 any_dqn_config = config
 
+    max_x = any_dqn_config.get("total_timesteps", 200000) if any_dqn_config else 200000
+    axes[0].set_xlim(0, max_x)
+
     axes[0].set_title(f"{env_id} — Episodic Return{title_suffix}")
     axes[0].set_ylabel("Return")
     axes[0].grid(alpha=0.3)
