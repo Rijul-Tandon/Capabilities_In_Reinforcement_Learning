@@ -260,7 +260,7 @@ def plot_figure(runs_by_exp, env_id, output_path, rolling_window, title_suffix="
         start_e = any_dqn_config.get("start_e", 1.0)
         end_e = any_dqn_config.get("end_e", 0.1)
         frac = any_dqn_config.get("exploration_fraction", 0.5)
-        total = any_dqn_config.get("total_timesteps", 300000)
+        total = any_dqn_config.get("total_timesteps", 200000)
         slope = (end_e - start_e) / (frac * total)
         eps_labels = []
         for t in ticks:

@@ -797,15 +797,14 @@ def parse_args(default_exp_name, use_shaping):
 
     # --- Training Duration ---
     # --total-timesteps: How many environment steps to train for
-    parser.add_argument("--total-timesteps", type=int, default=100000)
+    parser.add_argument("--total-timesteps", type=int, default=200000)
 
     # --- DQN Hyperparameters ---
     # --learning-rate: How fast the neural network adjusts its weights.
     #   Too high = unstable training. Too low = slow learning. 2.5e-4 is a good default.
     parser.add_argument("--learning-rate", type=float, default=0.00171)
     # --buffer-size: Maximum number of transitions to store in the replay buffer.
-    #   If -1, defaults to 10% of total_timesteps (standard in CleanRL).
-    parser.add_argument("--buffer-size", type=int, default=-1)
+    parser.add_argument("--buffer-size", type=int, default=40000)
     # --gamma: Discount factor for future rewards (0 = greedy, 1 = far-sighted).
     #   0.99 means the agent values a reward 100 steps away at 0.99^100 ≈ 0.37 of its face value.
     parser.add_argument("--gamma", type=float, default=0.99)
@@ -909,9 +908,6 @@ def parse_args(default_exp_name, use_shaping):
     if args.no_change_tolerance is None:
         args.no_change_tolerance = get_env_profile(args.env_id)["no_change_tolerance"]
     
-    # Calculate dynamic defaults
-    if args.buffer_size == -1:
-        args.buffer_size = int(args.total_timesteps * 0.10)
         
     # Store the shaping flag so it can be accessed alongside other args
     args.use_shaping = use_shaping

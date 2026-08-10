@@ -148,7 +148,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
         
-      - name: "Run Agent (300k Steps, environment-specific decay schedules)"
+      - name: "Run Agent (200k Steps, environment-specific decay schedules)"
         run: |
           NUM_SEEDS="${{ github.event.inputs.num_seeds || '3' }}"
           if [ "${{ matrix.seed }}" -gt "$NUM_SEEDS" ]; then

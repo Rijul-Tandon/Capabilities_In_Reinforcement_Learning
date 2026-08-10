@@ -99,7 +99,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=1)
 
     # --total-timesteps: How many environment steps to simulate.
-    parser.add_argument("--total-timesteps", type=int, default=30000)
+    parser.add_argument("--total-timesteps", type=int, default=200000)
 
     # --action-set: "task" restricts actions to environment-relevant ones,
     #   "full" uses all 7 MiniGrid actions. Should match the DQN experiments.
