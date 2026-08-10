@@ -157,7 +157,7 @@ jobs:
           fi
 
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
-          TIMESTEPS=300000
+          TIMESTEPS=200000
           EXPLORE_FRAC=0.50
           STRATEGY="${{ github.event.inputs.exploration_strategy || 'epsilon_greedy' }}"
           

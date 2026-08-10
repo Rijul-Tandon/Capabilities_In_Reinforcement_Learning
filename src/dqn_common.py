@@ -751,7 +751,6 @@ def softmax_tau_schedule(total_timesteps, step):
     """
     return max(1.0 * (1.0 - step / (total_timesteps * 0.75)), 0.1)
 
-
 def softmax_action(q_values_tensor, tau):
     """
     Selects an action by sampling from a softmax distribution over Q-values.
