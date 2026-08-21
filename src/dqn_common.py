@@ -140,56 +140,15 @@ from torch.utils.tensorboard import SummaryWriter
 MINIGRID_ACTION_NAMES = ["left", "right", "forward", "pickup", "drop", "toggle", "done"]
 
 
-def get_env_profile(env_id):
-    """
-    Returns lightweight metadata needed to support multiple discrete-control
-    benchmark families with the same DQN training loop.
-    """
-    if env_id.startswith("MiniGrid-"):
-        return {
-            "family": "minigrid",
-            "success_threshold": 0.0,
-            "no_change_tolerance": 0.0,
-        }
-
-    profiles = {
-        "CartPole-v1": {
-            "family": "classic_control",
-            "success_threshold": 475.0,
-            "no_change_tolerance": 1e-8,
-        },
-        "MountainCar-v0": {
-            "family": "classic_control",
-            "success_threshold": -110.0,
-            "no_change_tolerance": 1e-8,
-        },
-        "Taxi-v3": {
-            "family": "tabular_discrete",
-            "success_threshold": 8.0,
-            "no_change_tolerance": 0.0,
-        },
-    }
-    return profiles.get(
-        env_id,
-        {
-            "family": "generic_discrete",
-            "success_threshold": 0.0,
-            "no_change_tolerance": 1e-8,
-        },
-    )
-
-
 def episode_success(env_id, episode_return):
-    """Maps an episode return to a simple success flag for cross-env logging."""
-    profile = get_env_profile(env_id)
-    return float(episode_return) > profile["success_threshold"]
+    """Maps an episode return to a simple success flag."""
+    return float(episode_return) > 0.0
 
 
 def observation_unchanged(obs, next_obs, tolerance):
     """
     Detects whether a transition produced a meaningful observation change.
-    For categorical MiniGrid observations we require exact equality; for
-    continuous observations we use a small tolerance.
+    For categorical MiniGrid observations we require exact equality.
     """
     obs_arr = np.asarray(obs, dtype=np.float32)
     next_obs_arr = np.asarray(next_obs, dtype=np.float32)
@@ -301,24 +260,20 @@ class MiniGridActionSubsetWrapper(gym.ActionWrapper):
         return self.actions[int(action)]
 
 
-class OneHotObservationWrapper(gym.ObservationWrapper):
-    """Converts a discrete state index into a one-hot float vector."""
-
-    def __init__(self, env):
+class MarkovianStepPenaltyWrapper(gym.RewardWrapper):
+    """
+    Fixed step penalty per action + fixed goal reward.
+    Strictly Markovian: reward depends ONLY on (s, a, s').
+    """
+    def __init__(self, env, step_penalty=0.01, goal_reward=1.0):
         super().__init__(env)
-        n = int(env.observation_space.n)
-        self.n = n
-        self.observation_space = gym.spaces.Box(
-            low=0.0,
-            high=1.0,
-            shape=(n,),
-            dtype=np.float32,
-        )
+        self.step_penalty = step_penalty
+        self.goal_reward = goal_reward
 
-    def observation(self, obs):
-        vec = np.zeros(self.n, dtype=np.float32)
-        vec[int(obs)] = 1.0
-        return vec
+    def reward(self, reward):
+        if reward > 0:  # Goal reached
+            return self.goal_reward
+        return -self.step_penalty  # Step penalty
 
 
 class FlatImageAndDirectionWrapper(gym.ObservationWrapper):
@@ -347,98 +302,11 @@ class FlatImageAndDirectionWrapper(gym.ObservationWrapper):
         direction = np.array([self.env.unwrapped.agent_dir])
         # Append the direction to the end of the flattened array
         return np.concatenate([flat_image, direction]).astype(np.float32)
-class CurriculumWrapper(gym.Wrapper):
+
+
+def make_env(env_id, seed, action_set, capture_video=False, run_name="", max_steps=None):
     """
-    Modifies the MiniGrid environment layout on reset to enforce a curriculum.
-    - Stage 1: Key and Goal are moved very close to the agent.
-    - Stage 2: Key and Goal are moved a medium distance away.
-    - Stage 3: The environment is left fully randomized (default behavior).
-    """
-    def __init__(self, env, stage):
-        super().__init__(env)
-        self.stage = stage
-
-    def reset(self, **kwargs):
-        obs, info = self.env.reset(**kwargs)
-        
-        # Only modify the environment layout for stages 1 and 2, and only for MiniGrid
-        if self.stage < 3 and hasattr(self.unwrapped, 'grid') and hasattr(self.unwrapped, 'agent_pos'):
-            grid = self.unwrapped.grid
-            width = self.unwrapped.width
-            height = self.unwrapped.height
-            agent_x, agent_y = self.unwrapped.agent_pos
-            
-            # 1. Locate the goal and the key (if one exists)
-            goal_pos = None
-            key_pos = None
-            for x in range(width):
-                for y in range(height):
-                    cell = grid.get(x, y)
-                    if cell is not None:
-                        if cell.type == 'goal':
-                            goal_pos = (x, y)
-                        elif cell.type == 'key':
-                            key_pos = (x, y)
-                            
-            # Helper: Find an empty tile within a certain distance range from the agent
-            def find_empty_in_range(min_dist, max_dist):
-                candidates = []
-                for dx in range(-max_dist, max_dist + 1):
-                    for dy in range(-max_dist, max_dist + 1):
-                        nx, ny = agent_x + dx, agent_y + dy
-                        if 1 <= nx < width - 1 and 1 <= ny < height - 1:
-                            dist = abs(nx - agent_x) + abs(ny - agent_y)
-                            if min_dist <= dist <= max_dist:
-                                if grid.get(nx, ny) is None and (nx, ny) != (agent_x, agent_y):
-                                    candidates.append((nx, ny))
-                if candidates:
-                    # Sort candidates by distance (closest first for stability)
-                    candidates.sort(key=lambda p: abs(p[0] - agent_x) + abs(p[1] - agent_y))
-                    return candidates[0]
-                return None
-
-            # 2. Relocate objects based on the curriculum stage
-            if self.stage == 1:
-                # Stage 1: Very close (distance 1-2)
-                if goal_pos:
-                    new_goal = find_empty_in_range(1, 2)
-                    if new_goal:
-                        goal_obj = grid.get(*goal_pos)
-                        grid.set(*goal_pos, None)
-                        grid.set(*new_goal, goal_obj)
-                if key_pos:
-                    new_key = find_empty_in_range(1, 2)
-                    if new_key:
-                        key_obj = grid.get(*key_pos)
-                        grid.set(*key_pos, None)
-                        grid.set(*new_key, key_obj)
-                        
-            elif self.stage == 2:
-                # Stage 2: Medium distance (distance 3-4)
-                if goal_pos:
-                    new_goal = find_empty_in_range(3, 4)
-                    if new_goal:
-                        goal_obj = grid.get(*goal_pos)
-                        grid.set(*goal_pos, None)
-                        grid.set(*new_goal, goal_obj)
-                if key_pos:
-                    new_key = find_empty_in_range(3, 4)
-                    if new_key:
-                        key_obj = grid.get(*key_pos)
-                        grid.set(*key_pos, None)
-                        grid.set(*new_key, key_obj)
-
-            # Regenerate the raw observation dictionary because we modified the grid
-            obs = self.unwrapped.gen_obs()
-            
-        return obs, info
-
-
-def make_env(env_id, seed, action_set, capture_video=False, run_name="", max_steps=None, curriculum_stage=3):
-    """
-    Creates a supported discrete-control environment and applies the wrappers
-    needed by our DQN pipeline. MiniGrid uses its existing custom wrappers,
-    while non-MiniGrid Box-observation environments are flattened directly.
+    Creates a MiniGrid environment and applies the wrappers needed by our DQN pipeline.
 
     Parameters
     ----------
@@ -448,11 +316,8 @@ def make_env(env_id, seed, action_set, capture_video=False, run_name="", max_ste
         (e.g. 500) to give the agent more time per episode in harder environments.
         If None, the environment's own default is used.
     """
-    profile = get_env_profile(env_id)
-
-    # Build extra kwargs to forward to gym.make() — only used for MiniGrid
     make_kwargs = {}
-    if profile["family"] == "minigrid" and max_steps is not None:
+    if max_steps is not None and max_steps > 0:
         make_kwargs["max_steps"] = max_steps
 
     if capture_video:
@@ -461,33 +326,15 @@ def make_env(env_id, seed, action_set, capture_video=False, run_name="", max_ste
     else:
         env = gym.make(env_id, **make_kwargs)
 
-    if profile["family"] == "minigrid":
-        action_map = minigrid_action_map(env_id, action_set)
-        if action_map is not None:
-            env = MiniGridActionSubsetWrapper(env, action_map)
+    env = MarkovianStepPenaltyWrapper(env)
 
-        # Apply CurriculumWrapper before the Observation Wrappers so that
-        # the observation wrappers correctly wrap the modified grid.
-        env = CurriculumWrapper(env, curriculum_stage)
+    action_map = minigrid_action_map(env_id, action_set)
+    if action_map is not None:
+        env = MiniGridActionSubsetWrapper(env, action_map)
 
-        env = FullyObsWrapper(env)
-        env = ImgObsWrapper(env)
-        env = FlatImageAndDirectionWrapper(env)
-    else:
-        if not isinstance(env.action_space, gym.spaces.Discrete):
-            raise ValueError(
-                f"{env_id} uses a non-discrete action space ({env.action_space}). "
-                "This DQN pipeline currently supports only discrete actions."
-            )
-        if isinstance(env.observation_space, gym.spaces.Box):
-            env = gym.wrappers.FlattenObservation(env)
-        elif isinstance(env.observation_space, gym.spaces.Discrete):
-            env = OneHotObservationWrapper(env)
-        else:
-            raise ValueError(
-                f"{env_id} uses an unsupported observation space ({env.observation_space}). "
-                "Expected a Box or Discrete observation space."
-            )
+    env = FullyObsWrapper(env)
+    env = ImgObsWrapper(env)
+    env = FlatImageAndDirectionWrapper(env)
 
     env = gym.wrappers.RecordEpisodeStatistics(env)
     env.action_space.seed(seed)
@@ -496,9 +343,6 @@ def make_env(env_id, seed, action_set, capture_video=False, run_name="", max_ste
 
 def action_names(env_id, action_set, action_space_n):
     """Returns human-readable action names for logging and debug prints."""
-    if get_env_profile(env_id)["family"] != "minigrid":
-        return [f"action_{idx}" for idx in range(action_space_n)]
-
     action_map = minigrid_action_map(env_id, action_set)
     if action_map is None:
         return MINIGRID_ACTION_NAMES[:action_space_n]
@@ -874,38 +718,13 @@ def parse_args(default_exp_name, use_shaping):
     parser.add_argument("--save-model", type=lambda x: str(x).lower() == "true", default=True)
     # --load-model: Path to a pre-trained q_net.pt to load before training
     parser.add_argument("--load-model", type=str, default="")
-    # --curriculum-stage: Used in the CurriculumWrapper. 1=easy, 2=medium, 3=hard
-    parser.add_argument("--curriculum-stage", type=int, default=3)
-
-    # --- Reward Shaping ---
-    # --stuck-penalty: Negative reward applied when the agent's observation doesn't change
-    #   (e.g., bumping into a wall or doing nothing). Only used when use_shaping=True.
-    #   A stronger default makes no-op transitions much less attractive than before.
-    parser.add_argument("--stuck-penalty", type=float, default=-0.10)
-
-    # --- Logging ---
-    # --log-interval: How often (in steps) to write training metrics to CSV and TensorBoard
-    parser.add_argument("--log-interval", type=int, default=1000)
-    # --results-dir: Parent directory where run folders are created
-    parser.add_argument("--results-dir", type=str, default="results")
-    # --run-dir: Explicit directory to save/append to (used for curriculum stages)
-    parser.add_argument("--run-dir", type=str, default="")
-    # --global-step-offset: Starting step number (used when chaining curriculum stages)
-    parser.add_argument("--global-step-offset", type=int, default=0)
-
-    # --- Optional: Weights & Biases Integration ---
-    # --track: Enable Weights & Biases (wandb) logging for cloud-based experiment tracking
-    parser.add_argument("--track", type=lambda x: str(x).lower() == "true", default=False)
-    parser.add_argument("--wandb-project-name", type=str, default="cleanRL")
-    parser.add_argument("--wandb-entity", type=str, default=None)
-
     # --- Optional: Video Recording ---
     parser.add_argument("--capture-video", type=lambda x: str(x).lower() == "true", default=False)
     parser.add_argument("--no-change-tolerance", type=float, default=None)
 
     args = parser.parse_args()
     if args.no_change_tolerance is None:
-        args.no_change_tolerance = get_env_profile(args.env_id)["no_change_tolerance"]
+        args.no_change_tolerance = 0.0
     
         
     # Store the shaping flag so it can be accessed alongside other args
@@ -957,8 +776,7 @@ def train(args, use_shaping):
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # --- Run Directory Setup ---
-    # If run_dir is explicitly provided (e.g., continuing a curriculum), use it.
-    # Otherwise, create a unique directory name using: environment__experiment__seed__timestamp
+    # Create a unique directory name using: environment__experiment__seed__timestamp
     if args.run_dir:
         run_dir = Path(args.run_dir)
         run_name = run_dir.name
@@ -1003,7 +821,6 @@ def train(args, use_shaping):
         args.capture_video, 
         run_name, 
         max_steps_override,
-        curriculum_stage=args.curriculum_stage
     )
     obs, _ = env.reset(seed=args.seed)
 
