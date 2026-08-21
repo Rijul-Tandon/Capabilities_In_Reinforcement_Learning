@@ -647,7 +647,7 @@ def parse_args(default_exp_name, use_shaping):
     #   Too high = unstable training. Too low = slow learning. 2.5e-4 is a good default.
     parser.add_argument("--learning-rate", type=float, default=0.00171)
     # --buffer-size: Maximum number of transitions to store in the replay buffer.
-    parser.add_argument("--buffer-size", type=int, default=40000)
+    parser.add_argument("--buffer-size", type=int, default=30000)
     # --gamma: Discount factor for future rewards (0 = greedy, 1 = far-sighted).
     #   0.99 means the agent values a reward 100 steps away at 0.99^100 ≈ 0.37 of its face value.
     parser.add_argument("--gamma", type=float, default=0.99)
@@ -718,6 +718,26 @@ def parse_args(default_exp_name, use_shaping):
     parser.add_argument("--save-model", type=lambda x: str(x).lower() == "true", default=True)
     # --load-model: Path to a pre-trained q_net.pt to load before training
     parser.add_argument("--load-model", type=str, default="")
+    # --- Reward Shaping ---
+    # --stuck-penalty: Negative reward applied when the agent's observation doesn't change
+    parser.add_argument("--stuck-penalty", type=float, default=-0.10)
+
+    # --- Logging ---
+    # --log-interval: How often (in steps) to write training metrics to CSV and TensorBoard
+    parser.add_argument("--log-interval", type=int, default=1000)
+    # --results-dir: Parent directory where run folders are created
+    parser.add_argument("--results-dir", type=str, default="results")
+    # --run-dir: Explicit directory to save/append to
+    parser.add_argument("--run-dir", type=str, default="")
+    # --global-step-offset: Starting step number
+    parser.add_argument("--global-step-offset", type=int, default=0)
+
+    # --- Optional: Weights & Biases Integration ---
+    # --track: Enable Weights & Biases (wandb) logging for cloud-based experiment tracking
+    parser.add_argument("--track", type=lambda x: str(x).lower() == "true", default=False)
+    parser.add_argument("--wandb-project-name", type=str, default="cleanRL")
+    parser.add_argument("--wandb-entity", type=str, default=None)
+
     # --- Optional: Video Recording ---
     parser.add_argument("--capture-video", type=lambda x: str(x).lower() == "true", default=False)
     parser.add_argument("--no-change-tolerance", type=float, default=None)
