@@ -198,8 +198,7 @@ def get_agent_data(env, q_net, episodes, seed, num_actions, device, target_stage
                 with torch.no_grad():
                     obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
                     q_values = q_net(obs_tensor)
-                    probs = torch.softmax(q_values / 1.0, dim=1)
-                    action = int(torch.multinomial(probs, 1).item())
+                    action = int(torch.argmax(q_values, dim=1).item())
 
             if (target_stage is None or current_stage == target_stage) and agent_pos is not None:
                 agent_dir = env.unwrapped.agent_dir
@@ -230,7 +229,7 @@ def get_decay_str(model_path):
             pass
     return ""
 
-def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=256, action_set="task", include_random=True, target_stage=None, stage_name=""):
+def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=256, action_set="task", include_random=True, target_stage=None, stage_name="", plots_dir="plots/reward_comparison"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     env = make_env(env_id, seed, action_set)
@@ -272,7 +271,7 @@ def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=25
     fig, axes = plt.subplots(2, len(agents), figsize=(12 * len(agents), 16), squeeze=False)
     title_suffix = f" [{stage_name}]" if stage_name else ""
     fig.suptitle(
-        f"{env_id}{title_suffix} - State/Action Frequencies ({episodes} episodes, DQN seed={seed})",
+        f"{env_id}{title_suffix} - Single Episode Performance Test (DQN seed={seed})",
         fontsize=16, fontweight="bold"
     )
 
@@ -289,6 +288,12 @@ def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=25
         im = axes[0, col].imshow(visit_counts.T, origin="upper", cmap="YlOrRd")
         axes[0, col].set_title(f"{title}\nVisit Frequencies")
         fig.colorbar(im, ax=axes[0, col], fraction=0.046, pad=0.04)
+
+        if visit_counts.sum() == 0:
+            axes[0, col].text(width / 2 - 0.5, height / 2 - 0.5, "Stage Not Reached",
+                              ha="center", va="center", color="red", fontsize=14, fontweight="bold")
+            axes[1, col].text(width / 2 - 0.5, height / 2 - 0.5, "Stage Not Reached",
+                              ha="center", va="center", color="red", fontsize=14, fontweight="bold")
 
         if layout["start"]:
             axes[0, col].plot(layout["start"][0], layout["start"][1], 'bo', markersize=10, markeredgecolor='white', label="Start" if col==0 else "")
@@ -330,10 +335,11 @@ def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=25
                 cell_text = "\n".join(lines)
                 alpha_val = 1.0 if visit_counts[x, y] > 0 else 0.2
                 
-                axes[1, col].text(
-                    x, y, cell_text,
-                    ha="center", va="center", fontsize=4, fontweight="bold", alpha=alpha_val
-                )
+                if cell_text:
+                    axes[1, col].text(
+                        x, y, cell_text,
+                        ha="center", va="center", fontsize=7, fontweight="bold", color="black", alpha=alpha_val
+                    )
 
         for ax in [axes[0, col], axes[1, col]]:
             ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
@@ -359,11 +365,12 @@ def plot_all_frequencies(env_id, results_dir, episodes=1, seed=1, hidden_size=25
 
     plt.tight_layout(rect=[0, 0.05, 1, 0.95])
     suffix = f"_{stage_name.lower().replace(' ', '_')}" if stage_name else ""
-    output_path = Path("plots") / f"{env_id}_state_action_freq_seed{seed}{suffix}.png"
-    output_path.parent.mkdir(exist_ok=True)
+    output_dir = Path(plots_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{env_id}_test_seed{seed}{suffix}.png"
     plt.savefig(output_path, dpi=150)
     plt.close(fig)
-    print(f"Plot saved to {output_path}")
+    print(f"Test plot saved to {output_path}")
 
 
 # ============================================================================
@@ -375,8 +382,9 @@ if __name__ == "__main__":
 
     parser.add_argument("--env-id", type=str, default="MiniGrid-Empty-8x8-v0")
     parser.add_argument("--results-dir", type=str, default="results")
-    parser.add_argument("--episodes", type=int, default=1)
+    parser.add_argument("--episodes", type=int, default=5)
     parser.add_argument("--action-set", choices=["task", "full"], default="task")
+    parser.add_argument("--plots-dir", type=str, default="plots/reward_comparison")
 
     args = parser.parse_args()
 
@@ -404,7 +412,7 @@ if __name__ == "__main__":
 
     for seed in all_seeds:
         for stage_num, stage_name in stages_to_run:
-            print(f"Generating heatmap for seed={seed} ({stage_name or 'full episode'}) ...")
+            print(f"Generating test plot for seed={seed} ({stage_name or 'full episode'}) ...")
             plot_all_frequencies(
                 env_id=args.env_id,
                 results_dir=args.results_dir,
@@ -414,6 +422,7 @@ if __name__ == "__main__":
                 include_random=seed == first_seed,
                 target_stage=stage_num,
                 stage_name=stage_name,
+                plots_dir=args.plots_dir,
             )
 
-    print(f"Done. State-action heatmaps saved to plots/")
+    print(f"Done. Performance test plots saved to {args.plots_dir}")

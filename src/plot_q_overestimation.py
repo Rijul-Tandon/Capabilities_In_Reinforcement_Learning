@@ -199,7 +199,7 @@ def compute_q_values_grid(env, q_net, seed, device):
 # ============================================================================
 
 def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
-                        label_a="Agent A", label_b="Agent B", comparison_tag="", stage_name=""):
+                        label_a="Agent A", label_b="Agent B", comparison_tag="", stage_name="", plots_dir="plots"):
     width, height, num_dirs, num_actions = grid_a.shape
     
     with warnings.catch_warnings():
@@ -323,7 +323,7 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
 
     # Format clean folder names (e.g. DoorKey, Empty)
     env_clean = "DoorKey" if "DoorKey" in env_id else ("Empty" if "Empty" in env_id else env_id)
-    output_dir = Path("plots") / "overestimation" / env_clean / f"seed_{seed}"
+    output_dir = Path(plots_dir) / "overestimation" / env_clean / f"seed_{seed}"
     output_dir.mkdir(parents=True, exist_ok=True)
     stage_file_suffix = f"_{stage_name.lower().replace(' ', '_')}" if stage_name else ""
     output_path = output_dir / f"q_overestimation{stage_file_suffix}.png"
@@ -336,7 +336,7 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
 # SUMMARY BAR CHART
 # ============================================================================
 
-def plot_bar_chart(summary, label_a="Agent A", label_b="Agent B", comparison_tag=""):
+def plot_bar_chart(summary, label_a="Agent A", label_b="Agent B", comparison_tag="", plots_dir="plots"):
     if not summary:
         print("No data for summary bar chart — skipping.")
         return
@@ -385,7 +385,7 @@ def plot_bar_chart(summary, label_a="Agent A", label_b="Agent B", comparison_tag
             )
 
     plt.tight_layout()
-    output_dir = Path("plots") / comparison_tag if comparison_tag else Path("plots")
+    output_dir = Path(plots_dir) / "overestimation"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "q_overestimation_comparison.png"
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -403,6 +403,7 @@ def main():
     )
     parser.add_argument("--env-id", type=str, default=None, help="Specific environment ID to plot (default: run all in ENV_IDS)")
     parser.add_argument("--results-dir", type=str, default="results")
+    parser.add_argument("--plots-dir", type=str, default="plots")
     parser.add_argument("--action-set", choices=["task", "full"], default="task")
     parser.add_argument("--hidden-size", type=int, default=256)
     parser.add_argument("--compare", nargs=2, metavar=("EXP_A", "EXP_B"),
@@ -435,6 +436,28 @@ def main():
         models_b = get_models_by_seed(args.results_dir, env_id, exp_b)
 
         common_seeds = sorted(set(models_a.keys()) & set(models_b.keys()))
+        current_exp_a, current_exp_b = exp_a, exp_b
+        current_label_a, current_label_b = label_a, label_b
+
+        if not common_seeds:
+            possible_pairs = [
+                ("ddqn_baseline", "ddqn_reward_shaping"),
+                ("dqn_baseline", "dqn_reward_shaping"),
+                ("dqn_vanilla", "dqn_baseline"),
+            ]
+            for pa, pb in possible_pairs:
+                ma = get_models_by_seed(args.results_dir, env_id, pa)
+                mb = get_models_by_seed(args.results_dir, env_id, pb)
+                cs = sorted(set(ma.keys()) & set(mb.keys()))
+                if cs:
+                    models_a, models_b = ma, mb
+                    common_seeds = cs
+                    current_exp_a, current_exp_b = pa, pb
+                    current_label_a = pa.replace('_', ' ').title()
+                    current_label_b = pb.replace('_', ' ').title()
+                    print(f"  Auto-selected available experiment pair: {pa} vs {pb}")
+                    break
+
         if not common_seeds:
             print(f"  ⚠  No matching seed pair found for {env_id} — skipping.\n")
             continue
@@ -490,14 +513,14 @@ def main():
                 seed_a_avgs.append(np.nanmean(grid_a_max))
                 seed_b_avgs.append(np.nanmean(grid_b_max))
 
-                seed_label_a = f"{label_a}{get_decay_str(models_a[seed])}"
-                seed_label_b = f"{label_b}{get_decay_str(models_b[seed])}"
+                seed_label_a = f"{current_label_a}{get_decay_str(models_a[seed])}"
+                seed_label_b = f"{current_label_b}{get_decay_str(models_b[seed])}"
 
                 print(f"    Generating 4×3 directional heatmap plot ({stage_name}) …")
                 plot_heatmap_for_env(
                     env_id, grid_a, grid_b, wall_mask, annotations, seed,
                     label_a=seed_label_a, label_b=seed_label_b, comparison_tag=comparison_tag,
-                    stage_name=stage_name,
+                    stage_name=stage_name, plots_dir=args.plots_dir,
                 )
                 
                 diff_avg = np.nanmean(grid_a_max) - np.nanmean(grid_b_max)
@@ -516,7 +539,7 @@ def main():
         })
 
     plot_bar_chart(bar_chart_summary, label_a=label_a, label_b=label_b,
-                   comparison_tag=comparison_tag)
+                   comparison_tag=comparison_tag, plots_dir=args.plots_dir)
 
     print("\nAll done.")
 

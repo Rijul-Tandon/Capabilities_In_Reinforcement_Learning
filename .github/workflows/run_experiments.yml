@@ -208,12 +208,16 @@ jobs:
           
       - name: Generate All Comparison and Analysis Plots
         run: |
+          TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
+          PLOTS_DIR="plots/plots_${TIMESTAMP}"
+          mkdir -p "$PLOTS_DIR"
+          
           for env in "MiniGrid-Empty-6x6-v0" "MiniGrid-DoorKey-6x6-v0"; do
             echo "Generating all plots for $env..."
-            python src/plot_comparison.py --env-id $env
-            python src/plot_q_overestimation.py --env-id $env
-            python src/plot_state_action_freq.py --env-id $env
-            python src/plot_training_action_freq.py --env-id $env
+            python src/plot_comparison.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison"
+            python src/plot_q_overestimation.py --env-id $env --plots-dir "$PLOTS_DIR"
+            python src/plot_state_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison"
+            python src/plot_training_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/action_freq"
           done
           
       - name: Commit and Push Plots
@@ -222,6 +226,6 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
           git add plots/
-          git commit -m "Auto-generated structured plots (experiments + overestimation)" || echo "No changes to commit"
+          git commit -m "Auto-generated timestamped structured evaluation plots" || echo "No changes to commit"
           git pull --rebase origin main
           git push origin main

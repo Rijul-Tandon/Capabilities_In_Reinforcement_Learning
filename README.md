@@ -158,18 +158,20 @@ Capabilities_In_Reinforcement_Learning/
 ├── requirements.txt              # Python dependencies
 ├── README.md                     # This file
 ├── results/                      # Training output (CSV logs, model weights, configs)
-├── plots/                        # Generated comparison plots and heatmaps
-│   ├── overestimation/           # Q-value overestimation heatmaps
-│   │   ├── DoorKey/
-│   │   │   ├── seed_1/
-│   │   │   └── seed_2/
-│   │   └── Empty/
-│   │       ├── seed_1/
-│   │       └── seed_2/
-│   ├── reward_comparison/        # Return, Goal Rate, and TD Loss curves
-│   └── action_freq/              # Cumulative action frequency heatmaps during training
-│       ├── last_50_percent/      # Evaluated over last 50% steps
-│       └── last_25_percent/      # Evaluated over last 25% steps
+├── plots/                        # Unified root directory for generated output
+│   └── plots_<timestamp>/        # Timestamped execution run folder
+│       ├── overestimation/       # Directional 4x3 Q-value overestimation heatmaps
+│       │   ├── DoorKey/          # Structured per environment
+│       │   │   ├── seed_1/       # q_overestimation_initial, key_picked, door_opened
+│       │   │   └── seed_2/
+│       │   └── Empty/
+│       │       └── seed_1/
+│       ├── reward_comparison/    # Training curves (per seed & aggregated) + test performance heatmaps
+│       │   ├── MiniGrid-Empty-6x6-v0_comparison_all_seeds.png
+│       │   └── MiniGrid-DoorKey-6x6-v0_test_seed1_initial.png
+│       └── action_freq/          # Training state-action frequency heatmaps
+│           ├── last_50_percent/  # Action counts over the final 50% training steps
+│           └── last_25_percent/  # Action counts over the final 25% training steps
 ```
 
 ---

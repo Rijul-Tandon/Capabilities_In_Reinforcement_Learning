@@ -138,9 +138,11 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title
     for row, (agent_name, run_dir) in enumerate(agents):
         # Load the tracking array
         counts_path = run_dir / f"state_action_counts{suffix}.npy" if run_dir else None
+        fallback_path = run_dir / "state_action_counts.npy" if run_dir else None
         if counts_path and counts_path.exists():
             counts = np.load(counts_path)
-            # shape = (width, height, 4, num_actions)
+        elif fallback_path and fallback_path.exists():
+            counts = np.load(fallback_path)
         else:
             counts = np.zeros((width, height, 4, num_actions), dtype=np.int64)
 
@@ -211,8 +213,7 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title
     # Save inside the output folder requested
     output_dir = Path(plots_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = output_dir / f"{env_id}_training_action_freq{suffix}_seed{seed}_{timestamp}.png"
+    output_path = output_dir / f"{env_id}_training_action_freq{suffix}_seed{seed}.png"
     plt.savefig(output_path, dpi=150)
     plt.close(fig)
     print(f"Plot saved to {output_path}")
