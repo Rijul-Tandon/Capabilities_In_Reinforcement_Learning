@@ -61,6 +61,7 @@ import gymnasium as gym
 #   ax.text() overlays text labels on the heatmap cells.
 #   fig.colorbar() adds a color legend bar next to a heatmap.
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as path_effects
 
 # numpy (np): Used for:
 #   - np.zeros() to create the counting arrays for visits and actions.
@@ -387,6 +388,25 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
             ax.set_yticks(np.arange(-0.5, height, 1), minor=True)
             ax.grid(which="minor", color="#888888", linestyle="-", linewidth=0.8)
             ax.tick_params(which="both", bottom=False, left=False, labelbottom=False, labelleft=False)
+
+            # Add bold white text markers with black stroke for S, G, D, K
+            annotations = {}
+            if layout["start"]:
+                annotations[layout["start"]] = "S"
+            if layout["goal"]:
+                annotations[layout["goal"]] = "G"
+            for dx, dy in layout["doors"]:
+                annotations[(dx, dy)] = "D"
+            for kx, ky in layout["keys"]:
+                annotations[(kx, ky)] = "K"
+
+            for (ax_x, ax_y), label in annotations.items():
+                ax.text(
+                    ax_x + 0.32, ax_y - 0.32, label,
+                    color='white', fontsize=10, fontweight='bold',
+                    ha='center', va='center',
+                    path_effects=[path_effects.withStroke(linewidth=2, foreground='black')]
+                )
 
     # Top layout legend
     if legend_handles:

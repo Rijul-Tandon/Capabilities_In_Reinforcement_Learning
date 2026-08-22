@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as path_effects
 
 # We only need action_names to label the text inside the cells.
 from dqn_common import action_names, make_env
@@ -202,8 +203,9 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title
                     # Add annotation (S, G, K, D) if present in top-right of cell
                     if (x, y) in annotations:
                         label = annotations[(x, y)]
-                        ax.text(x + 0.32, y - 0.32, label, color='red', fontsize=10, 
-                                fontweight='bold', ha='center', va='center')
+                        ax.text(x + 0.32, y - 0.32, label, color='white', fontsize=10, 
+                                fontweight='bold', ha='center', va='center',
+                                path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
 
             # Grid lines
             ax.set_xticks(np.arange(-0.5, width, 1), minor=True)

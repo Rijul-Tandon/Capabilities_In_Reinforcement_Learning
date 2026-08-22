@@ -282,15 +282,16 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
                             facecolor="#e0e0e0", edgecolor="none",
                         ))
 
-                    if wall_mask[x, y] or annotations.get((x, y)) == "G":
+                    if wall_mask[x, y]:
                         continue
 
                     else:
                         label = annotations.get((x, y))
-                        if label in ["S", "D", "K"]:
-                            ax.text(x + 0.35, y - 0.35, label,
-                                    ha='center', va='center', color='black', 
-                                    fontsize=9, fontweight='bold')
+                        if label:
+                            ax.text(x + 0.32, y - 0.32, label,
+                                    ha='center', va='center', color='white', 
+                                    fontsize=10, fontweight='bold',
+                                    path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
                         
                         q_vals = grid_full_d[x, y, :]
                         best_a = int(np.argmax(q_vals)) if not np.isnan(q_vals).all() else -1
