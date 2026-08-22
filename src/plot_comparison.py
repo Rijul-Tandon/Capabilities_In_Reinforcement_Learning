@@ -186,7 +186,10 @@ def plot_figure(runs_by_exp, env_id, output_path, rolling_window, title_suffix="
     Creates and saves a 3-panel comparison figure from a runs_by_exp dictionary.
     Assigns distinct colors to each experiment line so they are clearly distinguishable.
     """
-    fig, axes = plt.subplots(3, 1, figsize=(10, 11), sharex=True)
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
+
+    fig, axes = plt.subplots(3, 1, figsize=(9.5, 10), sharex=True)
     any_dqn_config = None
 
     # Pre-assign distinct colors to each experiment name
@@ -214,8 +217,8 @@ def plot_figure(runs_by_exp, env_id, output_path, rolling_window, title_suffix="
             returns = rolling([r["episodic_return"] for r in rows], rolling_window)
             goals = rolling([r["goal_reached"] for r in rows], rolling_window)
 
-            axes[0].plot(steps, returns, label=label, color=base_color, linestyle=ls, linewidth=1.8)
-            axes[1].plot(steps, goals, label=label, color=base_color, linestyle=ls, linewidth=1.8)
+            axes[0].plot(steps, returns, label=label, color=base_color, linestyle=ls, linewidth=2.0)
+            axes[1].plot(steps, goals, label=label, color=base_color, linestyle=ls, linewidth=2.0)
 
             if metric_rows:
                 ls_steps = [r["global_step"] for r in metric_rows]
@@ -223,7 +226,7 @@ def plot_figure(runs_by_exp, env_id, output_path, rolling_window, title_suffix="
                 valid = [(s, l) for s, l in zip(ls_steps, lv) if l == l]
                 if valid:
                     vs, vl = zip(*valid)
-                    axes[2].plot(vs, vl, label=label, color=base_color, linestyle=ls, linewidth=1.8)
+                    axes[2].plot(vs, vl, label=label, color=base_color, linestyle=ls, linewidth=2.0)
 
             if exp_name != "random_agent":
                 any_dqn_config = config
@@ -231,22 +234,25 @@ def plot_figure(runs_by_exp, env_id, output_path, rolling_window, title_suffix="
     max_x = any_dqn_config.get("total_timesteps", 200000) if any_dqn_config else 200000
     axes[0].set_xlim(0, max_x)
 
-    axes[0].set_title(f"{env_id} — Episodic Return{title_suffix}")
-    axes[0].set_ylabel("Return")
-    axes[0].grid(alpha=0.3)
-    axes[0].legend(fontsize=8, loc="upper left")
+    axes[0].set_title(f"{env_id} — Episodic Return{title_suffix}", fontsize=13, fontweight="bold", pad=8)
+    axes[0].set_ylabel("Episodic Return", fontsize=11, fontweight="medium")
+    axes[0].grid(True, linestyle="--", alpha=0.35, color="#cccccc")
+    axes[0].legend(fontsize=9.5, loc="upper left", frameon=True, facecolor="white", edgecolor="#cccccc", framealpha=0.95)
 
-    axes[1].set_title(f"{env_id} — Goal Reached Rate{title_suffix}")
-    axes[1].set_ylabel("Goal Rate")
+    axes[1].set_title(f"{env_id} — Goal Reached Rate{title_suffix}", fontsize=13, fontweight="bold", pad=8)
+    axes[1].set_ylabel("Goal Success Rate", fontsize=11, fontweight="medium")
     axes[1].set_ylim(-0.05, 1.05)
-    axes[1].grid(alpha=0.3)
-    axes[1].legend(fontsize=8, loc="upper left")
+    axes[1].grid(True, linestyle="--", alpha=0.35, color="#cccccc")
+    axes[1].legend(fontsize=9.5, loc="upper left", frameon=True, facecolor="white", edgecolor="#cccccc", framealpha=0.95)
 
-    axes[2].set_title(f"{env_id} — TD Loss{title_suffix}")
-    axes[2].set_ylabel("TD Loss")
-    axes[2].set_xlabel("Training Steps")
-    axes[2].grid(alpha=0.3)
-    axes[2].legend(fontsize=8, loc="upper left")
+    axes[2].set_title(f"{env_id} — TD Loss{title_suffix}", fontsize=13, fontweight="bold", pad=8)
+    axes[2].set_ylabel("TD Loss", fontsize=11, fontweight="medium")
+    axes[2].set_xlabel("Training Steps", fontsize=11, fontweight="medium")
+    axes[2].grid(True, linestyle="--", alpha=0.35, color="#cccccc")
+    axes[2].legend(fontsize=9.5, loc="upper left", frameon=True, facecolor="white", edgecolor="#cccccc", framealpha=0.95)
+
+    for ax in axes:
+        ax.tick_params(labelsize=10)
 
     # Secondary X-axis: Epsilon
     ax_eps = axes[2].twiny()
@@ -254,7 +260,7 @@ def plot_figure(runs_by_exp, env_id, output_path, rolling_window, title_suffix="
     ax_eps.xaxis.set_ticks_position("bottom")
     ax_eps.xaxis.set_label_position("bottom")
     ax_eps.spines["bottom"].set_position(("outward", 40))
-    ax_eps.set_xlabel("Exploration Rate (Epsilon)")
+    ax_eps.set_xlabel("Exploration Rate (Epsilon)", fontsize=10, fontweight="medium")
 
     ticks = axes[2].get_xticks()
     ax_eps.set_xticks(ticks)
@@ -271,10 +277,10 @@ def plot_figure(runs_by_exp, env_id, output_path, rolling_window, title_suffix="
                 eps_labels.append("")
             else:
                 eps_labels.append(f"{max(slope * t + start_e, end_e):.2f}")
-        ax_eps.set_xticklabels(eps_labels)
+        ax_eps.set_xticklabels(eps_labels, fontsize=9)
 
     fig.tight_layout()
-    fig.savefig(output_path, dpi=160)
+    fig.savefig(output_path, dpi=250, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved {output_path}")
 
@@ -389,12 +395,6 @@ def main():
             out = plots_dir / f"{args.env_id}_comparison_seed{seed}.png"
             plot_figure(filtered, args.env_id, out, args.rolling_window,
                         title_suffix=f" | Seed {seed}")
-
-        # Generate aggregated plot across ALL seeds
-        if len(all_seeds) > 1:
-            out_all = plots_dir / f"{args.env_id}_comparison_all_seeds.png"
-            plot_figure(runs_by_exp, args.env_id, out_all, args.rolling_window,
-                        title_suffix=f" | All Seeds (Mean & Std)")
 
 
 if __name__ == "__main__":

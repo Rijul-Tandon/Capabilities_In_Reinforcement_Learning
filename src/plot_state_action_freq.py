@@ -268,26 +268,33 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
     else:
         agents.append(("Reward Shaped (Not Found)", None))
 
-    fig, axes = plt.subplots(2, len(agents), figsize=(12 * len(agents), 16), squeeze=False)
+    # Set publication styling
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
+
+    fig, axes = plt.subplots(2, len(agents), figsize=(5.2 * len(agents), 9.5), squeeze=False)
     title_suffix = f" [{stage_name}]" if stage_name else ""
     fig.suptitle(
-        f"{env_id}{title_suffix} - Single Episode Performance Test (DQN seed={seed})",
-        fontsize=16, fontweight="bold"
+        f"{env_id}{title_suffix} — Evaluation Test (Seed {seed})",
+        fontsize=16, fontweight="bold", y=0.97
     )
+
+    legend_handles = {}
 
     for col, (title, q_net) in enumerate(agents):
         if "Not Found" in title:
-            axes[0, col].set_title(title)
-            axes[1, col].set_title(title)
+            axes[0, col].set_title(title, fontsize=12, fontweight="bold")
+            axes[1, col].set_title(title, fontsize=12, fontweight="bold")
             continue
 
         visit_counts, state_action_counts, layout = get_agent_data(
             env, q_net, episodes, seed, num_actions, device, target_stage=target_stage
         )
 
-        im = axes[0, col].imshow(visit_counts.T, origin="upper", cmap="YlOrRd")
-        axes[0, col].set_title(f"{title}\nVisit Frequencies")
-        fig.colorbar(im, ax=axes[0, col], fraction=0.046, pad=0.04)
+        im = axes[0, col].imshow(visit_counts.T, origin="upper", cmap="YlOrRd", aspect="equal")
+        axes[0, col].set_title(f"{title}\nVisit Frequencies", fontsize=12, fontweight="bold", pad=8)
+        cbar = fig.colorbar(im, ax=axes[0, col], fraction=0.046, pad=0.04)
+        cbar.ax.tick_params(labelsize=9)
 
         if visit_counts.sum() == 0:
             axes[0, col].text(width / 2 - 0.5, height / 2 - 0.5, "Stage Not Reached",
@@ -295,22 +302,41 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
             axes[1, col].text(width / 2 - 0.5, height / 2 - 0.5, "Stage Not Reached",
                               ha="center", va="center", color="red", fontsize=14, fontweight="bold")
 
-        if layout["start"]:
-            axes[0, col].plot(layout["start"][0], layout["start"][1], 'bo', markersize=10, markeredgecolor='white', label="Start" if col==0 else "")
-        if layout["goal"]:
-            axes[0, col].plot(layout["goal"][0], layout["goal"][1], 'g*', markersize=16, markeredgecolor='white', label="Goal" if col==0 else "")
-        for i, (wx, wy) in enumerate(layout["walls"]):
-            axes[0, col].plot(wx, wy, 's', color='dimgray', markersize=14, label="Wall" if col==0 and i==0 else "")
-        for i, (dx, dy) in enumerate(layout["doors"]):
-            axes[0, col].plot(dx, dy, 's', color='saddlebrown', markersize=12, markeredgecolor='white', label="Door" if col==0 and i==0 else "")
-        for i, (kx, ky) in enumerate(layout["keys"]):
-            axes[0, col].plot(kx, ky, 'yD', markersize=8, markeredgecolor='black', label="Key" if col==0 and i==0 else "")
-            
-        if col == 0:
-            axes[0, col].legend(loc="upper left", bbox_to_anchor=(0, 1.3), ncol=3, fontsize=9, frameon=False)
+        if layout["start"] and "Start" not in legend_handles:
+            h, = axes[0, col].plot(layout["start"][0], layout["start"][1], 'bo', markersize=9, markeredgecolor='white', label="Start")
+            legend_handles["Start"] = h
+        elif layout["start"]:
+            axes[0, col].plot(layout["start"][0], layout["start"][1], 'bo', markersize=9, markeredgecolor='white')
 
-        axes[1, col].imshow(visit_counts.T, origin="upper", cmap="Blues", alpha=0.3)
-        axes[1, col].set_title(f"{title}\nAction Counts")
+        if layout["goal"] and "Goal" not in legend_handles:
+            h, = axes[0, col].plot(layout["goal"][0], layout["goal"][1], 'g*', markersize=14, markeredgecolor='white', label="Goal")
+            legend_handles["Goal"] = h
+        elif layout["goal"]:
+            axes[0, col].plot(layout["goal"][0], layout["goal"][1], 'g*', markersize=14, markeredgecolor='white')
+
+        for i, (wx, wy) in enumerate(layout["walls"]):
+            if "Wall" not in legend_handles:
+                h, = axes[0, col].plot(wx, wy, 's', color='#333333', markersize=10, label="Wall")
+                legend_handles["Wall"] = h
+            else:
+                axes[0, col].plot(wx, wy, 's', color='#333333', markersize=10)
+
+        for i, (dx, dy) in enumerate(layout["doors"]):
+            if "Door" not in legend_handles:
+                h, = axes[0, col].plot(dx, dy, 's', color='saddlebrown', markersize=10, markeredgecolor='white', label="Door")
+                legend_handles["Door"] = h
+            else:
+                axes[0, col].plot(dx, dy, 's', color='saddlebrown', markersize=10, markeredgecolor='white')
+
+        for i, (kx, ky) in enumerate(layout["keys"]):
+            if "Key" not in legend_handles:
+                h, = axes[0, col].plot(kx, ky, 'yD', markersize=8, markeredgecolor='black', label="Key")
+                legend_handles["Key"] = h
+            else:
+                axes[0, col].plot(kx, ky, 'yD', markersize=8, markeredgecolor='black')
+
+        axes[1, col].imshow(visit_counts.T, origin="upper", cmap="Blues", alpha=0.35, aspect="equal")
+        axes[1, col].set_title(f"{title}\nAction Counts", fontsize=12, fontweight="bold", pad=8)
 
         abbr_map = {"left": "L", "right": "R", "forward": "F", "pickup": "P", "drop": "Dp", "toggle": "T", "done": "Dn"}
         dir_map = {0: "E", 1: "S", 2: "W", 3: "N"}
@@ -338,16 +364,24 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
                 if cell_text:
                     axes[1, col].text(
                         x, y, cell_text,
-                        ha="center", va="center", fontsize=7, fontweight="bold", color="black", alpha=alpha_val
+                        ha="center", va="center", fontsize=8, fontweight="bold", color="black", alpha=alpha_val
                     )
 
         for ax in [axes[0, col], axes[1, col]]:
             ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
             ax.set_yticks(np.arange(-0.5, height, 1), minor=True)
-            ax.grid(which="minor", color="black", linestyle="-", linewidth=1)
-            ax.tick_params(which="minor", bottom=False, left=False)
-            ax.set_xticks(np.arange(0, width, 1))
-            ax.set_yticks(np.arange(0, height, 1))
+            ax.grid(which="minor", color="#888888", linestyle="-", linewidth=0.8)
+            ax.tick_params(which="both", bottom=False, left=False, labelbottom=False, labelleft=False)
+
+    # Top layout legend
+    if legend_handles:
+        fig.legend(
+            handles=list(legend_handles.values()),
+            labels=list(legend_handles.keys()),
+            loc="upper center", bbox_to_anchor=(0.5, 0.935),
+            ncol=len(legend_handles), fontsize=10, frameon=True,
+            facecolor="white", edgecolor="#cccccc", framealpha=0.95
+        )
 
     legend_parts = []
     for act_name in names:
@@ -356,19 +390,19 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
     legend_text = "   |   ".join(legend_parts)
 
     fig.text(
-        0.5, 0.01,
+        0.5, 0.02,
         f"Action key:  {legend_text}",
         ha="center", va="bottom",
-        fontsize=9, style="italic",
-        bbox=dict(boxstyle="round,pad=0.3", facecolor="#f0f0f0", edgecolor="#aaaaaa", alpha=0.8),
+        fontsize=10, fontweight="medium",
+        bbox=dict(boxstyle="round,pad=0.4", facecolor="#ffffff", edgecolor="#cccccc", alpha=0.95),
     )
 
-    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+    plt.tight_layout(rect=[0, 0.05, 1, 0.90])
     suffix = f"_{stage_name.lower().replace(' ', '_')}" if stage_name else ""
     output_dir = Path(plots_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{env_id}_test_seed{seed}{suffix}.png"
-    plt.savefig(output_path, dpi=150)
+    plt.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(f"Test plot saved to {output_path}")
 
@@ -404,15 +438,11 @@ if __name__ == "__main__":
     print(f"Found seeds: {all_seeds} for {args.env_id}")
 
     first_seed = all_seeds[0]
-    stages_to_run = [
-        (1, "initial"),
-        (2, "key_picked"),
-        (3, "door_opened"),
-    ] if "DoorKey" in args.env_id else [(None, "")]
+    stages_to_run = [(None, "")]
 
     for seed in all_seeds:
         for stage_num, stage_name in stages_to_run:
-            print(f"Generating test plot for seed={seed} ({stage_name or 'full episode'}) ...")
+            print(f"Generating combined test plot for seed={seed} ...")
             plot_all_frequencies(
                 env_id=args.env_id,
                 results_dir=args.results_dir,

@@ -894,23 +894,28 @@ def train(args, use_shaping):
     rb = ReplayBuffer(args.buffer_size, obs_shape, device)
 
     # --- State-Action Frequency Tracking ---
-    # We track how many times each action was taken in each (x, y, dir) state.
+    # We track how many times each action was taken in each (x, y, dir) state per stage.
+    num_stages = 3
     counts_file = run_dir / "state_action_counts.npy"
     if args.run_dir and counts_file.exists():
         state_action_counts = np.load(counts_file)
         state_action_counts_last_quarter = np.load(run_dir / "state_action_counts_last_quarter.npy")
         state_action_counts_last_half = np.load(run_dir / "state_action_counts_last_half.npy")
+        if state_action_counts.ndim == 4:
+            state_action_counts = np.expand_dims(state_action_counts, axis=-1)
+            state_action_counts_last_quarter = np.expand_dims(state_action_counts_last_quarter, axis=-1)
+            state_action_counts_last_half = np.expand_dims(state_action_counts_last_half, axis=-1)
     else:
         state_action_counts = np.zeros(
-            (env.unwrapped.width, env.unwrapped.height, 4, num_actions), 
+            (env.unwrapped.width, env.unwrapped.height, 4, num_actions, num_stages), 
             dtype=np.int64
         )
         state_action_counts_last_quarter = np.zeros(
-            (env.unwrapped.width, env.unwrapped.height, 4, num_actions), 
+            (env.unwrapped.width, env.unwrapped.height, 4, num_actions, num_stages), 
             dtype=np.int64
         )
         state_action_counts_last_half = np.zeros(
-            (env.unwrapped.width, env.unwrapped.height, 4, num_actions), 
+            (env.unwrapped.width, env.unwrapped.height, 4, num_actions, num_stages), 
             dtype=np.int64
         )
 
@@ -989,15 +994,30 @@ def train(args, use_shaping):
                     q_values = q_net(obs_tensor)
                     action = int(torch.argmax(q_values, dim=1).item())
 
-        # Track the action taken at the current state
-        # (Must do this before env.step() since env.step() changes agent_pos/dir)
+        # Determine current stage (0: initial, 1: key_picked, 2: door_opened)
+        stage_idx = 0
+        carrying = getattr(env.unwrapped, 'carrying', None)
+        if carrying is not None and getattr(carrying, 'type', None) == "key":
+            stage_idx = 1
+        
+        grid = env.unwrapped.grid
+        for wx in range(env.unwrapped.width):
+            for wy in range(env.unwrapped.height):
+                c = grid.get(wx, wy)
+                if c is not None and getattr(c, 'type', None) == "door" and getattr(c, 'is_open', False):
+                    stage_idx = 2
+                    break
+            if stage_idx == 2:
+                break
+
+        # Track the action taken at the current state per stage
         ax, ay = env.unwrapped.agent_pos
         ad = env.unwrapped.agent_dir
-        state_action_counts[ax, ay, ad, action] += 1
+        state_action_counts[ax, ay, ad, action, stage_idx] += 1
         if local_step >= args.total_timesteps * 0.50:
-            state_action_counts_last_half[ax, ay, ad, action] += 1
+            state_action_counts_last_half[ax, ay, ad, action, stage_idx] += 1
         if local_step >= args.total_timesteps * 0.75:
-            state_action_counts_last_quarter[ax, ay, ad, action] += 1
+            state_action_counts_last_quarter[ax, ay, ad, action, stage_idx] += 1
 
         # Execute the chosen action in the environment
         next_obs, env_reward, terminated, truncated, info = env.step(action)

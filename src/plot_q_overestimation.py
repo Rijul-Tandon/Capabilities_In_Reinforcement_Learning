@@ -273,7 +273,7 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
                     if wall_mask[x, y]:
                         ax.add_patch(plt.Rectangle(
                             (x - 0.5, y - 0.5), 1, 1,
-                            facecolor="dimgray", edgecolor="none",
+                            facecolor="#333333", edgecolor="none",
                         ))
 
                     if wall_mask[x, y] or annotations.get((x, y)) == "G":
@@ -281,10 +281,10 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
 
                     else:
                         if (x, y) in annotations:
-                            ax.text(x + 0.45, y - 0.45, annotations[(x, y)],
-                                    ha='right', va='top', color='white', 
+                            ax.text(x + 0.42, y - 0.42, annotations[(x, y)],
+                                    ha='right', va='top', color='red', 
                                     fontsize=10, fontweight='bold',
-                                    path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
+                                    path_effects=[path_effects.withStroke(linewidth=2, foreground='white')])
                         
                         q_vals = grid_full_d[x, y, :]
                         best_a = int(np.argmax(q_vals)) if not np.isnan(q_vals).all() else -1
@@ -300,16 +300,14 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
                                     text_lines.append(f"{action_labels[a]}{star}: {val_str}")
                         
                         text_str = "\n".join(text_lines)
-                        bbox_props = dict(boxstyle="round,pad=0.2", fc="white", alpha=0.75, ec="none")
+                        bbox_props = dict(boxstyle="round,pad=0.2", fc="white", alpha=0.85, ec="none")
                         ax.text(x, y, text_str, ha='center', va='center', 
-                                color='black', fontsize=6, bbox=bbox_props)
+                                color='black', fontsize=6.5, fontweight="medium", bbox=bbox_props)
 
             ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
             ax.set_yticks(np.arange(-0.5, height, 1), minor=True)
-            ax.grid(which="minor", color="black", linestyle="-", linewidth=0.5)
-            ax.tick_params(which="minor", bottom=False, left=False)
-            ax.set_xticks(np.arange(0, width, 1))
-            ax.set_yticks(np.arange(0, height, 1))
+            ax.grid(which="minor", color="#888888", linestyle="-", linewidth=0.6)
+            ax.tick_params(which="both", bottom=False, left=False, labelbottom=False, labelleft=False)
 
     legend_parts = [f"{abbr_map.get(n, n[:1].upper())} = {n}" for n in names]
     legend_text = "   |   ".join(legend_parts)
@@ -317,8 +315,8 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
         0.5, 0.015,
         f"Action Key:  {legend_text}    ---    Layout Annotations: S = Start, G = Goal, K = Key, D = Door",
         ha="center", va="bottom",
-        fontsize=11, style="italic",
-        bbox=dict(boxstyle="round,pad=0.3", facecolor="#f0f0f0", edgecolor="#aaaaaa", alpha=0.8),
+        fontsize=11, fontweight="medium",
+        bbox=dict(boxstyle="round,pad=0.4", facecolor="#ffffff", edgecolor="#cccccc", alpha=0.95),
     )
 
     # Format clean folder names (e.g. DoorKey, Empty)
@@ -327,7 +325,7 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
     output_dir.mkdir(parents=True, exist_ok=True)
     stage_file_suffix = f"_{stage_name.lower().replace(' ', '_')}" if stage_name else ""
     output_path = output_dir / f"q_overestimation{stage_file_suffix}.png"
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(f"  Heatmap saved → {output_path}")
 
@@ -341,6 +339,9 @@ def plot_bar_chart(summary, label_a="Agent A", label_b="Agent B", comparison_tag
         print("No data for summary bar chart — skipping.")
         return
 
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
+
     env_labels = [s["env_id"].replace("MiniGrid-", "") for s in summary]
     a_means  = [s["a_mean"]  for s in summary]
     b_means  = [s["b_mean"]  for s in summary]
@@ -350,47 +351,40 @@ def plot_bar_chart(summary, label_a="Agent A", label_b="Agent B", comparison_tag
     x = np.arange(len(env_labels))
     bar_width = 0.35
 
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(9, 5.5))
 
     bars_a = ax.bar(
         x - bar_width / 2, a_means, bar_width,
         yerr=a_stds, capsize=4,
-        label=label_a, color="#E74C3C", edgecolor="black", linewidth=0.6,
+        label=label_a, color="#E74C3C", edgecolor="black", linewidth=0.8,
     )
     bars_b = ax.bar(
         x + bar_width / 2, b_means, bar_width,
         yerr=b_stds, capsize=4,
-        label=label_b, color="#3498DB", edgecolor="black", linewidth=0.6,
+        label=label_b, color="#2980B9", edgecolor="black", linewidth=0.8,
     )
 
-    ax.set_xlabel("Environment", fontsize=12)
-    ax.set_ylabel("Average Max Q-Value", fontsize=12)
-    ax.set_title(
-        f"Q-Value Comparison: {label_a} vs {label_b}",
-        fontsize=14, fontweight="bold",
-    )
+    ax.set_ylabel("Mean Maximum Q-Value", fontsize=11, fontweight="medium")
+    ax.set_title("Q-Value Overestimation Comparison Across Environments", fontsize=13, fontweight="bold", pad=12)
     ax.set_xticks(x)
-    ax.set_xticklabels(env_labels, rotation=20, ha="right", fontsize=10)
-    ax.legend(fontsize=11)
-    ax.grid(axis="y", alpha=0.3)
-
     for bars in [bars_a, bars_b]:
         for bar in bars:
             h = bar.get_height()
-            ax.annotate(
-                f"{h:.2f}",
-                xy=(bar.get_x() + bar.get_width() / 2, h),
-                xytext=(0, 4), textcoords="offset points",
-                ha="center", va="bottom", fontsize=8,
-            )
+            if h > 0:
+                ax.annotate(
+                    f"{h:.2f}",
+                    xy=(bar.get_x() + bar.get_width() / 2, h),
+                    xytext=(0, 4), textcoords="offset points",
+                    ha="center", va="bottom", fontsize=8.5, fontweight="medium"
+                )
 
     plt.tight_layout()
     output_dir = Path(plots_dir) / "overestimation"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "q_overestimation_comparison.png"
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.savefig(output_path, dpi=250, bbox_inches="tight")
     plt.close(fig)
-    print(f"\nBar chart saved → {output_path}")
+    print(f"  Summary bar chart saved → {output_path}")
 
 
 # ============================================================================

@@ -85,7 +85,7 @@ def get_decay_str(run_dir):
             pass
     return ""
 
-def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title_suffix="(All Steps)", include_random=True, plots_dir="plots/action_freq_plots"):
+def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title_suffix="(All Steps)", include_random=True, plots_dir="plots/action_freq_plots", stage_idx=None, stage_name=""):
     # Find directories
     random_dirs = get_dirs_by_seed(results_dir, env_id, "random_agent")
     baseline_dirs = get_dirs_by_seed(results_dir, env_id, "ddqn_baseline")
@@ -140,11 +140,19 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title
         counts_path = run_dir / f"state_action_counts{suffix}.npy" if run_dir else None
         fallback_path = run_dir / "state_action_counts.npy" if run_dir else None
         if counts_path and counts_path.exists():
-            counts = np.load(counts_path)
+            raw_counts = np.load(counts_path)
         elif fallback_path and fallback_path.exists():
-            counts = np.load(fallback_path)
+            raw_counts = np.load(fallback_path)
         else:
-            counts = np.zeros((width, height, 4, num_actions), dtype=np.int64)
+            raw_counts = np.zeros((width, height, 4, num_actions), dtype=np.int64)
+
+        if raw_counts.ndim == 5:
+            if stage_idx is not None and stage_idx < raw_counts.shape[4]:
+                counts = raw_counts[:, :, :, :, stage_idx]
+            else:
+                counts = raw_counts.sum(axis=-1)
+        else:
+            counts = raw_counts
 
         for col, (d_idx, d_name) in enumerate(dir_info):
             ax = axes[row, col]
@@ -188,33 +196,34 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title
                     if lines:
                         text = "\n".join(lines)
                         max_total = action_total.max()
-                        text_color = "white" if max_total > 0 and np.log1p(action_total[x, y]) > np.log1p(max_total) * 0.5 else "black"
+                        text_color = "white" if max_total > 0 and np.log1p(action_total[x, y]) > np.log1p(max_total) * 0.55 else "black"
                         ax.text(x, y, text, ha="center", va="center", fontsize=8, color=text_color, fontweight="bold")
                         
-                    # Add annotation (S, G, K, D) if present
+                    # Add annotation (S, G, K, D) if present in top-right of cell
                     if (x, y) in annotations:
                         label = annotations[(x, y)]
-                        ax.text(x + 0.35, y + 0.35, label, color='red', fontsize=10, 
+                        ax.text(x + 0.32, y - 0.32, label, color='red', fontsize=10, 
                                 fontweight='bold', ha='center', va='center')
 
             # Grid lines
             ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
             ax.set_yticks(np.arange(-0.5, height, 1), minor=True)
-            ax.grid(which="minor", color="black", linestyle="-", linewidth=1)
+            ax.grid(which="minor", color="#888888", linestyle="-", linewidth=0.8)
             ax.tick_params(which="both", bottom=False, left=False, labelbottom=False, labelleft=False)
 
     # Action Legend
     legend_text = "  |  ".join(f"{abbr_map.get(name, name[:1].upper())} = {name}" for name in names)
-    fig.text(0.5, 0.02, f"Action key:  {legend_text}    ---    Red labels (S=Start, G=Goal, K=Key, D=Door)", ha="center", va="bottom", fontsize=12,
-             bbox=dict(boxstyle="round,pad=0.3", facecolor="#f0f0f0", edgecolor="#aaaaaa", alpha=0.8))
+    fig.text(0.5, 0.02, f"Action key:  {legend_text}    ---    Red labels (S=Start, G=Goal, K=Key, D=Door)", ha="center", va="bottom", fontsize=11,
+             bbox=dict(boxstyle="round,pad=0.4", facecolor="#ffffff", edgecolor="#cccccc", alpha=0.95))
 
     plt.tight_layout(rect=[0, 0.05, 1, 0.93])
     
     # Save inside the output folder requested
     output_dir = Path(plots_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{env_id}_training_action_freq{suffix}_seed{seed}.png"
-    plt.savefig(output_path, dpi=150)
+    stage_file_suffix = f"_{stage_name.lower().replace(' ', '_')}" if stage_name else ""
+    output_path = output_dir / f"{env_id}_training_action_freq{suffix}_seed{seed}{stage_file_suffix}.png"
+    plt.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(f"Plot saved to {output_path}")
 
@@ -236,20 +245,30 @@ if __name__ == "__main__":
         print(f"No trained baseline models found for {args.env_id} in {args.results_dir}. Cannot determine seeds.")
         raise SystemExit(1)
         
+    stages_to_run = [
+        (0, "initial"),
+        (1, "key_picked"),
+        (2, "door_opened"),
+    ] if "DoorKey" in args.env_id else [(None, "")]
+
     first_seed = seeds[0]
     for seed in seeds:
         include_random = seed == first_seed
-        print(f"Generating training action freq plot for {args.env_id} seed={seed} (Last 50%) ...")
-        plot_3x4_frequencies(
-            args.env_id, args.results_dir, seed, args.action_set, 
-            suffix="_last_half", title_suffix="(Last 50%)", 
-            include_random=include_random, 
-            plots_dir=f"{args.plots_dir}/last_50_percent"
-        )
-        print(f"Generating training action freq plot for {args.env_id} seed={seed} (Last 25%) ...")
-        plot_3x4_frequencies(
-            args.env_id, args.results_dir, seed, args.action_set, 
-            suffix="_last_quarter", title_suffix="(Last 25%)", 
-            include_random=include_random, 
-            plots_dir=f"{args.plots_dir}/last_25_percent"
-        )
+        for stage_idx, stage_name in stages_to_run:
+            s_title = f" [{stage_name}]" if stage_name else ""
+            print(f"Generating training action freq plot for {args.env_id} seed={seed} (Last 50%{s_title}) ...")
+            plot_3x4_frequencies(
+                args.env_id, args.results_dir, seed, args.action_set, 
+                suffix="_last_half", title_suffix=f"(Last 50%{s_title})", 
+                include_random=include_random, 
+                plots_dir=f"{args.plots_dir}/last_50_percent",
+                stage_idx=stage_idx, stage_name=stage_name
+            )
+            print(f"Generating training action freq plot for {args.env_id} seed={seed} (Last 25%{s_title}) ...")
+            plot_3x4_frequencies(
+                args.env_id, args.results_dir, seed, args.action_set, 
+                suffix="_last_quarter", title_suffix=f"(Last 25%{s_title})", 
+                include_random=include_random, 
+                plots_dir=f"{args.plots_dir}/last_25_percent",
+                stage_idx=stage_idx, stage_name=stage_name
+            )
