@@ -279,29 +279,38 @@ class MarkovianStepPenaltyWrapper(gym.RewardWrapper):
 class FlatImageAndDirectionWrapper(gym.ObservationWrapper):
     """
     A custom wrapper that takes the 3D image output from ImgObsWrapper,
-    flattens it into a 1D array, and appends the agent's current direction.
+    applies component-wise min-max normalization ([0, 1]) to each channel
+    (object_type / 10.0, color / 5.0, state / 3.0), flattens it into a 1D array,
+    and appends the normalized agent direction (direction / 3.0).
     """
     def __init__(self, env):
         super().__init__(env)
-        # The environment currently returns a 3D image (width, height, 3)
         image_shape = env.observation_space.shape
         flat_size = int(np.prod(image_shape))
         
-        # Expand the observation space by 1 to accommodate the direction integer
+        # Observation space bounds are now normalized between 0.0 and 1.0
         self.observation_space = gym.spaces.Box(
-            low=0,
-            high=255,
+            low=0.0,
+            high=1.0,
             shape=(flat_size + 1,),
             dtype=np.float32
         )
 
     def observation(self, obs):
-        # 'obs' is the 3D image array from ImgObsWrapper
-        flat_image = obs.flatten()
-        # We grab the current direction directly from the unwrapped environment
-        direction = np.array([self.env.unwrapped.agent_dir])
-        # Append the direction to the end of the flattened array
-        return np.concatenate([flat_image, direction]).astype(np.float32)
+        # 'obs' is the 3D image array from ImgObsWrapper of shape (width, height, 3)
+        img = obs.astype(np.float32)
+        
+        # Component-wise min-max scaling to [0, 1]
+        img[:, :, 0] /= 10.0  # Object type (max 10)
+        img[:, :, 1] /= 5.0   # Color (max 5)
+        img[:, :, 2] /= 3.0   # State (max 3)
+        
+        flat_image = img.flatten()
+        
+        # Normalize agent direction (0..3) to [0, 1]
+        direction = np.array([self.env.unwrapped.agent_dir / 3.0], dtype=np.float32)
+        
+        return np.concatenate([flat_image, direction])
 
 
 def make_env(env_id, seed, action_set, capture_video=False, run_name="", max_steps=None):

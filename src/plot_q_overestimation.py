@@ -109,14 +109,48 @@ def get_wrapped_obs(env):
     return obs
 
 
-def compute_q_values_grid(env, q_net, seed, device):
-    """Computes Q(s, a) for reachable cells across all 4 facing directions."""
+def compute_q_values_grid_for_stage(env, q_net, seed, device, stage=1):
+    """
+    Computes Q(s, a) for reachable cells across all 4 facing directions for a specific environment stage.
+    Stage 1: Initial (Key on ground, Door locked/closed)
+    Stage 2: Key Carrying (Key picked up, Door locked/closed)
+    Stage 3: Door Opened (Door open, Key used/dropped)
+    """
     env.reset(seed=seed)
     width = env.unwrapped.width
     height = env.unwrapped.height
     num_actions = env.action_space.n
 
-    # shape = (width, height, 4_directions, num_actions)
+    # Locate key and door positions
+    key_pos = None
+    door_pos = None
+    key_cell = None
+    door_cell = None
+
+    for x in range(width):
+        for y in range(height):
+            c = env.unwrapped.grid.get(x, y)
+            if c is not None:
+                if c.type == "key":
+                    key_pos = (x, y)
+                    key_cell = c
+                elif c.type == "door":
+                    door_pos = (x, y)
+                    door_cell = c
+
+    # Modify map state according to requested stage
+    if stage == 2 and key_pos is not None:
+        # Key picked up (remove key from ground)
+        env.unwrapped.grid.set(key_pos[0], key_pos[1], None)
+        env.unwrapped.carrying = key_cell
+    elif stage == 3:
+        if key_pos is not None:
+            env.unwrapped.grid.set(key_pos[0], key_pos[1], None)
+            env.unwrapped.carrying = None
+        if door_cell is not None:
+            door_cell.is_open = True
+            door_cell.is_locked = False
+
     q_grid = np.full((width, height, 4, num_actions), np.nan, dtype=np.float32)
     wall_mask = np.zeros((width, height), dtype=bool)
     annotations = {}
@@ -132,10 +166,10 @@ def compute_q_values_grid(env, q_net, seed, device):
                     wall_mask[x, y] = True
                 elif cell.type == "goal":
                     annotations[(x, y)] = "G"
-                elif cell.type == "key":
+                elif cell.type == "key" and stage == 1:
                     annotations[(x, y)] = "K"
                 elif cell.type == "door":
-                    annotations[(x, y)] = "D"
+                    annotations[(x, y)] = "D(open)" if getattr(cell, 'is_open', False) else "D"
 
     with torch.no_grad():
         for x in range(width):
@@ -155,12 +189,17 @@ def compute_q_values_grid(env, q_net, seed, device):
     return q_grid, wall_mask, annotations
 
 
+def compute_q_values_grid(env, q_net, seed, device):
+    """Wrapper to compute stage 1 Q-values for backwards compatibility."""
+    return compute_q_values_grid_for_stage(env, q_net, seed, device, stage=1)
+
+
 # ============================================================================
 # PER-ENVIRONMENT HEATMAP PLOT
 # ============================================================================
 
 def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
-                        label_a="Agent A", label_b="Agent B", comparison_tag=""):
+                        label_a="Agent A", label_b="Agent B", comparison_tag="", stage_name=""):
     width, height, num_dirs, num_actions = grid_a.shape
     
     with warnings.catch_warnings():
@@ -179,8 +218,9 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
     ]
 
     fig, axes = plt.subplots(4, 3, figsize=(24, 20))
+    title_suffix = f" [{stage_name}]" if stage_name else ""
     fig.suptitle(
-        f"{env_id}  —  {label_a} vs {label_b}  (seed={seed})",
+        f"{env_id}{title_suffix}  —  {label_a} vs {label_b}  (seed={seed})",
         fontsize=18, fontweight="bold", y=0.98
     )
 
@@ -285,7 +325,8 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
 
     output_dir = Path("plots") / comparison_tag if comparison_tag else Path("plots")
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{env_id}_q_overestimation_seed{seed}.png"
+    stage_file_suffix = f"_{stage_name.lower().replace(' ', '_')}" if stage_name else ""
+    output_path = output_dir / f"{env_id}_q_overestimation_seed{seed}{stage_file_suffix}.png"
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  Heatmap saved → {output_path}")
@@ -422,38 +463,45 @@ def main():
 
             env_seed = make_env(env_id, seed, args.action_set)
 
-            print(f"    Computing {label_a} Q-values …")
-            grid_a, wall_mask, annotations = compute_q_values_grid(
-                env_seed, q_net_a, seed, device
-            )
+            stages_to_run = [
+                (1, "Initial State - Key on Ground"),
+                (2, "Key Picked Up"),
+                (3, "Door Opened"),
+            ] if "DoorKey" in env_id else [(1, "")]
 
-            print(f"    Computing {label_b} Q-values …")
-            grid_b, _, _ = compute_q_values_grid(
-                env_seed, q_net_b, seed, device
-            )
+            for stage_num, stage_name in stages_to_run:
+                print(f"    Computing {label_a} Q-values for {stage_name or 'Stage 1'} …")
+                grid_a, wall_mask, annotations = compute_q_values_grid_for_stage(
+                    env_seed, q_net_a, seed, device, stage=stage_num
+                )
 
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", category=RuntimeWarning)
-                grid_a_max = np.nanmax(grid_a, axis=3)
-                grid_b_max = np.nanmax(grid_b, axis=3)
+                print(f"    Computing {label_b} Q-values for {stage_name or 'Stage 1'} …")
+                grid_b, _, _ = compute_q_values_grid_for_stage(
+                    env_seed, q_net_b, seed, device, stage=stage_num
+                )
 
-            seed_a_avgs.append(np.nanmean(grid_a_max))
-            seed_b_avgs.append(np.nanmean(grid_b_max))
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", category=RuntimeWarning)
+                    grid_a_max = np.nanmax(grid_a, axis=3)
+                    grid_b_max = np.nanmax(grid_b, axis=3)
 
-            # Dynamically read epsilon_schedule from config.json for each model
-            seed_label_a = f"{label_a}{get_decay_str(models_a[seed])}"
-            seed_label_b = f"{label_b}{get_decay_str(models_b[seed])}"
+                seed_a_avgs.append(np.nanmean(grid_a_max))
+                seed_b_avgs.append(np.nanmean(grid_b_max))
 
-            print("    Generating 4×3 directional heatmap plot …")
-            plot_heatmap_for_env(
-                env_id, grid_a, grid_b, wall_mask, annotations, seed,
-                label_a=seed_label_a, label_b=seed_label_b, comparison_tag=comparison_tag,
-            )
-            
-            diff_avg = np.nanmean(grid_a_max) - np.nanmean(grid_b_max)
-            print(f"    {seed_label_a} avg max Q : {np.nanmean(grid_a_max):.4f}")
-            print(f"    {seed_label_b} avg max Q : {np.nanmean(grid_b_max):.4f}")
-            print(f"    Difference                : {diff_avg:+.4f}")
+                seed_label_a = f"{label_a}{get_decay_str(models_a[seed])}"
+                seed_label_b = f"{label_b}{get_decay_str(models_b[seed])}"
+
+                print(f"    Generating 4×3 directional heatmap plot ({stage_name}) …")
+                plot_heatmap_for_env(
+                    env_id, grid_a, grid_b, wall_mask, annotations, seed,
+                    label_a=seed_label_a, label_b=seed_label_b, comparison_tag=comparison_tag,
+                    stage_name=stage_name,
+                )
+                
+                diff_avg = np.nanmean(grid_a_max) - np.nanmean(grid_b_max)
+                print(f"    {seed_label_a} avg max Q : {np.nanmean(grid_a_max):.4f}")
+                print(f"    {seed_label_b} avg max Q : {np.nanmean(grid_b_max):.4f}")
+                print(f"    Difference                : {diff_avg:+.4f}")
 
         env.close()
 
