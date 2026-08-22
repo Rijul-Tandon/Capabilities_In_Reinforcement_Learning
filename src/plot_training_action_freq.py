@@ -238,7 +238,17 @@ if __name__ == "__main__":
     first_seed = seeds[0]
     for seed in seeds:
         include_random = seed == first_seed
-        print(f"Generating training action freq plot for {args.env_id} seed={seed} (All Steps) ...")
-        plot_3x4_frequencies(args.env_id, args.results_dir, seed, args.action_set, suffix="", title_suffix="(All Steps)", include_random=include_random, plots_dir=args.plots_dir)
+        print(f"Generating training action freq plot for {args.env_id} seed={seed} (Last 50%) ...")
+        plot_3x4_frequencies(
+            args.env_id, args.results_dir, seed, args.action_set, 
+            suffix="_last_half", title_suffix="(Last 50%)", 
+            include_random=include_random, 
+            plots_dir=f"{args.plots_dir}/last_50_percent"
+        )
         print(f"Generating training action freq plot for {args.env_id} seed={seed} (Last 25%) ...")
-        plot_3x4_frequencies(args.env_id, args.results_dir, seed, args.action_set, suffix="_last_quarter", title_suffix="(Last 25%)", include_random=include_random, plots_dir=args.plots_dir)
+        plot_3x4_frequencies(
+            args.env_id, args.results_dir, seed, args.action_set, 
+            suffix="_last_quarter", title_suffix="(Last 25%)", 
+            include_random=include_random, 
+            plots_dir=f"{args.plots_dir}/last_25_percent"
+        )

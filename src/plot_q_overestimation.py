@@ -321,12 +321,12 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
         bbox=dict(boxstyle="round,pad=0.3", facecolor="#f0f0f0", edgecolor="#aaaaaa", alpha=0.8),
     )
 
-    plt.tight_layout(rect=[0, 0.04, 1, 0.96])
-
-    output_dir = Path("plots") / comparison_tag if comparison_tag else Path("plots")
+    # Format clean folder names (e.g. DoorKey, Empty)
+    env_clean = "DoorKey" if "DoorKey" in env_id else ("Empty" if "Empty" in env_id else env_id)
+    output_dir = Path("plots") / "overestimation" / env_clean / f"seed_{seed}"
     output_dir.mkdir(parents=True, exist_ok=True)
     stage_file_suffix = f"_{stage_name.lower().replace(' ', '_')}" if stage_name else ""
-    output_path = output_dir / f"{env_id}_q_overestimation_seed{seed}{stage_file_suffix}.png"
+    output_path = output_dir / f"q_overestimation{stage_file_suffix}.png"
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  Heatmap saved → {output_path}")
@@ -464,9 +464,9 @@ def main():
             env_seed = make_env(env_id, seed, args.action_set)
 
             stages_to_run = [
-                (1, "Initial State - Key on Ground"),
-                (2, "Key Picked Up"),
-                (3, "Door Opened"),
+                (1, "initial"),
+                (2, "key_picked"),
+                (3, "door_opened"),
             ] if "DoorKey" in env_id else [(1, "")]
 
             for stage_num, stage_name in stages_to_run:

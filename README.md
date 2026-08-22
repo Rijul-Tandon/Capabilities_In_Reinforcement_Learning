@@ -57,26 +57,30 @@ of increasing difficulty:
 
 ---
 
-## State Space (Observation)
+## State Space (Observation) & Normalization
 
 MiniGrid observations go through a pipeline of wrappers before reaching the neural network:
 
 ```
-Raw MiniGrid Output          FullyObsWrapper              FlatObsWrapper         FlatObsWithDirectionWrapper
-─────────────────────   →   ──────────────────   →   ──────────────────────   →   ──────────────────────────
-Dictionary:                 Dictionary:              1D numpy array:             1D numpy array:
-  "image": 7×7×3 array       "image": 8×8×3 array     [2, 5, 0, 1, 0, ...]      [2, 5, 0, 1, 0, ..., 1]
-  "direction": int            "direction": int          (192 elements)             (193 elements)
-  "mission": string           "mission": string                                    ↑ direction appended
+Raw MiniGrid Output          FullyObsWrapper              ImgObsWrapper          FlatImageAndDirectionWrapper
+─────────────────────   →   ──────────────────   →   ─────────────────────   →   ────────────────────────────
+Dictionary:                 Dictionary:              3D numpy array:             1D numpy array:
+  "image": 7×7×3 array       "image": 6×6×3 array     (6×6×3 categorical)         [img / max_vals, dir / 3.0]
+  "direction": int            "direction": int                                     (109 normalized elements)
+  "mission": string           "mission": string                                    ↑ component-wise scaled to [0, 1]
 ```
 
 **Key details:**
-- The raw "image" is **not** pixel data. Each grid cell is encoded as 3 categorical integers: `[object_type, color, state]`. Values range from 0 to ~10.
-- **FullyObsWrapper** replaces the agent's limited 7×7 forward-facing view with the **entire map**. This converts the problem from a POMDP (Partially Observable MDP) to a standard MDP.
-- **FlatObsWrapper** discards the "mission" text and "direction" integer, then flattens the 3D grid into a 1D vector.
-- **FlatObsWithDirectionWrapper** (custom) re-appends the direction integer to the end of the flattened vector, giving the agent 193 input features instead of 192.
-
-**Why we do NOT divide by 255:** MiniGrid outputs categorical integers (0–10), not RGB pixels (0–255). Dividing by 255 would squash all values near zero, making objects indistinguishable.
+- **FullyObsWrapper** replaces the agent's limited 7×7 forward-facing view with the **entire map**. This converts the POMDP into a standard MDP.
+- **Component-wise Min-Max Scaling:** Input channels are normalized to $[0.0, 1.0]$:
+  - **Object Type Channel (`[:, :, 0]`):** Divided by `10.0` (Max object ID = 10)
+  - **Color Channel (`[:, :, 1]`):** Divided by `5.0` (Max color ID = 5)
+  - **State Channel (`[:, :, 2]`):** Divided by `3.0` (Max state ID = 3)
+  - **Agent Direction (`agent_dir`):** Divided by `3.0` (Max direction ID = 3)
+- **Multi-Stage Heatmaps (DoorKey):** For `DoorKey` environments, Q-value overestimation and state-action frequency heatmaps are generated across **all 3 distinct task stages**:
+  1. `initial`: Key on ground, Door locked/closed.
+  2. `key_picked`: Key in inventory, Door locked/closed.
+  3. `door_opened`: Door unlocked and opened.
 
 ---
 
@@ -99,16 +103,16 @@ Actions are restricted per environment using `MiniGridActionSubsetWrapper` to pr
 
 ---
 
-## Reward Structure
+## Markovian Reward Structure
 
-| Event | Reward |
-|---|---|
-| Reaching the goal | `1 - 0.9 * (step_count / max_steps)` — a positive value that decreases the longer the agent takes |
-| Any other step | `0.0` (extremely sparse!) |
-| Stuck penalty (shaped agent only) | `-0.10` when `observation == next_observation` |
+We enforce a strictly Markovian reward structure across all environments:
 
-The shaped agent's penalty is only used for training the neural network. The
-plots always show the **original environment reward** so comparisons are fair.
+| Event | Reward | Description |
+|---|---|---|
+| Reaching the Goal | `+1.0` | Fixed goal reward |
+| Every Other Step | `-1.0` (or `-0.01` baseline) | Fixed step penalty dependent ONLY on transition $(s, a, s')$ |
+
+This replaces step-count-dependent rewards, ensuring that the reward depends strictly on the current transition $(s, a, s')$.
 
 ---
 
@@ -154,7 +158,18 @@ Capabilities_In_Reinforcement_Learning/
 ├── requirements.txt              # Python dependencies
 ├── README.md                     # This file
 ├── results/                      # Training output (CSV logs, model weights, configs)
-└── plots/                        # Generated comparison plots and heatmaps
+├── plots/                        # Generated comparison plots and heatmaps
+│   ├── overestimation/           # Q-value overestimation heatmaps
+│   │   ├── DoorKey/
+│   │   │   ├── seed_1/
+│   │   │   └── seed_2/
+│   │   └── Empty/
+│   │       ├── seed_1/
+│   │       └── seed_2/
+│   ├── reward_comparison/        # Return, Goal Rate, and TD Loss curves
+│   └── action_freq/              # Cumulative action frequency heatmaps during training
+│       ├── last_50_percent/      # Evaluated over last 50% steps
+│       └── last_25_percent/      # Evaluated over last 25% steps
 ```
 
 ---

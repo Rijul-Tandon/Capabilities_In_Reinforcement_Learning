@@ -291,7 +291,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-id", type=str, required=True)
     parser.add_argument("--results-dir", type=str, default="results")
-    parser.add_argument("--plots-dir", type=str, default="plots")
+    parser.add_argument("--plots-dir", type=str, default="plots/reward_comparison")
     parser.add_argument("--rolling-window", type=int, default=20)
     parser.add_argument("--decay-comparison", action="store_true",
                         help="Generate decay comparison plots for Baseline, Reward Shaped, and Best of Both.")
@@ -389,6 +389,12 @@ def main():
             out = plots_dir / f"{args.env_id}_comparison_seed{seed}.png"
             plot_figure(filtered, args.env_id, out, args.rolling_window,
                         title_suffix=f" | Seed {seed}")
+
+        # Generate aggregated plot across ALL seeds
+        if len(all_seeds) > 1:
+            out_all = plots_dir / f"{args.env_id}_comparison_all_seeds.png"
+            plot_figure(runs_by_exp, args.env_id, out_all, args.rolling_window,
+                        title_suffix=f" | All Seeds (Mean & Std)")
 
 
 if __name__ == "__main__":

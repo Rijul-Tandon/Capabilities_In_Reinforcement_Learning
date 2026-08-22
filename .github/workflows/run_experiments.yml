@@ -206,36 +206,22 @@ jobs:
           path: results/
           merge-multiple: true
           
-      - name: Generate Comparison and Heatmap Plots
+      - name: Generate All Comparison and Analysis Plots
         run: |
           for env in "MiniGrid-Empty-6x6-v0" "MiniGrid-DoorKey-6x6-v0"; do
-            echo "Plotting $env..."
+            echo "Generating all plots for $env..."
             python src/plot_comparison.py --env-id $env
+            python src/plot_q_overestimation.py --env-id $env
             python src/plot_state_action_freq.py --env-id $env
             python src/plot_training_action_freq.py --env-id $env
           done
           
       - name: Commit and Push Plots
         run: |
-          # Get strategy to name the parent folder cleanly
-          STRATEGY="${{ github.event.inputs.exploration_strategy || 'epsilon_greedy' }}"
-          
-          # Create timestamped plots directory inside plots/
-          TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
-          DIR_NAME="plots/reward_comparison_${STRATEGY}_$TIMESTAMP"
-          mkdir -p $DIR_NAME
-          
-          # Move all generated .png files (including subfolders) into the new directory
-          mv plots/*.png $DIR_NAME/ 2>/dev/null || true
-          mv plots/action_freq_plots/*.png $DIR_NAME/ 2>/dev/null || true
-          
-          # Configure git
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Add plots, commit, pull rebase to resolve concurrent pushes, and push
-          git add $DIR_NAME/
-          git add plots/action_freq_plots/ 2>/dev/null || true
-          git commit -m "Auto-generated plots for 300k steps ($TIMESTAMP)" || echo "No changes to commit"
+          git add plots/
+          git commit -m "Auto-generated structured plots (experiments + overestimation)" || echo "No changes to commit"
           git pull --rebase origin main
           git push origin main
