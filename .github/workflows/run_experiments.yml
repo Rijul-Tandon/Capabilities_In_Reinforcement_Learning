@@ -168,7 +168,6 @@ jobs:
             --max-steps $MAX_STEPS \
             --exploration-fraction $EXPLORE_FRAC \
             --epsilon-schedule ${{ matrix.decay }} \
-            --end-e 0.1 \
             --exploration-strategy $STRATEGY \
             --fixed-layout
           
