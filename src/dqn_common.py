@@ -649,8 +649,7 @@ def parse_args(default_exp_name, use_shaping):
     # --buffer-size: Maximum number of transitions to store in the replay buffer.
     parser.add_argument("--buffer-size", type=int, default=30000)
     # --gamma: Discount factor for future rewards (0 = greedy, 1 = far-sighted).
-    #   0.99 means the agent values a reward 100 steps away at 0.99^100 ≈ 0.37 of its face value.
-    parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--gamma", type=float, default=0.95)
 
     # --fixed-layout: If set, the environment uses the same seed on every single reset.
     #   This forces the procedural generation to create the exact same map layout every episode,
