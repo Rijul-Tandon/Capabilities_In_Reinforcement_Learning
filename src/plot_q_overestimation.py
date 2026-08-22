@@ -240,6 +240,8 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
     }
     action_labels = [abbr_map.get(n, n[:1].upper()) for n in names]
 
+    fig.patch.set_facecolor("white")
+
     for row, (d_idx, d_name) in enumerate(dir_info):
         panels = [
             (grid_a_max[:, :, d_idx], grid_a[:, :, d_idx, :], "viridis", None),
@@ -249,6 +251,7 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
 
         for col, (grid_max_d, grid_full_d, cmap, style) in enumerate(panels):
             ax = axes[row, col]
+            ax.set_facecolor("white")
             display = grid_max_d.T.copy()
 
             if style == "diverging":
@@ -281,10 +284,10 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
 
                     else:
                         if (x, y) in annotations:
-                            ax.text(x + 0.42, y - 0.42, annotations[(x, y)],
-                                    ha='right', va='top', color='red', 
-                                    fontsize=10, fontweight='bold',
-                                    path_effects=[path_effects.withStroke(linewidth=2, foreground='white')])
+                            badge_box = dict(boxstyle="circle,pad=0.2", facecolor="#E74C3C", edgecolor="white", linewidth=0.8)
+                            ax.text(x + 0.35, y - 0.35, annotations[(x, y)],
+                                    ha='center', va='center', color='white', 
+                                    fontsize=8.5, fontweight='bold', bbox=badge_box)
                         
                         q_vals = grid_full_d[x, y, :]
                         best_a = int(np.argmax(q_vals)) if not np.isnan(q_vals).all() else -1

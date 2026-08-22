@@ -251,9 +251,14 @@ if __name__ == "__main__":
         (2, "door_opened"),
     ] if "DoorKey" in args.env_id else [(None, "")]
 
+    env_clean = "DoorKey" if "DoorKey" in args.env_id else ("Empty" if "Empty" in args.env_id else args.env_id)
+
     first_seed = seeds[0]
     for seed in seeds:
         include_random = seed == first_seed
+        dir_50 = Path(args.plots_dir) / "last_50_percent" / env_clean / f"seed_{seed}"
+        dir_25 = Path(args.plots_dir) / "last_25_percent" / env_clean / f"seed_{seed}"
+
         for stage_idx, stage_name in stages_to_run:
             s_title = f" [{stage_name}]" if stage_name else ""
             print(f"Generating training action freq plot for {args.env_id} seed={seed} (Last 50%{s_title}) ...")
@@ -261,7 +266,7 @@ if __name__ == "__main__":
                 args.env_id, args.results_dir, seed, args.action_set, 
                 suffix="_last_half", title_suffix=f"(Last 50%{s_title})", 
                 include_random=include_random, 
-                plots_dir=f"{args.plots_dir}/last_50_percent",
+                plots_dir=dir_50,
                 stage_idx=stage_idx, stage_name=stage_name
             )
             print(f"Generating training action freq plot for {args.env_id} seed={seed} (Last 25%{s_title}) ...")
@@ -269,6 +274,6 @@ if __name__ == "__main__":
                 args.env_id, args.results_dir, seed, args.action_set, 
                 suffix="_last_quarter", title_suffix=f"(Last 25%{s_title})", 
                 include_random=include_random, 
-                plots_dir=f"{args.plots_dir}/last_25_percent",
+                plots_dir=dir_25,
                 stage_idx=stage_idx, stage_name=stage_name
             )

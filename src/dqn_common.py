@@ -949,6 +949,9 @@ def train(args, use_shaping):
     last_max_q = 0.0       # Most recent max Q-value in batch (for overestimation tracking)
     best_goal_rate = 0.0   # Highest goal rate achieved so far
 
+    has_picked_key = False
+    has_opened_door = False
+
     # --- Main Loop ---
     pbar = tqdm(range(args.total_timesteps), desc=args.exp_name)
     for local_step in pbar:
@@ -994,21 +997,28 @@ def train(args, use_shaping):
                     q_values = q_net(obs_tensor)
                     action = int(torch.argmax(q_values, dim=1).item())
 
-        # Determine current stage (0: initial, 1: key_picked, 2: door_opened)
-        stage_idx = 0
+        # Determine current stage monotonically for the episode
         carrying = getattr(env.unwrapped, 'carrying', None)
         if carrying is not None and getattr(carrying, 'type', None) == "key":
-            stage_idx = 1
+            has_picked_key = True
         
-        grid = env.unwrapped.grid
-        for wx in range(env.unwrapped.width):
-            for wy in range(env.unwrapped.height):
-                c = grid.get(wx, wy)
-                if c is not None and getattr(c, 'type', None) == "door" and getattr(c, 'is_open', False):
-                    stage_idx = 2
+        if not has_opened_door:
+            grid = env.unwrapped.grid
+            for wx in range(env.unwrapped.width):
+                for wy in range(env.unwrapped.height):
+                    c = grid.get(wx, wy)
+                    if c is not None and getattr(c, 'type', None) == "door" and getattr(c, 'is_open', False):
+                        has_opened_door = True
+                        break
+                if has_opened_door:
                     break
-            if stage_idx == 2:
-                break
+
+        if has_opened_door:
+            stage_idx = 2
+        elif has_picked_key:
+            stage_idx = 1
+        else:
+            stage_idx = 0
 
         # Track the action taken at the current state per stage
         ax, ay = env.unwrapped.agent_pos
@@ -1097,6 +1107,8 @@ def train(args, use_shaping):
             # If fixed-layout is enabled, we pass the same seed again so the layout doesn't change.
             reset_kwargs = {"seed": args.seed} if args.fixed_layout else {}
             obs, _ = env.reset(**reset_kwargs)
+            has_picked_key = False
+            has_opened_door = False
             episode_return = 0.0
             episode_length = 0
 

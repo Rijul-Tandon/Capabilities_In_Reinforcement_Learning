@@ -166,25 +166,29 @@ def get_agent_data(env, q_net, episodes, seed, num_actions, device, target_stage
                             layout["keys"].append((x, y))
 
         done = False
+        has_picked_key = False
+        has_opened_door = False
 
         while not done:
             agent_pos = env.unwrapped.agent_pos
             carrying = env.unwrapped.carrying
             
-            # Determine current task stage
-            current_stage = 1
-            if carrying is not None and carrying.type == "key":
-                current_stage = 2
-            
-            # Check door status
-            door_open = False
-            for dx, dy in layout["doors"]:
-                cell = env.unwrapped.grid.get(dx, dy)
-                if cell is not None and getattr(cell, "is_open", False):
-                    door_open = True
-                    break
-            if door_open:
+            if carrying is not None and getattr(carrying, 'type', None) == "key":
+                has_picked_key = True
+
+            if not has_opened_door:
+                for dx, dy in layout["doors"]:
+                    cell = env.unwrapped.grid.get(dx, dy)
+                    if cell is not None and getattr(cell, "is_open", False):
+                        has_opened_door = True
+                        break
+
+            if has_opened_door:
                 current_stage = 3
+            elif has_picked_key:
+                current_stage = 2
+            else:
+                current_stage = 1
 
             # Record metrics if no filter or matching requested target stage
             if target_stage is None or current_stage == target_stage:
@@ -272,11 +276,11 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
     plt.rcParams['font.family'] = 'sans-serif'
     plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
 
-    fig, axes = plt.subplots(2, len(agents), figsize=(5.2 * len(agents), 9.5), squeeze=False)
+    fig, axes = plt.subplots(2, len(agents), figsize=(6.2 * len(agents), 11.0), squeeze=False)
     title_suffix = f" [{stage_name}]" if stage_name else ""
     fig.suptitle(
         f"{env_id}{title_suffix} — Evaluation Test (Seed {seed})",
-        fontsize=16, fontweight="bold", y=0.97
+        fontsize=17, fontweight="bold", y=0.975
     )
 
     legend_handles = {}
@@ -343,7 +347,8 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
 
         for x in range(width):
             for y in range(height):
-                lines = []
+                f_parts = []
+                other_parts = []
                 for act_idx in range(num_actions):
                     act_name = names[act_idx]
                     abbr = abbr_map.get(act_name, act_name[:1].upper())
@@ -352,19 +357,29 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
                         for d_idx in range(4):
                             count = state_action_counts[x, y, act_idx, d_idx]
                             if count > 0:
-                                lines.append(f"{abbr}({dir_map[d_idx]}): {count}")
+                                f_parts.append(f"{dir_map[d_idx]}:{count}")
                     else:
                         count = np.sum(state_action_counts[x, y, act_idx, :])
                         if count > 0:
-                            lines.append(f"{abbr}: {count}")
+                            other_parts.append(f"{abbr}:{count}")
                 
+                lines = []
+                if other_parts:
+                    if len(other_parts) <= 2:
+                        lines.append("  ".join(other_parts))
+                    else:
+                        lines.append("  ".join(other_parts[:2]))
+                        lines.append("  ".join(other_parts[2:]))
+                if f_parts:
+                    lines.append("F: " + " ".join(f_parts))
+
                 cell_text = "\n".join(lines)
                 alpha_val = 1.0 if visit_counts[x, y] > 0 else 0.2
                 
                 if cell_text:
                     axes[1, col].text(
                         x, y, cell_text,
-                        ha="center", va="center", fontsize=8, fontweight="bold", color="black", alpha=alpha_val
+                        ha="center", va="center", fontsize=6.5, fontweight="bold", color="black", alpha=alpha_val
                     )
 
         for ax in [axes[0, col], axes[1, col]]:
