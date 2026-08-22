@@ -249,10 +249,13 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
             (diff_grid_max[:, :, d_idx], diff_grid[:, :, d_idx, :], "RdBu_r", "diverging"),
         ]
 
-        for col, (grid_max_d, grid_full_d, cmap, style) in enumerate(panels):
+        for col, (grid_max_d, grid_full_d, cmap_name, style) in enumerate(panels):
             ax = axes[row, col]
             ax.set_facecolor("white")
             display = grid_max_d.T.copy()
+
+            cmap = plt.get_cmap(cmap_name).copy()
+            cmap.set_bad(color="white")
 
             if style == "diverging":
                 abs_max = np.nanmax(np.abs(diff_grid[:, :, d_idx, :]))
@@ -276,18 +279,18 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
                     if wall_mask[x, y]:
                         ax.add_patch(plt.Rectangle(
                             (x - 0.5, y - 0.5), 1, 1,
-                            facecolor="#333333", edgecolor="none",
+                            facecolor="#e0e0e0", edgecolor="none",
                         ))
 
                     if wall_mask[x, y] or annotations.get((x, y)) == "G":
                         continue
 
                     else:
-                        if (x, y) in annotations:
-                            badge_box = dict(boxstyle="circle,pad=0.2", facecolor="#E74C3C", edgecolor="white", linewidth=0.8)
-                            ax.text(x + 0.35, y - 0.35, annotations[(x, y)],
-                                    ha='center', va='center', color='white', 
-                                    fontsize=8.5, fontweight='bold', bbox=badge_box)
+                        label = annotations.get((x, y))
+                        if label in ["S", "D", "K"]:
+                            ax.text(x + 0.35, y - 0.35, label,
+                                    ha='center', va='center', color='black', 
+                                    fontsize=9, fontweight='bold')
                         
                         q_vals = grid_full_d[x, y, :]
                         best_a = int(np.argmax(q_vals)) if not np.isnan(q_vals).all() else -1
@@ -303,20 +306,19 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
                                     text_lines.append(f"{action_labels[a]}{star}: {val_str}")
                         
                         text_str = "\n".join(text_lines)
-                        bbox_props = dict(boxstyle="round,pad=0.2", fc="white", alpha=0.85, ec="none")
                         ax.text(x, y, text_str, ha='center', va='center', 
-                                color='black', fontsize=6.5, fontweight="medium", bbox=bbox_props)
+                                color='black', fontsize=6.5, fontweight="medium")
 
             ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
             ax.set_yticks(np.arange(-0.5, height, 1), minor=True)
-            ax.grid(which="minor", color="#888888", linestyle="-", linewidth=0.6)
+            ax.grid(which="minor", color="#cccccc", linestyle="-", linewidth=0.6)
             ax.tick_params(which="both", bottom=False, left=False, labelbottom=False, labelleft=False)
 
     legend_parts = [f"{abbr_map.get(n, n[:1].upper())} = {n}" for n in names]
     legend_text = "   |   ".join(legend_parts)
     fig.text(
         0.5, 0.015,
-        f"Action Key:  {legend_text}    ---    Layout Annotations: S = Start, G = Goal, K = Key, D = Door",
+        f"Action Key:  {legend_text}    ---    Layout Annotations: S = Start, K = Key, D = Door",
         ha="center", va="bottom",
         fontsize=11, fontweight="medium",
         bbox=dict(boxstyle="round,pad=0.4", facecolor="#ffffff", edgecolor="#cccccc", alpha=0.95),
