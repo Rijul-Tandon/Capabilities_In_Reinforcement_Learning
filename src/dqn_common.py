@@ -719,7 +719,7 @@ def parse_args(default_exp_name, use_shaping):
     parser.add_argument("--load-model", type=str, default="")
     # --- Reward Shaping ---
     # --stuck-penalty: Negative reward applied when the agent's observation doesn't change
-    parser.add_argument("--stuck-penalty", type=float, default=-0.10)
+    parser.add_argument("--stuck-penalty", type=float, default=-1)
 
     # --- Logging ---
     # --log-interval: How often (in steps) to write training metrics to CSV and TensorBoard
