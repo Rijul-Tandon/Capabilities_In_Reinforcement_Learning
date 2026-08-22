@@ -401,6 +401,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Compare Q-value overestimation between two trained agents."
     )
+    parser.add_argument("--env-id", type=str, default=None, help="Specific environment ID to plot (default: run all in ENV_IDS)")
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--action-set", choices=["task", "full"], default="task")
     parser.add_argument("--hidden-size", type=int, default=256)
@@ -423,8 +424,9 @@ def main():
     print()
 
     bar_chart_summary = []
+    target_envs = [args.env_id] if args.env_id else ENV_IDS
 
-    for env_id in ENV_IDS:
+    for env_id in target_envs:
         print(f"{'=' * 60}")
         print(f"Environment: {env_id}")
         print(f"{'=' * 60}")
