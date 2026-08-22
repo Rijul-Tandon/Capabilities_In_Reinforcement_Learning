@@ -235,9 +235,8 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
                             (x - 0.5, y - 0.5), 1, 1,
                             facecolor="dimgray", edgecolor="none",
                         ))
-                        # Skip both walls AND goal tiles (or set goal Q-values to 0)
-                        
-                    if wall_mask[x, y] or (x, y) in goal_positions:
+
+                    if wall_mask[x, y] or annotations.get((x, y)) == "G":
                         continue
 
                     else:
