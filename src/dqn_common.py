@@ -78,11 +78,18 @@ if "MiniGrid-Empty-Random-8x8-v0" not in gym.envs.registry.keys():
         kwargs={"size": 8, "agent_start_pos": None},
     )
 
-if "MiniGrid-Empty-Random-16x16-v0" not in gym.envs.registry.keys():
+if "MiniGrid-Empty-Random-10x10-v0" not in gym.envs.registry.keys():
     gym.register(
-        id="MiniGrid-Empty-Random-16x16-v0",
+        id="MiniGrid-Empty-Random-10x10-v0",
         entry_point="minigrid.envs.empty:EmptyEnv",
-        kwargs={"size": 16, "agent_start_pos": None},
+        kwargs={"size": 10, "agent_start_pos": None},
+    )
+
+if "MiniGrid-DoorKey-10x10-v0" not in gym.envs.registry.keys():
+    gym.register(
+        id="MiniGrid-DoorKey-10x10-v0",
+        entry_point="minigrid.envs.doorkey:DoorKeyEnv",
+        kwargs={"size": 10},
     )
 
 #   We use it for array operations (observations are numpy arrays), random sampling

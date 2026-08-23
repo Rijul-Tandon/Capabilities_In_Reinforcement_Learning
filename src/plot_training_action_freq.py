@@ -86,9 +86,8 @@ def get_decay_str(run_dir):
             pass
     return ""
 
-def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title_suffix="(All Steps)", include_random=True, plots_dir="plots/action_freq_plots", stage_idx=None, stage_name=""):
+def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title_suffix="(All Steps)", plots_dir="plots/action_freq_plots", stage_idx=None, stage_name=""):
     # Find directories
-    random_dirs = get_dirs_by_seed(results_dir, env_id, "random_agent")
     baseline_dirs = get_dirs_by_seed(results_dir, env_id, "ddqn_baseline")
     if not baseline_dirs:
         baseline_dirs = get_dirs_by_seed(results_dir, env_id, "dqn_baseline")
@@ -96,17 +95,13 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title
     if not shaped_dirs:
         shaped_dirs = get_dirs_by_seed(results_dir, env_id, "dqn_reward_shaping")
 
-    random_seed = min(random_dirs.keys()) if random_dirs else None
     b_dir = baseline_dirs.get(seed)
     s_dir = shaped_dirs.get(seed)
 
-    agents = []
-    if include_random and random_seed is not None:
-        agents.append((f"Random Agent (seed {random_seed})", random_dirs[random_seed]))
-    agents.extend([
+    agents = [
         (f"Baseline DDQN{get_decay_str(b_dir)}", b_dir),
         (f"RS-DDQN{get_decay_str(s_dir)}", s_dir),
-    ])
+    ]
 
     # Directions in MiniGrid: 0=East, 1=South, 2=West, 3=North
     # We map them to columns in a logical order
@@ -255,9 +250,7 @@ if __name__ == "__main__":
 
     env_clean = "DoorKey" if "DoorKey" in args.env_id else ("Empty" if "Empty" in args.env_id else args.env_id)
 
-    first_seed = seeds[0]
     for seed in seeds:
-        include_random = seed == first_seed
         dir_50 = Path(args.plots_dir) / "last_50_percent" / env_clean / f"seed_{seed}"
         dir_25 = Path(args.plots_dir) / "last_25_percent" / env_clean / f"seed_{seed}"
 
@@ -267,7 +260,6 @@ if __name__ == "__main__":
             plot_3x4_frequencies(
                 args.env_id, args.results_dir, seed, args.action_set, 
                 suffix="_last_half", title_suffix=f"(Last 50%{s_title})", 
-                include_random=include_random, 
                 plots_dir=dir_50,
                 stage_idx=stage_idx, stage_name=stage_name
             )
@@ -275,7 +267,6 @@ if __name__ == "__main__":
             plot_3x4_frequencies(
                 args.env_id, args.results_dir, seed, args.action_set, 
                 suffix="_last_quarter", title_suffix=f"(Last 25%{s_title})", 
-                include_random=include_random, 
                 plots_dir=dir_25,
                 stage_idx=stage_idx, stage_name=stage_name
             )

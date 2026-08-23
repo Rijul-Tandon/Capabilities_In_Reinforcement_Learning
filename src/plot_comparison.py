@@ -95,6 +95,8 @@ def load_runs(results_dir, env_id):
 
         if rows:
             exp_name = config.get("exp_name", "unknown")
+            if exp_name == "random_agent":
+                continue
             seed = int(config.get("seed", 1))
             
             if exp_name not in runs_by_exp:
