@@ -168,7 +168,7 @@ def compute_q_values_grid_for_stage(env, q_net, seed, device, stage=1):
                 elif cell.type == "key" and stage == 1:
                     annotations[(x, y)] = "K"
                 elif cell.type == "door":
-                    annotations[(x, y)] = "D(open)" if getattr(cell, 'is_open', False) else "D"
+                    annotations[(x, y)] = "D"
 
     with torch.no_grad():
         for x in range(width):

@@ -123,6 +123,13 @@ jobs:
           path: results/
           merge-multiple: true
           
+      - name: Upload All Combined Results Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: all_combined_results_${{ github.event.inputs.grid_size || '6x6' }}
+          path: results/
+          retention-days: 14
+
       - name: Generate All Comparison and Analysis Plots
         run: |
           TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
@@ -137,6 +144,13 @@ jobs:
             python src/plot_state_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison"
             python src/plot_training_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/action_freq"
           done
+
+      - name: Run Statistical Analysis
+        run: |
+          GRID_SIZE="${{ github.event.inputs.grid_size || '6x6' }}"
+          TIMESTAMP=$(ls -d plots/plots_* 2>/dev/null | sort | tail -1 | xargs basename)
+          PLOTS_DIR="plots/${TIMESTAMP}"
+          python src/statistical_analysis.py --results-dir results --output-dir "$PLOTS_DIR"
           
       - name: Commit and Push Plots
         run: |
