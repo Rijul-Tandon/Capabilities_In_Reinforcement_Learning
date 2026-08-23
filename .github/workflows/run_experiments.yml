@@ -13,7 +13,7 @@ on:
           - 8x8
           - 10x10
       num_seeds:
-        description: 'Number of seeds to run (1 to 5)'
+        description: 'Number of seeds to run (1 to 10)'
         required: false
         default: '3'
       max_steps:
@@ -35,104 +35,10 @@ jobs:
     strategy:
       fail-fast: false  # If one run fails, keep running the others
       matrix:
-        include:
-          # --- MiniGrid-Empty-Random-6x6-v0 ---
-          # Seed 1: baseline linear, reward shaping linear
-          - env_id: MiniGrid-Empty-Random-6x6-v0
-            agent: ddqn_baseline
-            decay: linear
-            seed: 1
-          - env_id: MiniGrid-Empty-Random-6x6-v0
-            agent: ddqn_reward_shaping
-            decay: linear
-            seed: 1
-
-          # Seed 2: baseline linear, reward shaping linear
-          - env_id: MiniGrid-Empty-Random-6x6-v0
-            agent: ddqn_baseline
-            decay: linear
-            seed: 2
-          - env_id: MiniGrid-Empty-Random-6x6-v0
-            agent: ddqn_reward_shaping
-            decay: linear
-            seed: 2
-
-          # Seed 3: baseline linear, reward shaping linear
-          - env_id: MiniGrid-Empty-Random-6x6-v0
-            agent: ddqn_baseline
-            decay: linear
-            seed: 3
-          - env_id: MiniGrid-Empty-Random-6x6-v0
-            agent: ddqn_reward_shaping
-            decay: linear
-            seed: 3
-
-          # Seeds 4 & 5 (optional extended runs)
-          - env_id: MiniGrid-Empty-Random-6x6-v0
-            agent: ddqn_baseline
-            decay: linear
-            seed: 4
-          - env_id: MiniGrid-Empty-Random-6x6-v0
-            agent: ddqn_reward_shaping
-            decay: linear
-            seed: 4
-          - env_id: MiniGrid-Empty-Random-6x6-v0
-            agent: ddqn_baseline
-            decay: linear
-            seed: 5
-          - env_id: MiniGrid-Empty-Random-6x6-v0
-            agent: ddqn_reward_shaping
-            decay: linear
-            seed: 5
-
-          # --- MiniGrid-DoorKey-6x6-v0 ---
-          # Seed 1: baseline linear, reward shaping linear
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_baseline
-            decay: linear
-            seed: 1
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_reward_shaping
-            decay: linear
-            seed: 1
-
-          # Seed 2: baseline linear, reward shaping linear
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_baseline
-            decay: linear
-            seed: 2
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_reward_shaping
-            decay: linear
-            seed: 2
-
-          # Seed 3: baseline linear, reward shaping linear
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_baseline
-            decay: linear
-            seed: 3
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_reward_shaping
-            decay: linear
-            seed: 3
-
-          # Seeds 4 & 5 (optional extended runs)
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_baseline
-            decay: linear
-            seed: 4
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_reward_shaping
-            decay: linear
-            seed: 4
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_baseline
-            decay: linear
-            seed: 5
-          - env_id: MiniGrid-DoorKey-6x6-v0
-            agent: ddqn_reward_shaping
-            decay: linear
-            seed: 5
+        agent: [ddqn_baseline, ddqn_reward_shaping]
+        env_id: [MiniGrid-Empty-Random-6x6-v0, MiniGrid-DoorKey-6x6-v0]
+        decay: [linear]
+        seed: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
     steps:
       - name: Checkout Code
