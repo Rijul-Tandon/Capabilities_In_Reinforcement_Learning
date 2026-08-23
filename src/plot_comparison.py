@@ -140,13 +140,25 @@ LINE_STYLES = ["-", "--", ":", "-."]
 def format_exp_label(exp_name):
     """
     Formats raw experiment directory names into clean legend labels.
-    e.g., 'ddqn_baseline_decay_linear' -> 'Baseline (linear)'
+    e.g., 'ddqn_baseline_decay_linear' -> 'Baseline DDQN (linear)'
+          'ddqn_reward_shaping_decay_linear' -> 'RS-DDQN (linear)'
     """
+    label = exp_name
+    if "reward_shaping" in label:
+        label = label.replace("ddqn_reward_shaping", "RS-DDQN").replace("dqn_reward_shaping", "RS-DDQN")
+    elif "baseline" in label:
+        label = label.replace("ddqn_baseline", "Baseline DDQN").replace("dqn_baseline", "Baseline DDQN")
+    
     if "_decay_" in exp_name:
         parts = exp_name.split("_decay_")
-        agent_clean = parts[0].replace("ddqn_", "").replace("_", " ").title()
-        return f"{agent_clean} ({parts[1]})"
-    return exp_name.replace("ddqn_", "").replace("_", " ").title()
+        decay_part = parts[1]
+        if "RS-DDQN" in label:
+            return f"RS-DDQN ({decay_part})"
+        elif "Baseline DDQN" in label:
+            return f"Baseline DDQN ({decay_part})"
+        else:
+            return f"{parts[0].replace('_', ' ').title()} ({decay_part})"
+    return label.replace("_", " ").title() if label == exp_name else label
 
 
 def get_best_exp(exp_dict):
@@ -181,10 +193,89 @@ def get_best_exp(exp_dict):
     return best_exp
 
 
+def plot_single_metric(runs_by_exp, env_id, output_path, rolling_window, metric_key, metric_title, y_label, y_limits=None, title_suffix=""):
+    """
+    Creates and saves a publication-grade standalone plot for a single metric.
+    Includes rolling standard deviation / variance shading.
+    """
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
+
+    fig, ax = plt.subplots(figsize=(6.5, 4.2), dpi=300)
+    any_dqn_config = None
+
+    exp_colors = {}
+    for idx, exp_name in enumerate(sorted(runs_by_exp.keys())):
+        if exp_name in AGENT_COLORS and len(runs_by_exp) <= 3:
+            exp_colors[exp_name] = AGENT_COLORS[exp_name]
+        else:
+            exp_colors[exp_name] = DISTINCT_COLORS[idx % len(DISTINCT_COLORS)]
+
+    for exp_name, run_list in runs_by_exp.items():
+        base_color = exp_colors[exp_name]
+        clean_label = format_exp_label(exp_name)
+
+        for i, (_, config, rows, metric_rows) in enumerate(run_list):
+            seed = config.get("seed", 1)
+            ls = LINE_STYLES[i % len(LINE_STYLES)]
+
+            if len(run_list) > 1:
+                label = f"{clean_label} (s={seed})"
+            else:
+                label = clean_label
+
+            if metric_key in ["episodic_return", "goal_reached"]:
+                steps = [r["global_step"] for r in rows]
+                vals = [r[metric_key] for r in rows]
+            elif metric_key == "td_loss" and metric_rows:
+                steps = [r["global_step"] for r in metric_rows]
+                vals = [r["td_loss"] for r in metric_rows]
+            else:
+                continue
+
+            if not vals:
+                continue
+
+            smooth_vals = rolling(vals, rolling_window)
+            
+            # Compute rolling std for shaded confidence band
+            std_vals = []
+            for idx_v in range(len(vals)):
+                st = max(0, idx_v - rolling_window + 1)
+                std_vals.append(float(np.std(vals[st : idx_v + 1])))
+
+            smooth_vals = np.array(smooth_vals)
+            std_vals = np.array(std_vals)
+
+            ax.plot(steps, smooth_vals, label=label, color=base_color, linestyle=ls, linewidth=2.0)
+            ax.fill_between(steps, smooth_vals - std_vals * 0.5, smooth_vals + std_vals * 0.5,
+                            color=base_color, alpha=0.12)
+
+            if exp_name != "random_agent":
+                any_dqn_config = config
+
+    max_x = any_dqn_config.get("total_timesteps", 200000) if any_dqn_config else 200000
+    ax.set_xlim(0, max_x)
+    if y_limits:
+        ax.set_ylim(y_limits)
+
+    ax.set_title(f"{env_id} — {metric_title}{title_suffix}", fontsize=11, fontweight="bold", pad=10)
+    ax.set_xlabel("Training Steps", fontsize=9.5, fontweight="medium")
+    ax.set_ylabel(y_label, fontsize=9.5, fontweight="medium")
+    ax.grid(True, linestyle="--", alpha=0.35, color="#cccccc")
+    ax.legend(fontsize=8.5, loc="best", frameon=True, facecolor="white", edgecolor="#e0e0e0", framealpha=0.95)
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved publication plot → {output_path}")
+
+
 def plot_figure(runs_by_exp, env_id, output_path, rolling_window, title_suffix=""):
     """
-    Creates and saves a 3-panel comparison figure from a runs_by_exp dictionary.
-    Assigns distinct colors to each experiment line so they are clearly distinguishable.
+    Creates and saves both:
+      1. Consolidated 3-panel comparison figure (stacked)
+      2. Individual publication-grade plots for Return, Goal Reached Rate, and TD Loss
     """
     plt.rcParams['font.family'] = 'sans-serif'
     plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
@@ -282,7 +373,17 @@ def plot_figure(runs_by_exp, env_id, output_path, rolling_window, title_suffix="
     fig.tight_layout()
     fig.savefig(output_path, dpi=250, bbox_inches="tight")
     plt.close(fig)
-    print(f"Saved {output_path}")
+    print(f"Saved stacked plot → {output_path}")
+
+    # Generate separate standalone plots for paper text inclusion
+    out_dir = Path(output_path).parent
+    out_name = Path(output_path).stem
+    plot_single_metric(runs_by_exp, env_id, out_dir / f"{out_name}_episodic_return.png",
+                       rolling_window, "episodic_return", "Episodic Return", "Episodic Return", title_suffix=title_suffix)
+    plot_single_metric(runs_by_exp, env_id, out_dir / f"{out_name}_goal_reach.png",
+                       rolling_window, "goal_reached", "Goal Reach Rate", "Goal Success Rate", y_limits=(-0.05, 1.05), title_suffix=title_suffix)
+    plot_single_metric(runs_by_exp, env_id, out_dir / f"{out_name}_td_loss.png",
+                       rolling_window, "td_loss", "TD Loss", "TD Loss", title_suffix=title_suffix)
 
 
 # ============================================================================

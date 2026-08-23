@@ -217,7 +217,7 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
         (2, "West")
     ]
 
-    fig, axes = plt.subplots(4, 3, figsize=(24, 20))
+    fig, axes = plt.subplots(4, 2, figsize=(16, 20))
     title_suffix = f" [{stage_name}]" if stage_name else ""
     fig.suptitle(
         f"{env_id}{title_suffix}  —  {label_a} vs {label_b}  (seed={seed})",
@@ -230,7 +230,6 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
     col_titles = [
         f"{label_a}  Max Q",
         f"{label_b}  Max Q",
-        f"Difference ({label_a} − {label_b})"
     ]
 
     names = action_names(env_id, "task", num_actions)
@@ -246,7 +245,6 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
         panels = [
             (grid_a_max[:, :, d_idx], grid_a[:, :, d_idx, :], "viridis", None),
             (grid_b_max[:, :, d_idx], grid_b[:, :, d_idx, :], "viridis", None),
-            (diff_grid_max[:, :, d_idx], diff_grid[:, :, d_idx, :], "RdBu_r", "diverging"),
         ]
 
         for col, (grid_max_d, grid_full_d, cmap_name, style) in enumerate(panels):
@@ -453,8 +451,8 @@ def main():
                     models_a, models_b = ma, mb
                     common_seeds = cs
                     current_exp_a, current_exp_b = pa, pb
-                    current_label_a = pa.replace('_', ' ').title()
-                    current_label_b = pb.replace('_', ' ').title()
+                    current_label_a = pa.replace("ddqn_reward_shaping", "RS-DDQN").replace("dqn_reward_shaping", "RS-DDQN").replace("ddqn_baseline", "Baseline DDQN").replace("_", " ").title()
+                    current_label_b = pb.replace("ddqn_reward_shaping", "RS-DDQN").replace("dqn_reward_shaping", "RS-DDQN").replace("ddqn_baseline", "Baseline DDQN").replace("_", " ").title()
                     print(f"  Auto-selected available experiment pair: {pa} vs {pb}")
                     break
 

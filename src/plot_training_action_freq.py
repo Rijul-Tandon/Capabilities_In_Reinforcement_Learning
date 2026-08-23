@@ -105,7 +105,7 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title
         agents.append((f"Random Agent (seed {random_seed})", random_dirs[random_seed]))
     agents.extend([
         (f"Baseline DDQN{get_decay_str(b_dir)}", b_dir),
-        (f"Shaped DDQN{get_decay_str(s_dir)}", s_dir),
+        (f"RS-DDQN{get_decay_str(s_dir)}", s_dir),
     ])
 
     # Directions in MiniGrid: 0=East, 1=South, 2=West, 3=North

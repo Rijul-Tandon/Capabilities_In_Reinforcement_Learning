@@ -261,17 +261,17 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
         q_net_base = QNetwork(obs_dim, num_actions, hidden_size).to(device)
         q_net_base.load_state_dict(torch.load(baseline_model_path, map_location=device))
         q_net_base.eval()
-        agents.append((f"Baseline DQN{get_decay_str(baseline_model_path)}", q_net_base))
+        agents.append((f"Baseline DDQN{get_decay_str(baseline_model_path)}", q_net_base))
     else:
-        agents.append(("Baseline DQN (Not Found)", None))
+        agents.append(("Baseline DDQN (Not Found)", None))
 
     if shaped_model_path:
         q_net_shape = QNetwork(obs_dim, num_actions, hidden_size).to(device)
         q_net_shape.load_state_dict(torch.load(shaped_model_path, map_location=device))
         q_net_shape.eval()
-        agents.append((f"Reward Shaped DQN{get_decay_str(shaped_model_path)}", q_net_shape))
+        agents.append((f"RS-DDQN{get_decay_str(shaped_model_path)}", q_net_shape))
     else:
-        agents.append(("Reward Shaped (Not Found)", None))
+        agents.append(("RS-DDQN (Not Found)", None))
 
     # Set publication styling
     plt.rcParams['font.family'] = 'sans-serif'
@@ -296,7 +296,7 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
             env, q_net, episodes, seed, num_actions, device, target_stage=target_stage
         )
 
-        im = axes[0, col].imshow(visit_counts.T, origin="upper", cmap="YlOrRd", aspect="equal")
+        im = axes[0, col].imshow(np.log1p(visit_counts.T), origin="upper", cmap="Blues", aspect="equal")
         axes[0, col].set_title(f"{title}\nVisit Frequencies", fontsize=12, fontweight="bold", pad=8)
         cbar = fig.colorbar(im, ax=axes[0, col], fraction=0.046, pad=0.04)
         cbar.ax.tick_params(labelsize=9)
@@ -307,41 +307,44 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
             axes[1, col].text(width / 2 - 0.5, height / 2 - 0.5, "Stage Not Reached",
                               ha="center", va="center", color="red", fontsize=14, fontweight="bold")
 
-        if layout["start"] and "Start" not in legend_handles:
-            h, = axes[0, col].plot(layout["start"][0], layout["start"][1], 'bo', markersize=9, markeredgecolor='white', label="Start")
-            legend_handles["Start"] = h
-        elif layout["start"]:
-            axes[0, col].plot(layout["start"][0], layout["start"][1], 'bo', markersize=9, markeredgecolor='white')
+        for ax_row in [0, 1]:
+            if layout["start"] and "Start" not in legend_handles:
+                h, = axes[ax_row, col].plot(layout["start"][0], layout["start"][1], 'bo', markersize=9, markeredgecolor='white', label="Start")
+                legend_handles["Start"] = h
+            elif layout["start"]:
+                axes[ax_row, col].plot(layout["start"][0], layout["start"][1], 'bo', markersize=9, markeredgecolor='white')
 
-        if layout["goal"] and "Goal" not in legend_handles:
-            h, = axes[0, col].plot(layout["goal"][0], layout["goal"][1], 'g*', markersize=14, markeredgecolor='white', label="Goal")
-            legend_handles["Goal"] = h
-        elif layout["goal"]:
-            axes[0, col].plot(layout["goal"][0], layout["goal"][1], 'g*', markersize=14, markeredgecolor='white')
+            if layout["goal"] and "Goal" not in legend_handles:
+                h, = axes[ax_row, col].plot(layout["goal"][0], layout["goal"][1], 'g*', markersize=14, markeredgecolor='white', label="Goal")
+                legend_handles["Goal"] = h
+            elif layout["goal"]:
+                axes[ax_row, col].plot(layout["goal"][0], layout["goal"][1], 'g*', markersize=14, markeredgecolor='white')
 
-        for i, (wx, wy) in enumerate(layout["walls"]):
-            if "Wall" not in legend_handles:
-                h, = axes[0, col].plot(wx, wy, 's', color='#333333', markersize=10, label="Wall")
-                legend_handles["Wall"] = h
-            else:
-                axes[0, col].plot(wx, wy, 's', color='#333333', markersize=10)
+            for i, (wx, wy) in enumerate(layout["walls"]):
+                if "Wall" not in legend_handles:
+                    h, = axes[ax_row, col].plot(wx, wy, 's', color='#333333', markersize=10, label="Wall")
+                    legend_handles["Wall"] = h
+                else:
+                    axes[ax_row, col].plot(wx, wy, 's', color='#333333', markersize=10)
 
-        for i, (dx, dy) in enumerate(layout["doors"]):
-            if "Door" not in legend_handles:
-                h, = axes[0, col].plot(dx, dy, 's', color='saddlebrown', markersize=10, markeredgecolor='white', label="Door")
-                legend_handles["Door"] = h
-            else:
-                axes[0, col].plot(dx, dy, 's', color='saddlebrown', markersize=10, markeredgecolor='white')
+            for i, (dx, dy) in enumerate(layout["doors"]):
+                if "Door" not in legend_handles:
+                    h, = axes[ax_row, col].plot(dx, dy, 's', color='saddlebrown', markersize=10, markeredgecolor='white', label="Door")
+                    legend_handles["Door"] = h
+                else:
+                    axes[ax_row, col].plot(dx, dy, 's', color='saddlebrown', markersize=10, markeredgecolor='white')
 
-        for i, (kx, ky) in enumerate(layout["keys"]):
-            if "Key" not in legend_handles:
-                h, = axes[0, col].plot(kx, ky, 'yD', markersize=8, markeredgecolor='black', label="Key")
-                legend_handles["Key"] = h
-            else:
-                axes[0, col].plot(kx, ky, 'yD', markersize=8, markeredgecolor='black')
+            for i, (kx, ky) in enumerate(layout["keys"]):
+                if "Key" not in legend_handles:
+                    h, = axes[ax_row, col].plot(kx, ky, 'yD', markersize=8, markeredgecolor='black', label="Key")
+                    legend_handles["Key"] = h
+                else:
+                    axes[ax_row, col].plot(kx, ky, 'yD', markersize=8, markeredgecolor='black')
 
-        axes[1, col].imshow(visit_counts.T, origin="upper", cmap="Blues", alpha=0.35, aspect="equal")
+        im1 = axes[1, col].imshow(np.log1p(visit_counts.T), origin="upper", cmap="Blues", alpha=0.50, aspect="equal")
         axes[1, col].set_title(f"{title}\nAction Counts", fontsize=12, fontweight="bold", pad=8)
+        cbar1 = fig.colorbar(im1, ax=axes[1, col], fraction=0.046, pad=0.04)
+        cbar1.ax.tick_params(labelsize=9)
 
         abbr_map = {"left": "L", "right": "R", "forward": "F", "pickup": "P", "drop": "Dp", "toggle": "T", "done": "Dn"}
         dir_map = {0: "E", 1: "S", 2: "W", 3: "N"}
@@ -484,7 +487,7 @@ if __name__ == "__main__":
                 episodes=args.episodes,
                 seed=seed,
                 action_set=args.action_set,
-                include_random=seed == first_seed,
+                include_random=False,
                 target_stage=stage_num,
                 stage_name=stage_name,
                 plots_dir=args.plots_dir,
