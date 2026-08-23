@@ -70,7 +70,21 @@ import gymnasium as gym
 #   noqa: F401 tells the linter to ignore the "imported but unused" warning.
 import minigrid  # noqa: F401 - registers MiniGrid envs
 
-# numpy (np): The fundamental package for numerical computing in Python.
+# Dynamically register custom randomized empty environments that are missing natively
+if "MiniGrid-Empty-Random-8x8-v0" not in gym.envs.registry.keys():
+    gym.register(
+        id="MiniGrid-Empty-Random-8x8-v0",
+        entry_point="minigrid.envs.empty:EmptyEnv",
+        kwargs={"size": 8, "agent_start_pos": None},
+    )
+
+if "MiniGrid-Empty-Random-16x16-v0" not in gym.envs.registry.keys():
+    gym.register(
+        id="MiniGrid-Empty-Random-16x16-v0",
+        entry_point="minigrid.envs.empty:EmptyEnv",
+        kwargs={"size": 16, "agent_start_pos": None},
+    )
+
 #   We use it for array operations (observations are numpy arrays), random sampling
 #   in the replay buffer, and computing statistics like mean stuck rate.
 import numpy as np
