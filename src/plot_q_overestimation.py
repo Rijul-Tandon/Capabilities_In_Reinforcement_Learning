@@ -252,7 +252,7 @@ def _render_single_direction_plot(env_id, grid_a_d, grid_b_d,
     _setup_pub_style()
     width, height = wall_mask.shape
 
-    fig, axes = plt.subplots(1, 2, figsize=(7.0, 3.4), dpi=HEATMAP_DPI)
+    fig, axes = plt.subplots(1, 2, figsize=(10.0, 5.0), dpi=HEATMAP_DPI)
     fig.patch.set_facecolor("white")
 
     cmap = plt.get_cmap(BLUES_CMAP).copy()
@@ -302,7 +302,7 @@ def _render_single_direction_plot(env_id, grid_a_d, grid_b_d,
                             lines.append(f"{abbr}{star}:{cell_q_vals[act_idx]:.2f}")
                     ax.text(x, y, "\n".join(lines),
                             ha='center', va='center', color=txt_c,
-                            fontsize=6.0, fontweight='semibold')
+                            fontsize=5.0, fontweight='normal')
 
         _style_heatmap_ax(ax, width, height)
 
@@ -351,7 +351,7 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed, l
     # ------------------------------------------------------------------
     # 1) Combined 4×2 overview figure
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(4, 2, figsize=(8.5, 14), dpi=HEATMAP_DPI)
+    fig, axes = plt.subplots(4, 2, figsize=(11.0, 18.0), dpi=HEATMAP_DPI)
     fig.patch.set_facecolor("white")
 
     title_suffix = f" [{stage_name}]" if stage_name else ""
@@ -414,7 +414,7 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed, l
                                 lines.append(f"{abbr}{star}:{cell_q_vals[act_idx]:.2f}")
                         ax.text(x, y, "\n".join(lines),
                                 ha='center', va='center', color=txt_c,
-                                fontsize=5.5, fontweight='semibold')
+                                fontsize=4.5, fontweight='normal')
 
             _style_heatmap_ax(ax, width, height)
 
