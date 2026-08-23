@@ -277,11 +277,11 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
     plt.rcParams['font.family'] = 'sans-serif'
     plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
 
-    fig, axes = plt.subplots(2, len(agents), figsize=(6.2 * len(agents), 11.0), squeeze=False)
+    fig, axes = plt.subplots(1, len(agents), figsize=(6.2 * len(agents), 5.5), squeeze=False)
     title_suffix = f" [{stage_name}]" if stage_name else ""
     fig.suptitle(
         f"{env_id}{title_suffix} — Evaluation Test (Seed {seed})",
-        fontsize=17, fontweight="bold", y=0.975
+        fontsize=17, fontweight="bold", y=1.05
     )
 
     legend_handles = {}
@@ -289,25 +289,17 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
     for col, (title, q_net) in enumerate(agents):
         if "Not Found" in title:
             axes[0, col].set_title(title, fontsize=12, fontweight="bold")
-            axes[1, col].set_title(title, fontsize=12, fontweight="bold")
             continue
 
         visit_counts, state_action_counts, layout = get_agent_data(
             env, q_net, episodes, seed, num_actions, device, target_stage=target_stage
         )
 
-        im = axes[0, col].imshow(np.log1p(visit_counts.T), origin="upper", cmap="Blues", aspect="equal")
-        axes[0, col].set_title(f"{title}\nVisit Frequencies", fontsize=12, fontweight="bold", pad=8)
-        cbar = fig.colorbar(im, ax=axes[0, col], fraction=0.046, pad=0.04)
-        cbar.ax.tick_params(labelsize=9)
-
         if visit_counts.sum() == 0:
             axes[0, col].text(width / 2 - 0.5, height / 2 - 0.5, "Stage Not Reached",
                               ha="center", va="center", color="red", fontsize=14, fontweight="bold")
-            axes[1, col].text(width / 2 - 0.5, height / 2 - 0.5, "Stage Not Reached",
-                              ha="center", va="center", color="red", fontsize=14, fontweight="bold")
 
-        for ax_row in [0, 1]:
+        for ax_row in [0]:
             if layout["start"] and "Start" not in legend_handles:
                 h, = axes[ax_row, col].plot(layout["start"][0], layout["start"][1], 'bo', markersize=9, markeredgecolor='white', label="Start")
                 legend_handles["Start"] = h
@@ -341,9 +333,9 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
                 else:
                     axes[ax_row, col].plot(kx, ky, 'yD', markersize=8, markeredgecolor='black')
 
-        im1 = axes[1, col].imshow(np.log1p(visit_counts.T), origin="upper", cmap="Blues", alpha=0.50, aspect="equal")
-        axes[1, col].set_title(f"{title}\nAction Counts", fontsize=12, fontweight="bold", pad=8)
-        cbar1 = fig.colorbar(im1, ax=axes[1, col], fraction=0.046, pad=0.04)
+        im1 = axes[0, col].imshow(np.log1p(visit_counts.T), origin="upper", cmap="Blues", alpha=0.50, aspect="equal")
+        axes[0, col].set_title(f"{title}\nAction Counts", fontsize=12, fontweight="bold", pad=8)
+        cbar1 = fig.colorbar(im1, ax=axes[0, col], fraction=0.046, pad=0.04)
         cbar1.ax.tick_params(labelsize=9)
 
         abbr_map = {"left": "L", "right": "R", "forward": "F", "pickup": "P", "drop": "Dp", "toggle": "T", "done": "Dn"}
@@ -381,12 +373,12 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
                 alpha_val = 1.0 if visit_counts[x, y] > 0 else 0.2
                 
                 if cell_text:
-                    axes[1, col].text(
+                    axes[0, col].text(
                         x, y, cell_text,
                         ha="center", va="center", fontsize=6.5, fontweight="bold", color="black", alpha=alpha_val
                     )
 
-        for ax in [axes[0, col], axes[1, col]]:
+        for ax in [axes[0, col]]:
             ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
             ax.set_yticks(np.arange(-0.5, height, 1), minor=True)
             ax.grid(which="minor", color="#888888", linestyle="-", linewidth=0.8)
@@ -454,7 +446,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--env-id", type=str, default="MiniGrid-Empty-8x8-v0")
     parser.add_argument("--results-dir", type=str, default="results")
-    parser.add_argument("--episodes", type=int, default=5)
+    parser.add_argument("--episodes", type=int, default=1)
     parser.add_argument("--action-set", choices=["task", "full"], default="task")
     parser.add_argument("--plots-dir", type=str, default="plots/reward_comparison")
 

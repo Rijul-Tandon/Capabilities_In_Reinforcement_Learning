@@ -37,7 +37,6 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as path_effects
-import matplotlib.colors as mcolors
 import numpy as np
 import torch
 
@@ -45,7 +44,7 @@ import torch
 # LOCAL IMPORTS
 # ============================================================================
 
-from dqn_common import QNetwork, make_env, action_names
+from dqn_common import QNetwork, make_env
 
 
 # ============================================================================
@@ -195,143 +194,255 @@ def compute_q_values_grid(env, q_net, seed, device):
 
 
 # ============================================================================
-# PER-ENVIRONMENT HEATMAP PLOT
+# PUBLICATION STYLE SETUP
+# ============================================================================
+
+BLUES_CMAP = "Blues"          # sequential blue colormap for all heatmaps
+HEATMAP_WALL_COLOR = "#f0f0f0"
+HEATMAP_GRID_COLOR = "#b0b0b0"
+HEATMAP_DPI = 300
+
+DIR_INFO = [
+    (3, "North"),
+    (0, "East"),
+    (1, "South"),
+    (2, "West"),
+]
+
+
+def _setup_pub_style():
+    """Apply publication-grade matplotlib rcParams."""
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
+    plt.rcParams['axes.linewidth'] = 0.8
+    plt.rcParams['xtick.major.width'] = 0.6
+    plt.rcParams['ytick.major.width'] = 0.6
+
+
+def _style_heatmap_ax(ax, width, height):
+    """Apply consistent grid, ticks, and spine styling to a heatmap axis."""
+    ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, height, 1), minor=True)
+    ax.grid(which="minor", color=HEATMAP_GRID_COLOR, linestyle="-", linewidth=0.5)
+    ax.tick_params(which="both", bottom=False, left=False,
+                   labelbottom=False, labelleft=False)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+
+def _build_output_dir(plots_dir, env_id, seed):
+    env_clean = "DoorKey" if "DoorKey" in env_id else ("Empty" if "Empty" in env_id else env_id)
+    output_dir = Path(plots_dir) / "overestimation" / env_clean / f"seed_{seed}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+# ============================================================================
+# PER-DIRECTION STANDALONE HEATMAP PLOT (for paper figures)
+# ============================================================================
+
+def _render_single_direction_plot(env_id, grid_a_max_d, grid_b_max_d,
+                                  wall_mask, annotations, d_name,
+                                  label_a, label_b, vmin_q, vmax_q,
+                                  output_path):
+    """
+    Renders a standalone 1×2 heatmap figure for a SINGLE facing direction.
+    Designed for direct inclusion in a research paper.
+    """
+    _setup_pub_style()
+    width, height = wall_mask.shape
+
+    fig, axes = plt.subplots(1, 2, figsize=(7.0, 3.4), dpi=HEATMAP_DPI)
+    fig.patch.set_facecolor("white")
+
+    cmap = plt.get_cmap(BLUES_CMAP).copy()
+    cmap.set_bad(color="white")
+
+    q_range = (vmax_q - vmin_q) if (vmax_q - vmin_q) != 0 else 1.0
+
+    for col, (grid_d, agent_label) in enumerate([
+        (grid_a_max_d, label_a),
+        (grid_b_max_d, label_b),
+    ]):
+        ax = axes[col]
+        ax.set_facecolor("white")
+        display = grid_d.T.copy()
+        im = ax.imshow(display, origin="upper", cmap=cmap, vmin=vmin_q, vmax=vmax_q)
+
+        ax.set_title(f"{agent_label}", fontsize=10, fontweight="bold", pad=6)
+
+        for x in range(width):
+            for y in range(height):
+                val = grid_d[x, y]
+                norm_v = (val - vmin_q) / q_range if not np.isnan(val) else 0
+                if wall_mask[x, y]:
+                    ax.add_patch(plt.Rectangle(
+                        (x - 0.5, y - 0.5), 1, 1,
+                        facecolor=HEATMAP_WALL_COLOR, edgecolor="none",
+                    ))
+                    continue
+                lbl = annotations.get((x, y))
+                if lbl:
+                    ax.text(x + 0.32, y - 0.32, lbl,
+                            ha='center', va='center', color='white',
+                            fontsize=9, fontweight='bold',
+                            path_effects=[path_effects.withStroke(linewidth=2.5, foreground='black')])
+                if not np.isnan(val):
+                    txt_c = 'white' if norm_v > 0.6 else 'black'
+                    ax.text(x, y, f"{val:.2f}",
+                            ha='center', va='center', color=txt_c,
+                            fontsize=8.5, fontweight='semibold')
+
+        _style_heatmap_ax(ax, width, height)
+
+    # Shared colourbar
+    fig.subplots_adjust(right=0.88, wspace=0.08)
+    cbar_ax = fig.add_axes([0.90, 0.18, 0.02, 0.64])
+    cb = fig.colorbar(im, cax=cbar_ax)
+    cb.ax.tick_params(labelsize=8)
+    cb.set_label("Max Q(s, a)", fontsize=9, fontweight="medium")
+
+    env_short = env_id.replace("MiniGrid-", "")
+    fig.suptitle(f"{env_short} — Facing {d_name}",
+                 fontsize=11, fontweight="bold", y=1.02)
+
+    fig.savefig(output_path, dpi=HEATMAP_DPI, bbox_inches="tight")
+    plt.close(fig)
+    print(f"    Per-direction plot saved → {output_path}")
+
+
+# ============================================================================
+# PER-ENVIRONMENT HEATMAP PLOT (combined + per-direction)
 # ============================================================================
 
 def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
                         label_a="Agent A", label_b="Agent B", comparison_tag="", stage_name="", plots_dir="plots"):
+    """
+    Generates:
+      1. Combined 4×2 overview figure (all directions, both agents)
+      2. Individual per-direction 1×2 figures for paper inclusion
+    """
+    _setup_pub_style()
     width, height, num_dirs, num_actions = grid_a.shape
-    
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
-        grid_a_max = np.nanmax(grid_a, axis=3) # shape (W, H, 4)
-        grid_b_max = np.nanmax(grid_b, axis=3) # shape (W, H, 4)
-    
-    diff_grid_max = grid_a_max - grid_b_max # shape (W, H, 4)
-    diff_grid = grid_a - grid_b             # shape (W, H, 4, num_actions)
+        grid_a_max = np.nanmax(grid_a, axis=3)  # (W, H, 4)
+        grid_b_max = np.nanmax(grid_b, axis=3)  # (W, H, 4)
 
-    dir_info = [
-        (3, "North"),
-        (0, "East"),
-        (1, "South"),
-        (2, "West")
-    ]
+    vmin_q = float(np.nanmin([grid_a_max, grid_b_max]))
+    vmax_q = float(np.nanmax([grid_a_max, grid_b_max]))
+    q_range = (vmax_q - vmin_q) if (vmax_q - vmin_q) != 0 else 1.0
 
-    fig, axes = plt.subplots(4, 2, figsize=(16, 20))
-    title_suffix = f" [{stage_name}]" if stage_name else ""
-    fig.suptitle(
-        f"{env_id}{title_suffix}  —  {label_a} vs {label_b}  (seed={seed})",
-        fontsize=18, fontweight="bold", y=0.98
-    )
+    output_dir = _build_output_dir(plots_dir, env_id, seed)
+    stage_suffix = f"_{stage_name.lower().replace(' ', '_')}" if stage_name else ""
 
-    vmin_q = np.nanmin([grid_a_max, grid_b_max])
-    vmax_q = np.nanmax([grid_a_max, grid_b_max])
-
-    col_titles = [
-        f"{label_a}  Max Q",
-        f"{label_b}  Max Q",
-    ]
-
-    names = action_names(env_id, "task", num_actions)
-    abbr_map = {
-        "left": "L", "right": "R", "forward": "F",
-        "pickup": "P", "drop": "Dp", "toggle": "T", "done": "Dn"
-    }
-    action_labels = [abbr_map.get(n, n[:1].upper()) for n in names]
-
+    # ------------------------------------------------------------------
+    # 1) Combined 4×2 overview figure
+    # ------------------------------------------------------------------
+    fig, axes = plt.subplots(4, 2, figsize=(8.5, 14), dpi=HEATMAP_DPI)
     fig.patch.set_facecolor("white")
 
-    for row, (d_idx, d_name) in enumerate(dir_info):
-        panels = [
-            (grid_a_max[:, :, d_idx], grid_a[:, :, d_idx, :], "viridis", None),
-            (grid_b_max[:, :, d_idx], grid_b[:, :, d_idx, :], "viridis", None),
-        ]
+    title_suffix = f" [{stage_name}]" if stage_name else ""
+    env_short = env_id.replace("MiniGrid-", "")
+    fig.suptitle(
+        f"{env_short}{title_suffix}  —  Max Q-Value Comparison  (seed {seed})",
+        fontsize=13, fontweight="bold", y=0.995,
+    )
 
-        for col, (grid_max_d, grid_full_d, cmap_name, style) in enumerate(panels):
+    cmap = plt.get_cmap(BLUES_CMAP).copy()
+    cmap.set_bad(color="white")
+
+    col_titles = [
+        f"{label_a}",
+        f"{label_b}",
+    ]
+
+    for row, (d_idx, d_name) in enumerate(DIR_INFO):
+        for col, grid_max_all in enumerate([grid_a_max, grid_b_max]):
             ax = axes[row, col]
             ax.set_facecolor("white")
-            display = grid_max_d.T.copy()
+            grid_d = grid_max_all[:, :, d_idx]
+            display = grid_d.T.copy()
 
-            cmap = plt.get_cmap(cmap_name).copy()
-            cmap.set_bad(color="white")
-
-            if style == "diverging":
-                abs_max = np.nanmax(np.abs(diff_grid[:, :, d_idx, :]))
-                if abs_max == 0:
-                    abs_max = 1.0
-                norm = mcolors.TwoSlopeNorm(vmin=-abs_max, vcenter=0, vmax=abs_max)
-                im = ax.imshow(display, origin="upper", cmap=cmap, norm=norm)
-            else:
-                im = ax.imshow(display, origin="upper", cmap=cmap, vmin=vmin_q, vmax=vmax_q)
-
-            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            im = ax.imshow(display, origin="upper", cmap=cmap, vmin=vmin_q, vmax=vmax_q)
 
             if row == 0:
-                ax.set_title(col_titles[col], fontsize=14, fontweight="bold")
-
+                ax.set_title(col_titles[col], fontsize=11, fontweight="bold", pad=6)
             if col == 0:
-                ax.set_ylabel(f"Facing {d_name}", fontsize=14, fontweight="bold")
+                ax.set_ylabel(f"Facing {d_name}", fontsize=10.5, fontweight="bold")
 
             for x in range(width):
                 for y in range(height):
+                    val = grid_d[x, y]
+                    norm_v = (val - vmin_q) / q_range if not np.isnan(val) else 0
                     if wall_mask[x, y]:
                         ax.add_patch(plt.Rectangle(
                             (x - 0.5, y - 0.5), 1, 1,
-                            facecolor="#e0e0e0", edgecolor="none",
+                            facecolor=HEATMAP_WALL_COLOR, edgecolor="none",
                         ))
-
-                    if wall_mask[x, y]:
                         continue
+                    lbl = annotations.get((x, y))
+                    if lbl:
+                        ax.text(x + 0.32, y - 0.32, lbl,
+                                ha='center', va='center', color='white',
+                                fontsize=9, fontweight='bold',
+                                path_effects=[path_effects.withStroke(linewidth=2.5, foreground='black')])
+                    if not np.isnan(val):
+                        txt_c = 'white' if norm_v > 0.6 else 'black'
+                        ax.text(x, y, f"{val:.2f}",
+                                ha='center', va='center', color=txt_c,
+                                fontsize=7.5, fontweight='semibold')
 
-                    else:
-                        label = annotations.get((x, y))
-                        if label:
-                            ax.text(x + 0.32, y - 0.32, label,
-                                    ha='center', va='center', color='white', 
-                                    fontsize=10, fontweight='bold',
-                                    path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
-                        
-                        q_vals = grid_full_d[x, y, :]
-                        best_a = int(np.argmax(q_vals)) if not np.isnan(q_vals).all() else -1
-                        text_lines = []
-                        for a in range(len(q_vals)):
-                            if a < len(action_labels):
-                                star = "*" if (a == best_a and style != "diverging") else ""
-                                if style == "diverging":
-                                    val_str = f"{q_vals[a]:+.2f}"
-                                    text_lines.append(f"{action_labels[a]}: {val_str}")
-                                else:
-                                    val_str = f"{q_vals[a]:.2f}"
-                                    text_lines.append(f"{action_labels[a]}{star}: {val_str}")
-                        
-                        text_str = "\n".join(text_lines)
-                        ax.text(x, y, text_str, ha='center', va='center', 
-                                color='black', fontsize=6.5, fontweight="medium")
+            _style_heatmap_ax(ax, width, height)
 
-            ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
-            ax.set_yticks(np.arange(-0.5, height, 1), minor=True)
-            ax.grid(which="minor", color="#cccccc", linestyle="-", linewidth=0.6)
-            ax.tick_params(which="both", bottom=False, left=False, labelbottom=False, labelleft=False)
+    # Shared colourbar for combined figure
+    fig.subplots_adjust(right=0.88, hspace=0.20, wspace=0.08)
+    cbar_ax = fig.add_axes([0.90, 0.08, 0.02, 0.85])
+    cb = fig.colorbar(im, cax=cbar_ax)
+    cb.ax.tick_params(labelsize=8)
+    cb.set_label("Max Q(s, a)", fontsize=9.5, fontweight="medium")
 
-    legend_parts = [f"{abbr_map.get(n, n[:1].upper())} = {n}" for n in names]
-    legend_text = "   |   ".join(legend_parts)
+    # Footer annotation key
     fig.text(
-        0.5, 0.015,
-        f"Action Key:  {legend_text}    ---    Layout Annotations: S = Start, K = Key, D = Door",
-        ha="center", va="bottom",
-        fontsize=11, fontweight="medium",
-        bbox=dict(boxstyle="round,pad=0.4", facecolor="#ffffff", edgecolor="#cccccc", alpha=0.95),
+        0.44, 0.005,
+        "S = Start   G = Goal   K = Key   D = Door",
+        ha="center", va="bottom", fontsize=9, fontweight="medium",
+        bbox=dict(boxstyle="round,pad=0.35", facecolor="white",
+                  edgecolor="#cccccc", alpha=0.95),
     )
 
-    # Format clean folder names (e.g. DoorKey, Empty)
-    env_clean = "DoorKey" if "DoorKey" in env_id else ("Empty" if "Empty" in env_id else env_id)
-    output_dir = Path(plots_dir) / "overestimation" / env_clean / f"seed_{seed}"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    stage_file_suffix = f"_{stage_name.lower().replace(' ', '_')}" if stage_name else ""
-    output_path = output_dir / f"q_overestimation{stage_file_suffix}.png"
-    plt.savefig(output_path, dpi=200, bbox_inches="tight")
+    combined_path = output_dir / f"q_overestimation_combined{stage_suffix}.png"
+    fig.savefig(combined_path, dpi=HEATMAP_DPI, bbox_inches="tight")
     plt.close(fig)
-    print(f"  Heatmap saved → {output_path}")
+    print(f"  Combined heatmap saved → {combined_path}")
+
+    # ------------------------------------------------------------------
+    # 2) Individual per-direction standalone figures
+    # ------------------------------------------------------------------
+    for d_idx, d_name in DIR_INFO:
+        per_dir_path = output_dir / f"q_overestimation_{d_name.lower()}{stage_suffix}.png"
+        _render_single_direction_plot(
+            env_id,
+            grid_a_max[:, :, d_idx],
+            grid_b_max[:, :, d_idx],
+            wall_mask, annotations, d_name,
+            label_a, label_b,
+            vmin_q, vmax_q,
+            per_dir_path,
+        )
+
+
+# ============================================================================
+# CONSISTENT AGENT COLOURS (matches plot_comparison.py)
+# ============================================================================
+
+AGENT_BAR_COLORS = {
+    "baseline":        "#1f77b4",  # Blue  (same as plot_comparison AGENT_COLORS)
+    "reward_shaping":  "#ff7f0e",  # Orange
+    "default_a":       "#1f77b4",
+    "default_b":       "#ff7f0e",
+}
 
 
 # ============================================================================
@@ -339,38 +450,55 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
 # ============================================================================
 
 def plot_bar_chart(summary, label_a="Agent A", label_b="Agent B", comparison_tag="", plots_dir="plots"):
+    """Publication-grade bar chart with colours matching the training-curve pipeline."""
     if not summary:
         print("No data for summary bar chart — skipping.")
         return
 
-    plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
+    _setup_pub_style()
 
     env_labels = [s["env_id"].replace("MiniGrid-", "") for s in summary]
-    a_means  = [s["a_mean"]  for s in summary]
-    b_means  = [s["b_mean"]  for s in summary]
-    a_stds   = [s.get("a_std", 0)  for s in summary]
-    b_stds   = [s.get("b_std", 0)  for s in summary]
+    a_means = [s["a_mean"] for s in summary]
+    b_means = [s["b_mean"] for s in summary]
+    a_stds  = [s.get("a_std", 0) for s in summary]
+    b_stds  = [s.get("b_std", 0) for s in summary]
+
+    # Determine colours from label hints
+    color_a = AGENT_BAR_COLORS["default_a"]
+    color_b = AGENT_BAR_COLORS["default_b"]
+    if "reward" in label_a.lower() or "rs" in label_a.lower():
+        color_a = AGENT_BAR_COLORS["reward_shaping"]
+    if "reward" in label_b.lower() or "rs" in label_b.lower():
+        color_b = AGENT_BAR_COLORS["reward_shaping"]
+    if "baseline" in label_a.lower():
+        color_a = AGENT_BAR_COLORS["baseline"]
+    if "baseline" in label_b.lower():
+        color_b = AGENT_BAR_COLORS["baseline"]
 
     x = np.arange(len(env_labels))
-    bar_width = 0.35
+    bar_width = 0.32
 
-    fig, ax = plt.subplots(figsize=(9, 5.5))
+    fig, ax = plt.subplots(figsize=(6.5, 4.2), dpi=300)
+    fig.patch.set_facecolor("white")
 
     bars_a = ax.bar(
         x - bar_width / 2, a_means, bar_width,
-        yerr=a_stds, capsize=4,
-        label=label_a, color="#E74C3C", edgecolor="black", linewidth=0.8,
+        yerr=a_stds, capsize=4, error_kw=dict(lw=1.0, capthick=1.0),
+        label=label_a, color=color_a, edgecolor="white", linewidth=0.6,
     )
     bars_b = ax.bar(
         x + bar_width / 2, b_means, bar_width,
-        yerr=b_stds, capsize=4,
-        label=label_b, color="#2980B9", edgecolor="black", linewidth=0.8,
+        yerr=b_stds, capsize=4, error_kw=dict(lw=1.0, capthick=1.0),
+        label=label_b, color=color_b, edgecolor="white", linewidth=0.6,
     )
 
-    ax.set_ylabel("Mean Maximum Q-Value", fontsize=11, fontweight="medium")
-    ax.set_title("Q-Value Overestimation Comparison Across Environments", fontsize=13, fontweight="bold", pad=12)
+    ax.set_ylabel("Mean Maximum Q-Value", fontsize=10, fontweight="medium")
+    ax.set_title("Q-Value Overestimation Comparison", fontsize=11, fontweight="bold", pad=10)
     ax.set_xticks(x)
+    ax.set_xticklabels(env_labels, fontsize=9.5, fontweight="medium")
+    ax.tick_params(axis='y', labelsize=9)
+
+    # Value annotations on bars
     for bars in [bars_a, bars_b]:
         for bar in bars:
             h = bar.get_height()
@@ -379,14 +507,21 @@ def plot_bar_chart(summary, label_a="Agent A", label_b="Agent B", comparison_tag
                     f"{h:.2f}",
                     xy=(bar.get_x() + bar.get_width() / 2, h),
                     xytext=(0, 4), textcoords="offset points",
-                    ha="center", va="bottom", fontsize=8.5, fontweight="medium"
+                    ha="center", va="bottom", fontsize=8, fontweight="medium",
                 )
 
-    plt.tight_layout()
+    # Grid & spine cleanup
+    ax.grid(True, axis='y', linestyle="--", alpha=0.35, color="#cccccc")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.legend(fontsize=9, loc="best", frameon=True, facecolor="white",
+              edgecolor="#e0e0e0", framealpha=0.95)
+
+    fig.tight_layout()
     output_dir = Path(plots_dir) / "overestimation"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "q_overestimation_comparison.png"
-    plt.savefig(output_path, dpi=250, bbox_inches="tight")
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"  Summary bar chart saved → {output_path}")
 
