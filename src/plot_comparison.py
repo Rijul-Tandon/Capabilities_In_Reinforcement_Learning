@@ -9,7 +9,7 @@ Supported modes:
   2. Decay Strategy Comparison (Comparing Epsilon Decay schedules for Baseline and Reward Shaped DDQN)
 
 Usage:
-  python plot_comparison.py --env-id MiniGrid-Empty-6x6-v0
+  python plot_comparison.py --env-id MiniGrid-Empty-Random-6x6-v0
   python plot_comparison.py --env-id MiniGrid-DoorKey-6x6-v0 --decay-comparison
 """
 

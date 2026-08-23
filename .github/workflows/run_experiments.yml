@@ -3,6 +3,15 @@ name: Run Experiments (200k Steps)
 on:
   workflow_dispatch:  # Trigger manually from GitHub UI or `gh workflow run`
     inputs:
+      grid_size:
+        description: 'Environment grid size'
+        required: false
+        default: '6x6'
+        type: choice
+        options:
+          - 6x6
+          - 8x8
+          - 16x16
       num_seeds:
         description: 'Number of seeds to run (1 to 5)'
         required: false
@@ -28,7 +37,7 @@ jobs:
       matrix:
         include:
           # --- Random Agent ---
-          - env_id: MiniGrid-Empty-6x6-v0
+          - env_id: MiniGrid-Empty-Random-6x6-v0
             agent: random_agent
             decay: linear
             seed: 1
@@ -37,51 +46,51 @@ jobs:
             decay: linear
             seed: 1
 
-          # --- MiniGrid-Empty-6x6-v0 ---
+          # --- MiniGrid-Empty-Random-6x6-v0 ---
           # Seed 1: baseline linear, reward shaping linear
-          - env_id: MiniGrid-Empty-6x6-v0
+          - env_id: MiniGrid-Empty-Random-6x6-v0
             agent: ddqn_baseline
             decay: linear
             seed: 1
-          - env_id: MiniGrid-Empty-6x6-v0
+          - env_id: MiniGrid-Empty-Random-6x6-v0
             agent: ddqn_reward_shaping
             decay: linear
             seed: 1
 
           # Seed 2: baseline linear, reward shaping exponential
-          - env_id: MiniGrid-Empty-6x6-v0
+          - env_id: MiniGrid-Empty-Random-6x6-v0
             agent: ddqn_baseline
             decay: linear
             seed: 2
-          - env_id: MiniGrid-Empty-6x6-v0
+          - env_id: MiniGrid-Empty-Random-6x6-v0
             agent: ddqn_reward_shaping
             decay: exponential
             seed: 2
 
           # Seed 3: baseline polynomial, reward shaping exponential
-          - env_id: MiniGrid-Empty-6x6-v0
+          - env_id: MiniGrid-Empty-Random-6x6-v0
             agent: ddqn_baseline
             decay: polynomial
             seed: 3
-          - env_id: MiniGrid-Empty-6x6-v0
+          - env_id: MiniGrid-Empty-Random-6x6-v0
             agent: ddqn_reward_shaping
             decay: exponential
             seed: 3
 
           # Seeds 4 & 5 (optional extended runs)
-          - env_id: MiniGrid-Empty-6x6-v0
+          - env_id: MiniGrid-Empty-Random-6x6-v0
             agent: ddqn_baseline
             decay: linear
             seed: 4
-          - env_id: MiniGrid-Empty-6x6-v0
+          - env_id: MiniGrid-Empty-Random-6x6-v0
             agent: ddqn_reward_shaping
             decay: polynomial
             seed: 4
-          - env_id: MiniGrid-Empty-6x6-v0
+          - env_id: MiniGrid-Empty-Random-6x6-v0
             agent: ddqn_baseline
             decay: linear
             seed: 5
-          - env_id: MiniGrid-Empty-6x6-v0
+          - env_id: MiniGrid-Empty-Random-6x6-v0
             agent: ddqn_reward_shaping
             decay: polynomial
             seed: 5
@@ -148,7 +157,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
         
-      - name: "Run Agent (200k Steps, environment-specific decay schedules)"
+      - name: "Run Agent (Dynamic Steps, environment-specific decay schedules)"
         run: |
           NUM_SEEDS="${{ github.event.inputs.num_seeds || '3' }}"
           if [ "${{ matrix.seed }}" -gt "$NUM_SEEDS" ]; then
@@ -157,12 +166,24 @@ jobs:
           fi
 
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
-          TIMESTEPS=200000
+          GRID_SIZE="${{ github.event.inputs.grid_size || '6x6' }}"
+          
+          # Replace 6x6 in the matrix env_id with the selected grid_size
+          ENV_ID=$(echo "${{ matrix.env_id }}" | sed "s/6x6/$GRID_SIZE/")
+
+          if [ "$GRID_SIZE" = "16x16" ]; then
+            TIMESTEPS=1000000
+          elif [ "$GRID_SIZE" = "8x8" ]; then
+            TIMESTEPS=500000
+          else
+            TIMESTEPS=200000
+          fi
+
           EXPLORE_FRAC=0.50
           STRATEGY="${{ github.event.inputs.exploration_strategy || 'epsilon_greedy' }}"
           
           python src/${{ matrix.agent }}.py \
-            --env-id ${{ matrix.env_id }} \
+            --env-id $ENV_ID \
             --total-timesteps $TIMESTEPS \
             --seed ${{ matrix.seed }} \
             --max-steps $MAX_STEPS \
@@ -174,7 +195,7 @@ jobs:
       - name: Upload Run Results
         uses: actions/upload-artifact@v4
         with:
-          name: result_${{ matrix.agent }}_${{ matrix.env_id }}_seed${{ matrix.seed }}
+          name: result_${{ matrix.agent }}_${{ matrix.env_id }}_${{ github.event.inputs.grid_size || '6x6' }}_seed${{ matrix.seed }}
           path: results/
           if-no-files-found: ignore
           retention-days: 14
@@ -211,7 +232,8 @@ jobs:
           PLOTS_DIR="plots/plots_${TIMESTAMP}"
           mkdir -p "$PLOTS_DIR"
           
-          for env in "MiniGrid-Empty-6x6-v0" "MiniGrid-DoorKey-6x6-v0"; do
+          GRID_SIZE="${{ github.event.inputs.grid_size || '6x6' }}"
+          for env in "MiniGrid-Empty-Random-${GRID_SIZE}-v0" "MiniGrid-DoorKey-${GRID_SIZE}-v0"; do
             echo "Generating all plots for $env..."
             python src/plot_comparison.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison"
             python src/plot_q_overestimation.py --env-id $env --plots-dir "$PLOTS_DIR"

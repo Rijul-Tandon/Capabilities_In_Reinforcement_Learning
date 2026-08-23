@@ -16,7 +16,7 @@ we can directly measure the overestimation bias and demonstrate why Double
 DQN was introduced as an improvement.
 
 Usage:
-  python dqn_vanilla.py --env-id MiniGrid-Empty-6x6-v0 --total-timesteps 100000
+  python dqn_vanilla.py --env-id MiniGrid-Empty-Random-6x6-v0 --total-timesteps 100000
 
 All command-line arguments are defined in dqn_common.parse_args().
 """

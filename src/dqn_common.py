@@ -65,7 +65,7 @@ import gymnasium as gym
 
 # minigrid: A collection of lightweight grid-world environments for RL research.
 #   Simply importing this module registers all MiniGrid environments with gymnasium,
-#   so that gym.make("MiniGrid-Empty-8x8-v0") works. Without this import,
+#   so that gym.make("MiniGrid-Empty-Random-8x8-v0") works. Without this import,
 #   gymnasium would not know these environments exist.
 #   noqa: F401 tells the linter to ignore the "imported but unused" warning.
 import minigrid  # noqa: F401 - registers MiniGrid envs
@@ -170,7 +170,7 @@ def minigrid_action_map(env_id, action_set):
     Parameters
     ----------
     env_id : str
-        The gymnasium environment ID (e.g., "MiniGrid-Empty-8x8-v0").
+        The gymnasium environment ID (e.g., "MiniGrid-Empty-Random-8x8-v0").
         We check if the name contains "Empty", "DoorKey", etc. to decide which actions to keep.
     action_set : str
         Either "task" (use only task-relevant actions) or "full" (use all 7 actions).
@@ -643,7 +643,7 @@ def parse_args(default_exp_name, use_shaping):
     # --exp-name: A label for this experiment, used in directory names and plot legends
     parser.add_argument("--exp-name", type=str, default=default_exp_name)
     # --env-id: Which MiniGrid environment to train on
-    parser.add_argument("--env-id", type=str, default="MiniGrid-Empty-6x6-v0")
+    parser.add_argument("--env-id", type=str, default="MiniGrid-Empty-Random-6x6-v0")
     # --seed: Random seed for reproducibility (same seed = same results)
     parser.add_argument("--seed", type=int, default=1)
 

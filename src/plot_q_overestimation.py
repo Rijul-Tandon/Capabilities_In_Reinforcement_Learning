@@ -44,7 +44,7 @@ import torch
 # LOCAL IMPORTS
 # ============================================================================
 
-from dqn_common import QNetwork, make_env
+from dqn_common import QNetwork, make_env, action_names
 
 
 # ============================================================================
@@ -52,7 +52,7 @@ from dqn_common import QNetwork, make_env
 # ============================================================================
 
 ENV_IDS = [
-    "MiniGrid-Empty-6x6-v0",
+    "MiniGrid-Empty-Random-6x6-v0",
     "MiniGrid-DoorKey-6x6-v0",
 ]
 
@@ -241,10 +241,10 @@ def _build_output_dir(plots_dir, env_id, seed):
 # PER-DIRECTION STANDALONE HEATMAP PLOT (for paper figures)
 # ============================================================================
 
-def _render_single_direction_plot(env_id, grid_a_max_d, grid_b_max_d,
+def _render_single_direction_plot(env_id, grid_a_d, grid_b_d,
                                   wall_mask, annotations, d_name,
                                   label_a, label_b, vmin_q, vmax_q,
-                                  output_path):
+                                  output_path, labels):
     """
     Renders a standalone 1×2 heatmap figure for a SINGLE facing direction.
     Designed for direct inclusion in a research paper.
@@ -259,22 +259,24 @@ def _render_single_direction_plot(env_id, grid_a_max_d, grid_b_max_d,
     cmap.set_bad(color="white")
 
     q_range = (vmax_q - vmin_q) if (vmax_q - vmin_q) != 0 else 1.0
+    abbr_map = {"left": "L", "right": "R", "forward": "F", "pickup": "P", "drop": "Dp", "toggle": "T", "done": "Dn"}
 
     for col, (grid_d, agent_label) in enumerate([
-        (grid_a_max_d, label_a),
-        (grid_b_max_d, label_b),
+        (grid_a_d, label_a),
+        (grid_b_d, label_b),
     ]):
         ax = axes[col]
         ax.set_facecolor("white")
-        display = grid_d.T.copy()
+        display_max = np.nanmax(grid_d, axis=2)
+        display = display_max.T.copy()
         im = ax.imshow(display, origin="upper", cmap=cmap, vmin=vmin_q, vmax=vmax_q)
 
         ax.set_title(f"{agent_label}", fontsize=10, fontweight="bold", pad=6)
 
         for x in range(width):
             for y in range(height):
-                val = grid_d[x, y]
-                norm_v = (val - vmin_q) / q_range if not np.isnan(val) else 0
+                val_max = display_max[x, y]
+                norm_v = (val_max - vmin_q) / q_range if not np.isnan(val_max) else 0
                 if wall_mask[x, y]:
                     ax.add_patch(plt.Rectangle(
                         (x - 0.5, y - 0.5), 1, 1,
@@ -287,11 +289,20 @@ def _render_single_direction_plot(env_id, grid_a_max_d, grid_b_max_d,
                             ha='center', va='center', color='white',
                             fontsize=9, fontweight='bold',
                             path_effects=[path_effects.withStroke(linewidth=2.5, foreground='black')])
-                if not np.isnan(val):
+                if not np.isnan(val_max):
                     txt_c = 'white' if norm_v > 0.6 else 'black'
-                    ax.text(x, y, f"{val:.2f}",
+                    cell_q_vals = grid_d[x, y]
+                    best_a = int(np.nanargmax(cell_q_vals)) if not np.isnan(cell_q_vals).all() else -1
+                    lines = []
+                    for act_idx in range(len(cell_q_vals)):
+                        if act_idx < len(labels):
+                            lbl_name = labels[act_idx]
+                            abbr = abbr_map.get(lbl_name, lbl_name[:1].upper())
+                            star = "*" if act_idx == best_a else ""
+                            lines.append(f"{abbr}{star}:{cell_q_vals[act_idx]:.2f}")
+                    ax.text(x, y, "\n".join(lines),
                             ha='center', va='center', color=txt_c,
-                            fontsize=8.5, fontweight='semibold')
+                            fontsize=6.0, fontweight='semibold')
 
         _style_heatmap_ax(ax, width, height)
 
@@ -315,7 +326,7 @@ def _render_single_direction_plot(env_id, grid_a_max_d, grid_b_max_d,
 # PER-ENVIRONMENT HEATMAP PLOT (combined + per-direction)
 # ============================================================================
 
-def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
+def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed, labels,
                         label_a="Agent A", label_b="Agent B", comparison_tag="", stage_name="", plots_dir="plots"):
     """
     Generates:
@@ -358,12 +369,14 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
         f"{label_b}",
     ]
 
+    abbr_map = {"left": "L", "right": "R", "forward": "F", "pickup": "P", "drop": "Dp", "toggle": "T", "done": "Dn"}
     for row, (d_idx, d_name) in enumerate(DIR_INFO):
-        for col, grid_max_all in enumerate([grid_a_max, grid_b_max]):
+        for col, grid_all in enumerate([grid_a, grid_b]):
             ax = axes[row, col]
             ax.set_facecolor("white")
-            grid_d = grid_max_all[:, :, d_idx]
-            display = grid_d.T.copy()
+            grid_d = grid_all[:, :, d_idx, :]
+            display_max = np.nanmax(grid_d, axis=2)
+            display = display_max.T.copy()
 
             im = ax.imshow(display, origin="upper", cmap=cmap, vmin=vmin_q, vmax=vmax_q)
 
@@ -374,8 +387,8 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
 
             for x in range(width):
                 for y in range(height):
-                    val = grid_d[x, y]
-                    norm_v = (val - vmin_q) / q_range if not np.isnan(val) else 0
+                    val_max = display_max[x, y]
+                    norm_v = (val_max - vmin_q) / q_range if not np.isnan(val_max) else 0
                     if wall_mask[x, y]:
                         ax.add_patch(plt.Rectangle(
                             (x - 0.5, y - 0.5), 1, 1,
@@ -388,11 +401,20 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
                                 ha='center', va='center', color='white',
                                 fontsize=9, fontweight='bold',
                                 path_effects=[path_effects.withStroke(linewidth=2.5, foreground='black')])
-                    if not np.isnan(val):
+                    if not np.isnan(val_max):
                         txt_c = 'white' if norm_v > 0.6 else 'black'
-                        ax.text(x, y, f"{val:.2f}",
+                        cell_q_vals = grid_d[x, y]
+                        best_a = int(np.nanargmax(cell_q_vals)) if not np.isnan(cell_q_vals).all() else -1
+                        lines = []
+                        for act_idx in range(len(cell_q_vals)):
+                            if act_idx < len(labels):
+                                lbl_name = labels[act_idx]
+                                abbr = abbr_map.get(lbl_name, lbl_name[:1].upper())
+                                star = "*" if act_idx == best_a else ""
+                                lines.append(f"{abbr}{star}:{cell_q_vals[act_idx]:.2f}")
+                        ax.text(x, y, "\n".join(lines),
                                 ha='center', va='center', color=txt_c,
-                                fontsize=7.5, fontweight='semibold')
+                                fontsize=5.5, fontweight='semibold')
 
             _style_heatmap_ax(ax, width, height)
 
@@ -424,12 +446,13 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed,
         per_dir_path = output_dir / f"q_overestimation_{d_name.lower()}{stage_suffix}.png"
         _render_single_direction_plot(
             env_id,
-            grid_a_max[:, :, d_idx],
-            grid_b_max[:, :, d_idx],
+            grid_a[:, :, d_idx, :],
+            grid_b[:, :, d_idx, :],
             wall_mask, annotations, d_name,
             label_a, label_b,
             vmin_q, vmax_q,
             per_dir_path,
+            labels
         )
 
 
@@ -649,9 +672,10 @@ def main():
                 seed_label_a = f"{current_label_a}{get_decay_str(models_a[seed])}"
                 seed_label_b = f"{current_label_b}{get_decay_str(models_b[seed])}"
 
+                labels = action_names(env_id, args.action_set, num_actions)
                 print(f"    Generating 4×3 directional heatmap plot ({stage_name}) …")
                 plot_heatmap_for_env(
-                    env_id, grid_a, grid_b, wall_mask, annotations, seed,
+                    env_id, grid_a, grid_b, wall_mask, annotations, seed, labels,
                     label_a=seed_label_a, label_b=seed_label_b, comparison_tag=comparison_tag,
                     stage_name=stage_name, plots_dir=args.plots_dir,
                 )
