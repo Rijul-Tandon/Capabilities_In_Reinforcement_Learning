@@ -52,9 +52,11 @@ def discover_runs(results_dir, env_id, exp_name):
         Mapping from seed number → run directory path.
     """
     runs = {}
-    for run_dir in sorted(Path(results_dir).glob(f"{env_id}__{exp_name}__*")):
+    for run_dir in sorted(Path(results_dir).glob(f"{env_id}__{exp_name}*")):
         config_path = run_dir / "config.json"
-        episode_path = run_dir / "episode_log.csv"
+        episode_path = run_dir / "episodes.csv"
+        if not episode_path.exists():
+            episode_path = run_dir / "episode_log.csv"
 
         if not config_path.exists() or not episode_path.exists():
             continue
@@ -77,7 +79,7 @@ def load_episode_metrics(run_dir, last_n_episodes=100):
     Parameters
     ----------
     run_dir : Path
-        Path to the run directory containing episode_log.csv.
+        Path to the run directory containing episodes.csv or episode_log.csv.
     last_n_episodes : int
         Number of final episodes to average over (default: 100).
         This captures the agent's converged performance, not early exploration.
@@ -86,7 +88,10 @@ def load_episode_metrics(run_dir, last_n_episodes=100):
     -------
     dict with keys: mean_reward, mean_goal_rate, total_episodes
     """
-    episode_path = run_dir / "episode_log.csv"
+    episode_path = run_dir / "episodes.csv"
+    if not episode_path.exists():
+        episode_path = run_dir / "episode_log.csv"
+
     rows = []
     with open(episode_path, "r", encoding="utf-8") as f:
         for row in csv.DictReader(f):
