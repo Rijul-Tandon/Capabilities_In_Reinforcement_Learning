@@ -252,7 +252,26 @@ def _render_single_direction_plot(env_id, grid_a_d, grid_b_d,
     _setup_pub_style()
     width, height = wall_mask.shape
 
-    fig, axes = plt.subplots(1, 2, figsize=(10.0, 5.0), dpi=HEATMAP_DPI)
+    # Dynamic scaling based on grid dimensions (e.g. 6x6 vs 8x8 vs 10x10)
+    fig_w = max(10.0, width * 1.6)
+    fig_h = max(5.0, height * 0.8)
+    if width >= 10:
+        font_sz = 2.6
+        star_sz = ""
+        line_spacing = 0.82
+        annot_sz = 6
+    elif width >= 8:
+        font_sz = 3.6
+        star_sz = "*"
+        line_spacing = 0.90
+        annot_sz = 7
+    else:
+        font_sz = 5.0
+        star_sz = "*"
+        line_spacing = 1.0
+        annot_sz = 9
+
+    fig, axes = plt.subplots(1, 2, figsize=(fig_w, fig_h), dpi=HEATMAP_DPI)
     fig.patch.set_facecolor("white")
 
     cmap = plt.get_cmap(BLUES_CMAP).copy()
@@ -287,7 +306,7 @@ def _render_single_direction_plot(env_id, grid_a_d, grid_b_d,
                 if lbl:
                     ax.text(x + 0.32, y - 0.32, lbl,
                             ha='center', va='center', color='white',
-                            fontsize=9, fontweight='bold',
+                            fontsize=annot_sz, fontweight='bold',
                             path_effects=[path_effects.withStroke(linewidth=2.5, foreground='black')])
                 if not np.isnan(val_max):
                     txt_c = 'white' if norm_v > 0.6 else 'black'
@@ -298,11 +317,11 @@ def _render_single_direction_plot(env_id, grid_a_d, grid_b_d,
                         if act_idx < len(labels):
                             lbl_name = labels[act_idx]
                             abbr = abbr_map.get(lbl_name, lbl_name[:1].upper())
-                            star = "*" if act_idx == best_a else ""
+                            star = star_sz if act_idx == best_a else ""
                             lines.append(f"{abbr}{star}:{cell_q_vals[act_idx]:.2f}")
                     ax.text(x, y, "\n".join(lines),
                             ha='center', va='center', color=txt_c,
-                            fontsize=5.0, fontweight='normal')
+                            fontsize=font_sz, fontweight='normal', linespacing=line_spacing)
 
         _style_heatmap_ax(ax, width, height)
 
@@ -336,6 +355,25 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed, l
     _setup_pub_style()
     width, height, num_dirs, num_actions = grid_a.shape
 
+    # Dynamic scaling based on grid dimensions (e.g. 6x6 vs 8x8 vs 10x10)
+    fig_w = max(11.0, width * 1.8)
+    fig_h = max(18.0, height * 2.5)
+    if width >= 10:
+        font_sz = 2.4
+        star_sz = ""
+        line_spacing = 0.80
+        annot_sz = 6
+    elif width >= 8:
+        font_sz = 3.2
+        star_sz = "*"
+        line_spacing = 0.88
+        annot_sz = 7
+    else:
+        font_sz = 4.5
+        star_sz = "*"
+        line_spacing = 1.0
+        annot_sz = 9
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
         grid_a_max = np.nanmax(grid_a, axis=3)  # (W, H, 4)
@@ -346,12 +384,17 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed, l
     q_range = (vmax_q - vmin_q) if (vmax_q - vmin_q) != 0 else 1.0
 
     output_dir = _build_output_dir(plots_dir, env_id, seed)
+    
+    # Extract grid size (e.g., 6x6, 8x8, 10x10) and env name
+    grid_size_str = f"{width}x{height}"
+    env_base = "doorkey" if "doorkey" in env_id.lower() else ("empty" if "empty" in env_id.lower() else env_id.lower().replace("minigrid-", "").replace("-v0", ""))
+    env_tag = f"{env_base}_{grid_size_str}"
     stage_suffix = f"_{stage_name.lower().replace(' ', '_')}" if stage_name else ""
 
     # ------------------------------------------------------------------
     # 1) Combined 4×2 overview figure
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(4, 2, figsize=(11.0, 18.0), dpi=HEATMAP_DPI)
+    fig, axes = plt.subplots(4, 2, figsize=(fig_w, fig_h), dpi=HEATMAP_DPI)
     fig.patch.set_facecolor("white")
 
     title_suffix = f" [{stage_name}]" if stage_name else ""
@@ -399,7 +442,7 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed, l
                     if lbl:
                         ax.text(x + 0.32, y - 0.32, lbl,
                                 ha='center', va='center', color='white',
-                                fontsize=9, fontweight='bold',
+                                fontsize=annot_sz, fontweight='bold',
                                 path_effects=[path_effects.withStroke(linewidth=2.5, foreground='black')])
                     if not np.isnan(val_max):
                         txt_c = 'white' if norm_v > 0.6 else 'black'
@@ -410,11 +453,11 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed, l
                             if act_idx < len(labels):
                                 lbl_name = labels[act_idx]
                                 abbr = abbr_map.get(lbl_name, lbl_name[:1].upper())
-                                star = "*" if act_idx == best_a else ""
+                                star = star_sz if act_idx == best_a else ""
                                 lines.append(f"{abbr}{star}:{cell_q_vals[act_idx]:.2f}")
                         ax.text(x, y, "\n".join(lines),
                                 ha='center', va='center', color=txt_c,
-                                fontsize=4.5, fontweight='normal')
+                                fontsize=font_sz, fontweight='normal', linespacing=line_spacing)
 
             _style_heatmap_ax(ax, width, height)
 
@@ -434,7 +477,7 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed, l
                   edgecolor="#cccccc", alpha=0.95),
     )
 
-    combined_path = output_dir / f"q_overestimation_combined{stage_suffix}.png"
+    combined_path = output_dir / f"q_overestimation_{env_tag}_combined{stage_suffix}.png"
     fig.savefig(combined_path, dpi=HEATMAP_DPI, bbox_inches="tight")
     plt.close(fig)
     print(f"  Combined heatmap saved → {combined_path}")
@@ -443,7 +486,7 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed, l
     # 2) Individual per-direction standalone figures
     # ------------------------------------------------------------------
     for d_idx, d_name in DIR_INFO:
-        per_dir_path = output_dir / f"q_overestimation_{d_name.lower()}{stage_suffix}.png"
+        per_dir_path = output_dir / f"q_overestimation_{env_tag}_{d_name.lower()}{stage_suffix}.png"
         _render_single_direction_plot(
             env_id,
             grid_a[:, :, d_idx, :],

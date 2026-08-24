@@ -1,5 +1,5 @@
 """
-statistical_analysis.py — Publication-Grade Statistical Comparison
+statistical_analysis.py — Statistical Comparison
 ==================================================================
 Compares Baseline DDQN vs RS-DDQN across multiple seeds for each environment.
 
@@ -8,7 +8,7 @@ For every environment, this script:
   2. Computes per-seed summary metrics (mean reward, mean goal rate)
   3. Runs the Wilcoxon signed-rank test (paired, non-parametric)
   4. Computes effect size r = |Z| / sqrt(N)
-  5. Outputs a publication-ready summary table as both CSV and Markdown
+  5. Outputs a summary table as both CSV and Markdown
 
 Usage:
   python src/statistical_analysis.py --results-dir results --output-dir plots
