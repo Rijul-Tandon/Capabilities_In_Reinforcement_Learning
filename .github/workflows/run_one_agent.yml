@@ -1,4 +1,4 @@
-name: Run Agent Comparison Experiments
+name: Run Single Agent (Multi-Seed Training)
 
 on:
   workflow_dispatch:  # Trigger manually from GitHub UI or `gh workflow run`
@@ -13,32 +13,26 @@ on:
           - 8x8
           - 10x10
       num_seeds:
-        description: 'Number of seeds for experiments (1 to 10)'
+        description: 'Number of seeds for multi-seed training (1 to 10)'
         required: false
         default: '3'
       max_steps:
         description: 'Max steps per episode (-1 = env default)'
         required: false
         default: '-1'
-      exploration_strategy:
-        description: 'Exploration strategy: epsilon_greedy or softmax'
-        required: false
-        default: 'epsilon_greedy'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   train:
-    name: Train (${{ matrix.agent }}, ${{ matrix.env_id }}, seed ${{ matrix.seed }})
+    name: Train (${{ matrix.agent }}, ${{ matrix.env_id }})
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false  # If one run fails, keep running the others
+      fail-fast: false
       matrix:
         agent: [ddqn_baseline, ddqn_reward_shaping]
         env_id: [MiniGrid-Empty-Random-6x6-v0, MiniGrid-DoorKey-6x6-v0]
-        decay: [linear]
-        seed: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
     steps:
       - name: Checkout Code
@@ -53,56 +47,56 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
         
-      - name: "Run Agents Across All Requested Seeds"
+      - name: "Train Single Agent Across All Seeds (Shared Replay Buffer)"
         run: |
           GRID_SIZE="${{ github.event.inputs.grid_size || '6x6' }}"
           ENV_ID=$(echo "${{ matrix.env_id }}" | sed "s/6x6/$GRID_SIZE/")
-
-          # Skip seeds beyond user-requested num_seeds
           NUM_SEEDS="${{ github.event.inputs.num_seeds || '3' }}"
-          if [ "${{ matrix.seed }}" -gt "$NUM_SEEDS" ]; then
-            echo "Skipping seed ${{ matrix.seed }} for $ENV_ID (requested num_seeds=$NUM_SEEDS)"
-            exit 0
-          fi
-
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
 
           if [ "$GRID_SIZE" = "10x10" ]; then
-            TIMESTEPS=2000000
+            # 1M per seed × num_seeds (agent trains on all simultaneously)
+            TIMESTEPS=$((1000000 * NUM_SEEDS))
             EXPLORE_FRAC=0.80
+            END_E=0.1
           elif [ "$GRID_SIZE" = "8x8" ]; then
-            TIMESTEPS=500000
+            TIMESTEPS=$((500000 * NUM_SEEDS))
             EXPLORE_FRAC=0.50
+            END_E=0.01
           else
-            TIMESTEPS=200000
+            TIMESTEPS=$((200000 * NUM_SEEDS))
             EXPLORE_FRAC=0.50
+            END_E=0.01
           fi
-          STRATEGY="${{ github.event.inputs.exploration_strategy || 'epsilon_greedy' }}"
           
-          python src/${{ matrix.agent }}.py \
+          echo "Training single ${{ matrix.agent }} on $ENV_ID across $NUM_SEEDS seeds"
+          echo "Total timesteps: $TIMESTEPS (shared across all seeds), end_e: $END_E"
+
+          python src/train_multi_seed.py \
+            --agent ${{ matrix.agent }} \
             --env-id $ENV_ID \
+            --num-seeds $NUM_SEEDS \
             --total-timesteps $TIMESTEPS \
-            --seed ${{ matrix.seed }} \
             --max-steps $MAX_STEPS \
             --exploration-fraction $EXPLORE_FRAC \
-            --epsilon-schedule ${{ matrix.decay }} \
-            --exploration-strategy $STRATEGY \
+            --epsilon-schedule linear \
+            --end-e $END_E \
             --fixed-layout
           
       - name: Upload Run Results
         uses: actions/upload-artifact@v4
         with:
-          name: result_${{ matrix.agent }}_${{ matrix.env_id }}_${{ github.event.inputs.grid_size || '6x6' }}_seed${{ matrix.seed }}
+          name: result_${{ matrix.agent }}_${{ matrix.env_id }}_${{ github.event.inputs.grid_size || '6x6' }}_multiseed
           path: results/
           if-no-files-found: ignore
           retention-days: 14
 
   plot:
-    name: Compare Agents, Generate Plots & Push to Repo
-    needs: train  # Wait for all training matrix jobs to finish
+    name: Evaluate & Generate Plots (Single Agent)
+    needs: train
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Needed to push commits back to the repo
+      contents: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -122,27 +116,53 @@ jobs:
           pattern: result_*
           path: results/
           merge-multiple: true
-          
-      - name: Upload All Combined Results Zip
+
+      - name: Flatten Multi-Seed Results for Evaluation
+        run: |
+          # The multi-seed training creates results/<run_name>/seed_X/ dirs.
+          # The evaluation scripts expect results/<env>__<agent>__<seed>__<ts>/ format.
+          # Symlink/copy each seed sub-directory to the expected format.
+          for run_dir in results/*/; do
+            if [ -d "$run_dir" ]; then
+              for seed_dir in "$run_dir"seed_*/; do
+                if [ -d "$seed_dir" ]; then
+                  # Extract env_id and agent from config.json
+                  ENV_ID=$(python -c "import json; c=json.load(open('${seed_dir}config.json')); print(c['env_id'])" 2>/dev/null || echo "")
+                  AGENT=$(python -c "import json; c=json.load(open('${seed_dir}config.json')); print(c['exp_name'])" 2>/dev/null || echo "")
+                  SEED=$(python -c "import json; c=json.load(open('${seed_dir}config.json')); print(c['seed'])" 2>/dev/null || echo "")
+                  
+                  if [ -n "$ENV_ID" ] && [ -n "$AGENT" ] && [ -n "$SEED" ]; then
+                    TARGET="results/${ENV_ID}__${AGENT}__${SEED}__multiseed"
+                    echo "Linking $seed_dir -> $TARGET"
+                    cp -r "$seed_dir" "$TARGET"
+                  fi
+                fi
+              done
+            fi
+          done
+          echo "Flattened results:"
+          ls -la results/ | head -40
+
+      - name: Upload All Combined Results
         uses: actions/upload-artifact@v4
         with:
-          name: agent_comparison_combined_results_${{ github.event.inputs.grid_size || '6x6' }}
+          name: single_agent_combined_results_${{ github.event.inputs.grid_size || '6x6' }}
           path: results/
           retention-days: 14
 
-      - name: Generate Agent Comparison, Q-Overestimation & State-Action Frequency Plots
+      - name: Generate Evaluation Plots & Statistical Analysis
         run: |
           TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
-          PLOTS_DIR="plots/plots_${TIMESTAMP}"
-          mkdir -p "$PLOTS_DIR"
-          
           GRID_SIZE="${{ github.event.inputs.grid_size || '6x6' }}"
           for env in "MiniGrid-Empty-Random-${GRID_SIZE}-v0" "MiniGrid-DoorKey-${GRID_SIZE}-v0"; do
-            echo "Generating all comparison and evaluation plots for $env..."
-            python src/plot_comparison.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison"
-            python src/plot_q_overestimation.py --env-id $env --plots-dir "$PLOTS_DIR"
-            python src/plot_state_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison"
-            python src/plot_training_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/action_freq"
+            PLOTS_DIR="plots/plots_${env}_${GRID_SIZE}_single_agent_${TIMESTAMP}"
+            mkdir -p "$PLOTS_DIR"
+            echo "Generating evaluation plots for $env in $PLOTS_DIR..."
+            python src/plot_comparison.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison" || echo "plot_comparison failed for $env"
+            python src/plot_q_overestimation.py --env-id $env --plots-dir "$PLOTS_DIR" || echo "plot_q_overestimation failed for $env"
+            python src/plot_state_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison" || echo "plot_state_action_freq failed for $env"
+            python src/plot_training_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/action_freq" || echo "plot_training_action_freq failed for $env"
+            python src/statistical_analysis.py --results-dir results --env-id $env --output-dir "$PLOTS_DIR" || echo "statistical_analysis failed for $env"
           done
 
       - name: Commit and Push Evaluation Plots
@@ -151,6 +171,6 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
           git add plots/
-          git commit -m "Auto-generated agent comparison and frequency evaluation plots" || echo "No changes to commit"
+          git commit -m "Auto-generated single agent (multi-seed) evaluation plots" || echo "No changes to commit"
           git pull --rebase origin main
           git push origin main

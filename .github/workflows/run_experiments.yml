@@ -68,14 +68,17 @@ jobs:
           ENV_ID=$(echo "${{ matrix.env_id }}" | sed "s/6x6/$GRID_SIZE/")
 
           if [ "$GRID_SIZE" = "10x10" ]; then
-            TIMESTEPS=2000000
+            TIMESTEPS=1000000
             EXPLORE_FRAC=0.80
+            END_E=0.1
           elif [ "$GRID_SIZE" = "8x8" ]; then
             TIMESTEPS=500000
             EXPLORE_FRAC=0.50
+            END_E=0.01
           else
             TIMESTEPS=200000
             EXPLORE_FRAC=0.50
+            END_E=0.01
           fi
           STRATEGY="${{ github.event.inputs.exploration_strategy || 'epsilon_greedy' }}"
           
@@ -86,6 +89,7 @@ jobs:
             --max-steps $MAX_STEPS \
             --exploration-fraction $EXPLORE_FRAC \
             --epsilon-schedule ${{ matrix.decay }} \
+            --end-e $END_E \
             --exploration-strategy $STRATEGY \
             --fixed-layout
           
@@ -133,25 +137,18 @@ jobs:
       - name: Generate All Comparison and Analysis Plots
         run: |
           TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
-          PLOTS_DIR="plots/plots_${TIMESTAMP}"
-          mkdir -p "$PLOTS_DIR"
-          
           GRID_SIZE="${{ github.event.inputs.grid_size || '6x6' }}"
           for env in "MiniGrid-Empty-Random-${GRID_SIZE}-v0" "MiniGrid-DoorKey-${GRID_SIZE}-v0"; do
-            echo "Generating all plots for $env..."
+            PLOTS_DIR="plots/plots_${env}_${GRID_SIZE}_${TIMESTAMP}"
+            mkdir -p "$PLOTS_DIR"
+            echo "Generating all plots for $env in $PLOTS_DIR..."
             python src/plot_comparison.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison"
             python src/plot_q_overestimation.py --env-id $env --plots-dir "$PLOTS_DIR"
             python src/plot_state_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison"
             python src/plot_training_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/action_freq"
+            python src/statistical_analysis.py --results-dir results --env-id $env --output-dir "$PLOTS_DIR"
           done
 
-      - name: Run Statistical Analysis
-        run: |
-          GRID_SIZE="${{ github.event.inputs.grid_size || '6x6' }}"
-          TIMESTAMP=$(ls -d plots/plots_* 2>/dev/null | sort | tail -1 | xargs basename)
-          PLOTS_DIR="plots/${TIMESTAMP}"
-          python src/statistical_analysis.py --results-dir results --output-dir "$PLOTS_DIR"
-          
       - name: Commit and Push Plots
         run: |
           git config --global user.name "github-actions[bot]"

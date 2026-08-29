@@ -3,6 +3,15 @@ name: Q-Value Overestimation Comparison
 on:
   workflow_dispatch:  # Trigger manually from GitHub UI or `gh workflow run`
     inputs:
+      grid_size:
+        description: 'Environment grid size'
+        required: false
+        default: '6x6'
+        type: choice
+        options:
+          - 6x6
+          - 8x8
+          - 10x10
       num_seeds:
         description: 'Number of seeds to run (1 to 5)'
         required: false
@@ -47,6 +56,23 @@ jobs:
             exit 0
           fi
 
+          GRID_SIZE="${{ github.event.inputs.grid_size || '6x6' }}"
+          ENV_ID=$(echo "${{ matrix.env_id }}" | sed "s/6x6/$GRID_SIZE/")
+
+          if [ "$GRID_SIZE" = "10x10" ]; then
+            TIMESTEPS=1000000
+            EXPLORE_FRAC=0.80
+            END_E=0.1
+          elif [ "$GRID_SIZE" = "8x8" ]; then
+            TIMESTEPS=500000
+            EXPLORE_FRAC=0.50
+            END_E=0.1
+          else
+            TIMESTEPS=200000
+            EXPLORE_FRAC=0.50
+            END_E=0.1
+          fi
+
           # Determine specific decay schedule based on seed and agent
           DECAY="linear"
           SEED="${{ matrix.seed }}"
@@ -75,17 +101,15 @@ jobs:
           fi
 
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
-          TIMESTEPS=200000
-          EXPLORE_FRAC=0.50
           
           python src/${{ matrix.agent }}.py \
-            --env-id ${{ matrix.env_id }} \
+            --env-id $ENV_ID \
             --total-timesteps $TIMESTEPS \
             --seed ${{ matrix.seed }} \
             --max-steps $MAX_STEPS \
             --exploration-fraction $EXPLORE_FRAC \
             --epsilon-schedule $DECAY \
-            --end-e 0.1 \
+            --end-e $END_E \
             --exploration-strategy epsilon_greedy \
             --exp-name ${{ matrix.agent }} \
             --fixed-layout
