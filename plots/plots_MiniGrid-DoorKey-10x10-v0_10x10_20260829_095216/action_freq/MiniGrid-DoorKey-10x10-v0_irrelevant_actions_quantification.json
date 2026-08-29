@@ -1,0 +1,68 @@
+{
+  "1": {
+    "baseline": {
+      "total_actions": 1000000,
+      "wall_bumps": 258797,
+      "pct_wall_bumps": 25.8797,
+      "suboptimal_pickups": 147649,
+      "suboptimal_toggles": 144340,
+      "suboptimal_drops": 0,
+      "total_irrelevant": 550786,
+      "pct_irrelevant": 55.0786
+    },
+    "reward_shaping": {
+      "total_actions": 1000000,
+      "wall_bumps": 22978,
+      "pct_wall_bumps": 2.2977999999999996,
+      "suboptimal_pickups": 86554,
+      "suboptimal_toggles": 86815,
+      "suboptimal_drops": 0,
+      "total_irrelevant": 196347,
+      "pct_irrelevant": 19.6347
+    }
+  },
+  "2": {
+    "baseline": {
+      "total_actions": 1000000,
+      "wall_bumps": 107153,
+      "pct_wall_bumps": 10.7153,
+      "suboptimal_pickups": 179224,
+      "suboptimal_toggles": 168772,
+      "suboptimal_drops": 0,
+      "total_irrelevant": 455149,
+      "pct_irrelevant": 45.514900000000004
+    },
+    "reward_shaping": {
+      "total_actions": 1000000,
+      "wall_bumps": 24830,
+      "pct_wall_bumps": 2.483,
+      "suboptimal_pickups": 103173,
+      "suboptimal_toggles": 106094,
+      "suboptimal_drops": 0,
+      "total_irrelevant": 234097,
+      "pct_irrelevant": 23.4097
+    }
+  },
+  "3": {
+    "baseline": {
+      "total_actions": 1000000,
+      "wall_bumps": 123885,
+      "pct_wall_bumps": 12.388499999999999,
+      "suboptimal_pickups": 146594,
+      "suboptimal_toggles": 163398,
+      "suboptimal_drops": 0,
+      "total_irrelevant": 433877,
+      "pct_irrelevant": 43.3877
+    },
+    "reward_shaping": {
+      "total_actions": 1000000,
+      "wall_bumps": 39311,
+      "pct_wall_bumps": 3.9311,
+      "suboptimal_pickups": 101349,
+      "suboptimal_toggles": 103174,
+      "suboptimal_drops": 0,
+      "total_irrelevant": 243834,
+      "pct_irrelevant": 24.383399999999998
+    }
+  }
+}
