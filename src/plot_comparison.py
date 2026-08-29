@@ -47,6 +47,17 @@ def rolling(values, window):
     return out
 
 
+def safe_get_seed(config):
+    seed_val = config.get("seed", 1)
+    if isinstance(seed_val, list):
+        if not seed_val: return 1
+        return int(seed_val[0])
+    try:
+        return int(seed_val)
+    except (ValueError, TypeError):
+        return 1
+
+
 def load_runs(results_dir, env_id):
     """
     Scans the results directory for all experiment runs matching a specific environment,
@@ -234,7 +245,7 @@ def plot_single_metric(runs_by_exp, env_id, output_path, rolling_window, metric_
         clean_label = format_exp_label(exp_name)
 
         for i, (_, config, rows, metric_rows) in enumerate(run_list):
-            seed = config.get("seed", 1)
+            seed = safe_get_seed(config)
             ls = LINE_STYLES[i % len(LINE_STYLES)]
 
             if len(run_list) > 1:
@@ -498,7 +509,7 @@ def main():
             if exp_name == "random_agent":
                 continue
             for _, config, _, _ in run_list:
-                all_seeds.add(int(config.get("seed", 1)))
+                all_seeds.add(safe_get_seed(config))
         all_seeds = sorted(all_seeds)
 
         print(f"Found DQN seeds: {all_seeds} for {args.env_id}")
@@ -512,7 +523,7 @@ def main():
                     if seed == first_seed:
                         filtered[exp_name] = run_list[:1]
                 else:
-                    seed_runs = [(d, c, r, m) for d, c, r, m in run_list if int(c.get("seed", 1)) == seed]
+                    seed_runs = [(d, c, r, m) for d, c, r, m in run_list if safe_get_seed(c) == seed]
                     if seed_runs:
                         filtered[exp_name] = seed_runs
 
