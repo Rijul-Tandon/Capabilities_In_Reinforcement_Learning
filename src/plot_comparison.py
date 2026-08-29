@@ -377,7 +377,6 @@ def plot_figure(runs_by_exp, env_id, output_path, rolling_window, title_suffix="
     plt.close(fig)
     print(f"Saved stacked plot → {output_path}")
 
-    # Generate separate standalone plots for paper text inclusion
     out_dir = Path(output_path).parent
     out_name = Path(output_path).stem
     plot_single_metric(runs_by_exp, env_id, out_dir / f"{out_name}_episodic_return.png",
@@ -386,6 +385,235 @@ def plot_figure(runs_by_exp, env_id, output_path, rolling_window, title_suffix="
                        rolling_window, "goal_reached", "Goal Reach Rate", "Goal Success Rate", y_limits=(-0.05, 1.05), title_suffix=title_suffix)
     plot_single_metric(runs_by_exp, env_id, out_dir / f"{out_name}_td_loss.png",
                        rolling_window, "td_loss", "TD Loss", "TD Loss", title_suffix=title_suffix)
+
+
+def plot_single_mean_metric(runs_by_exp, env_id, output_path, rolling_window, metric_key, metric_title, y_label, y_limits=None, title_suffix=""):
+    """
+    Creates and saves a standalone plot for the mean of a single metric across all seeds.
+    Includes shaded error bands (±1 std) showing seed variability.
+    """
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
+
+    fig, ax = plt.subplots(figsize=(6.5, 4.2), dpi=300)
+    any_dqn_config = None
+
+    exp_colors = {}
+    for idx, exp_name in enumerate(sorted(runs_by_exp.keys())):
+        if exp_name in AGENT_COLORS and len(runs_by_exp) <= 3:
+            exp_colors[exp_name] = AGENT_COLORS[exp_name]
+        else:
+            exp_colors[exp_name] = DISTINCT_COLORS[idx % len(DISTINCT_COLORS)]
+
+    for exp_name, run_list in runs_by_exp.items():
+        if not run_list:
+            continue
+        base_color = exp_colors[exp_name]
+        clean_label = format_exp_label(exp_name)
+        num_seeds = len(run_list)
+        label = f"{clean_label} (Mean across {num_seeds} seeds)" if num_seeds > 1 else clean_label
+
+        all_seed_vals = []
+        max_timestep = 0
+
+        for _, config, rows, metric_rows in run_list:
+            if exp_name != "random_agent":
+                any_dqn_config = config
+
+            if metric_key in ["episodic_return", "goal_reached"]:
+                if rows:
+                    steps = np.array([r["global_step"] for r in rows])
+                    vals = np.array(rolling([r[metric_key] for r in rows], rolling_window))
+                    all_seed_vals.append((steps, vals))
+                    if steps[-1] > max_timestep:
+                        max_timestep = steps[-1]
+            elif metric_key == "td_loss" and metric_rows:
+                m_steps = np.array([r["global_step"] for r in metric_rows])
+                l_vals = np.array(rolling([r["td_loss"] for r in metric_rows], rolling_window))
+                valid = [(s, l) for s, l in zip(m_steps, l_vals) if not np.isnan(l)]
+                if valid:
+                    vs, vl = zip(*valid)
+                    all_seed_vals.append((np.array(vs), np.array(vl)))
+                    if vs[-1] > max_timestep:
+                        max_timestep = vs[-1]
+
+        if not all_seed_vals:
+            continue
+
+        if max_timestep == 0:
+            max_timestep = any_dqn_config.get("total_timesteps", 200000) if any_dqn_config else 200000
+
+        grid_steps = np.linspace(0, max_timestep, num=500)
+        interp_vals = []
+        for s_arr, v_arr in all_seed_vals:
+            interp_vals.append(np.interp(grid_steps, s_arr, v_arr))
+
+        mean_v = np.mean(interp_vals, axis=0)
+        std_v = np.std(interp_vals, axis=0) if num_seeds > 1 else np.zeros_like(mean_v)
+
+        ax.plot(grid_steps, mean_v, label=label, color=base_color, linewidth=2.0)
+        if num_seeds > 1:
+            if metric_key == "goal_reached":
+                lower = np.clip(mean_v - std_v, 0, 1)
+                upper = np.clip(mean_v + std_v, 0, 1)
+            elif metric_key == "td_loss":
+                lower = np.maximum(0, mean_v - std_v)
+                upper = mean_v + std_v
+            else:
+                lower = mean_v - std_v
+                upper = mean_v + std_v
+            ax.fill_between(grid_steps, lower, upper, color=base_color, alpha=0.15)
+
+    max_x = any_dqn_config.get("total_timesteps", 200000) if any_dqn_config else 200000
+    ax.set_xlim(0, max_x)
+    if y_limits:
+        ax.set_ylim(y_limits)
+
+    ax.set_title(f"{env_id} — {metric_title}{title_suffix}", fontsize=11, fontweight="bold", pad=10)
+    ax.set_xlabel("Training Steps", fontsize=9.5, fontweight="medium")
+    ax.set_ylabel(y_label, fontsize=9.5, fontweight="medium")
+    ax.grid(True, linestyle="--", alpha=0.35, color="#cccccc")
+    ax.legend(fontsize=8.5, loc="best", frameon=True, facecolor="white", edgecolor="#e0e0e0", framealpha=0.95)
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved mean publication plot → {output_path}")
+
+
+def plot_mean_figure(runs_by_exp, env_id, output_path, rolling_window, title_suffix=""):
+    """
+    Creates and saves an aggregated 3-panel comparison figure showing the MEAN performance across ALL seeds
+    for each experiment type with shaded standard deviation error bands across seeds.
+    """
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
+
+    fig, axes = plt.subplots(3, 1, figsize=(9.5, 10), sharex=True)
+    any_dqn_config = None
+
+    exp_colors = {}
+    for idx, exp_name in enumerate(sorted(runs_by_exp.keys())):
+        if exp_name in AGENT_COLORS and len(runs_by_exp) <= 3:
+            exp_colors[exp_name] = AGENT_COLORS[exp_name]
+        else:
+            exp_colors[exp_name] = DISTINCT_COLORS[idx % len(DISTINCT_COLORS)]
+
+    for exp_name, run_list in runs_by_exp.items():
+        if not run_list:
+            continue
+
+        base_color = exp_colors[exp_name]
+        clean_label = format_exp_label(exp_name)
+        num_seeds = len(run_list)
+        label = f"{clean_label} (Mean across {num_seeds} seeds)" if num_seeds > 1 else clean_label
+
+        all_seed_returns = []
+        all_seed_goals = []
+        all_seed_losses = []
+        max_timestep = 0
+
+        for _, config, rows, metric_rows in run_list:
+            if exp_name != "random_agent":
+                any_dqn_config = config
+            if rows:
+                steps = np.array([r["global_step"] for r in rows])
+                rets = np.array(rolling([r["episodic_return"] for r in rows], rolling_window))
+                gls = np.array(rolling([r["goal_reached"] for r in rows], rolling_window))
+
+                all_seed_returns.append((steps, rets))
+                all_seed_goals.append((steps, gls))
+                if steps[-1] > max_timestep:
+                    max_timestep = steps[-1]
+
+            if metric_rows:
+                m_steps = np.array([r["global_step"] for r in metric_rows])
+                l_vals = np.array(rolling([r["td_loss"] for r in metric_rows], rolling_window))
+                valid = [(s, l) for s, l in zip(m_steps, l_vals) if not np.isnan(l)]
+                if valid:
+                    vs, vl = zip(*valid)
+                    all_seed_losses.append((np.array(vs), np.array(vl)))
+
+        if max_timestep == 0:
+            max_timestep = any_dqn_config.get("total_timesteps", 200000) if any_dqn_config else 200000
+
+        grid_steps = np.linspace(0, max_timestep, num=500)
+
+        # Interpolate returns and goal reach across seeds
+        if all_seed_returns:
+            interp_returns = []
+            for s_arr, r_arr in all_seed_returns:
+                interp_returns.append(np.interp(grid_steps, s_arr, r_arr))
+            mean_ret = np.mean(interp_returns, axis=0)
+            std_ret = np.std(interp_returns, axis=0) if num_seeds > 1 else np.zeros_like(mean_ret)
+
+            axes[0].plot(grid_steps, mean_ret, label=label, color=base_color, linewidth=2.0)
+            if num_seeds > 1:
+                axes[0].fill_between(grid_steps, mean_ret - std_ret, mean_ret + std_ret,
+                                     color=base_color, alpha=0.15)
+
+        if all_seed_goals:
+            interp_goals = []
+            for s_arr, g_arr in all_seed_goals:
+                interp_goals.append(np.interp(grid_steps, s_arr, g_arr))
+            mean_goal = np.mean(interp_goals, axis=0)
+            std_goal = np.std(interp_goals, axis=0) if num_seeds > 1 else np.zeros_like(mean_goal)
+
+            axes[1].plot(grid_steps, mean_goal, label=label, color=base_color, linewidth=2.0)
+            if num_seeds > 1:
+                axes[1].fill_between(grid_steps, np.clip(mean_goal - std_goal, 0, 1),
+                                     np.clip(mean_goal + std_goal, 0, 1),
+                                     color=base_color, alpha=0.15)
+
+        # Interpolate TD loss across seeds
+        if all_seed_losses:
+            interp_losses = []
+            for s_arr, l_arr in all_seed_losses:
+                interp_losses.append(np.interp(grid_steps, s_arr, l_arr))
+            mean_loss = np.mean(interp_losses, axis=0)
+            std_loss = np.std(interp_losses, axis=0) if num_seeds > 1 else np.zeros_like(mean_loss)
+
+            axes[2].plot(grid_steps, mean_loss, label=label, color=base_color, linewidth=2.0)
+            if num_seeds > 1:
+                axes[2].fill_between(grid_steps, np.maximum(0, mean_loss - std_loss), mean_loss + std_loss,
+                                     color=base_color, alpha=0.15)
+
+    max_x = any_dqn_config.get("total_timesteps", 200000) if any_dqn_config else 200000
+    axes[0].set_xlim(0, max_x)
+
+    axes[0].set_title(f"{env_id} — Mean Episodic Return{title_suffix}", fontsize=13, fontweight="bold", pad=8)
+    axes[0].set_ylabel("Episodic Return", fontsize=11, fontweight="medium")
+    axes[0].grid(True, linestyle="--", alpha=0.35, color="#cccccc")
+    axes[0].legend(fontsize=9.5, loc="upper left", frameon=True, facecolor="white", edgecolor="#cccccc", framealpha=0.95)
+
+    axes[1].set_title(f"{env_id} — Mean Goal Success Rate{title_suffix}", fontsize=13, fontweight="bold", pad=8)
+    axes[1].set_ylabel("Goal Success Rate", fontsize=11, fontweight="medium")
+    axes[1].set_ylim(-0.05, 1.05)
+    axes[1].grid(True, linestyle="--", alpha=0.35, color="#cccccc")
+    axes[1].legend(fontsize=9.5, loc="upper left", frameon=True, facecolor="white", edgecolor="#cccccc", framealpha=0.95)
+
+    axes[2].set_title(f"{env_id} — Mean TD Loss{title_suffix}", fontsize=13, fontweight="bold", pad=8)
+    axes[2].set_ylabel("TD Loss", fontsize=11, fontweight="medium")
+    axes[2].set_xlabel("Training Steps", fontsize=11, fontweight="medium")
+    axes[2].grid(True, linestyle="--", alpha=0.35, color="#cccccc")
+    axes[2].legend(fontsize=9.5, loc="upper left", frameon=True, facecolor="white", edgecolor="#cccccc", framealpha=0.95)
+
+    for ax in axes:
+        ax.tick_params(labelsize=10)
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=250, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved mean stacked plot → {output_path}")
+
+    out_dir = Path(output_path).parent
+    out_name = Path(output_path).stem
+    plot_single_mean_metric(runs_by_exp, env_id, out_dir / f"{out_name}_episodic_return.png",
+                            rolling_window, "episodic_return", "Mean Episodic Return", "Episodic Return", title_suffix=title_suffix)
+    plot_single_mean_metric(runs_by_exp, env_id, out_dir / f"{out_name}_goal_reach.png",
+                            rolling_window, "goal_reached", "Mean Goal Reach Rate", "Goal Success Rate", y_limits=(-0.05, 1.05), title_suffix=title_suffix)
+    plot_single_mean_metric(runs_by_exp, env_id, out_dir / f"{out_name}_td_loss.png",
+                            rolling_window, "td_loss", "Mean TD Loss", "TD Loss", title_suffix=title_suffix)
 
 
 # ============================================================================
@@ -480,6 +708,7 @@ def main():
 
         print(f"Found DQN seeds: {all_seeds} for {args.env_id}")
 
+        # 1. Per-seed comparison plots (kept as requested)
         first_seed = all_seeds[0] if all_seeds else None
         for seed in all_seeds:
             filtered = {}
@@ -498,6 +727,17 @@ def main():
             out = plots_dir / f"{args.env_id}_comparison_seed{seed}.png"
             plot_figure(filtered, args.env_id, out, args.rolling_window,
                         title_suffix=f" | Seed {seed}")
+
+        # 2. Mean comparison plot across ALL executed seeds
+        if all_seeds:
+            num_seeds = len(all_seeds)
+            print(f"Generating mean aggregated comparison plot across all {num_seeds} seeds for {args.env_id} ...")
+            out_mean = plots_dir / f"{args.env_id}_comparison_mean.png"
+            out_main = plots_dir / f"{args.env_id}_comparison.png"
+            plot_mean_figure(runs_by_exp, args.env_id, out_mean, args.rolling_window,
+                             title_suffix=f" | Mean Across {num_seeds} Seeds")
+            plot_mean_figure(runs_by_exp, args.env_id, out_main, args.rolling_window,
+                             title_suffix=f" | Mean Across {num_seeds} Seeds")
 
 
 if __name__ == "__main__":

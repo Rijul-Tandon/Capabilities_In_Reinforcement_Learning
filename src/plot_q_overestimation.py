@@ -209,6 +209,30 @@ DIR_INFO = [
     (2, "West"),
 ]
 
+DIR_ARROWS = {0: "→", 1: "↓", 2: "←", 3: "↑"}
+DIR_NAME_TO_IDX = {"East": 0, "South": 1, "West": 2, "North": 3}
+
+def get_action_arrow_or_symbol(act_name, facing_dir):
+    """
+    Given an action name and agent's facing direction (0=E, 1=S, 2=W, 3=N),
+    returns the resulting movement direction arrow or interaction symbol.
+    """
+    if act_name == "forward":
+        return DIR_ARROWS[facing_dir]
+    elif act_name == "left":
+        return DIR_ARROWS[(facing_dir - 1) % 4]
+    elif act_name == "right":
+        return DIR_ARROWS[(facing_dir + 1) % 4]
+    elif act_name == "pickup":
+        return "P"
+    elif act_name == "drop":
+        return "Dp"
+    elif act_name == "toggle":
+        return "T"
+    elif act_name == "done":
+        return "Dn"
+    return act_name[:1].upper()
+
 
 def _setup_pub_style():
     """Apply publication-grade matplotlib rcParams."""
@@ -311,17 +335,21 @@ def _render_single_direction_plot(env_id, grid_a_d, grid_b_d,
                 if not np.isnan(val_max):
                     txt_c = 'white' if norm_v > 0.6 else 'black'
                     cell_q_vals = grid_d[x, y]
-                    best_a = int(np.nanargmax(cell_q_vals)) if not np.isnan(cell_q_vals).all() else -1
-                    lines = []
-                    for act_idx in range(len(cell_q_vals)):
-                        if act_idx < len(labels):
-                            lbl_name = labels[act_idx]
-                            abbr = abbr_map.get(lbl_name, lbl_name[:1].upper())
-                            star = star_sz if act_idx == best_a else ""
-                            lines.append(f"{abbr}{star}:{cell_q_vals[act_idx]:.2f}")
-                    ax.text(x, y, "\n".join(lines),
-                            ha='center', va='center', color=txt_c,
-                            fontsize=font_sz, fontweight='normal', linespacing=line_spacing)
+                    if not np.isnan(cell_q_vals).all():
+                        max_q = float(np.nanmax(cell_q_vals))
+                        facing_idx = DIR_NAME_TO_IDX.get(d_name, 0)
+                        max_act_indices = [i for i, q in enumerate(cell_q_vals) if np.isclose(q, max_q, atol=1e-5)]
+                        arrows = []
+                        for act_idx in max_act_indices:
+                            if act_idx < len(labels):
+                                sym = get_action_arrow_or_symbol(labels[act_idx], facing_idx)
+                                if sym not in arrows:
+                                    arrows.append(sym)
+                        arrow_str = " ".join(arrows)
+                        cell_text = f"{arrow_str}\n{max_q:.2f}"
+                        ax.text(x, y, cell_text,
+                                ha='center', va='center', color=txt_c,
+                                fontsize=font_sz * 1.3, fontweight='bold', linespacing=1.1)
 
         _style_heatmap_ax(ax, width, height)
 
@@ -447,17 +475,20 @@ def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed, l
                     if not np.isnan(val_max):
                         txt_c = 'white' if norm_v > 0.6 else 'black'
                         cell_q_vals = grid_d[x, y]
-                        best_a = int(np.nanargmax(cell_q_vals)) if not np.isnan(cell_q_vals).all() else -1
-                        lines = []
-                        for act_idx in range(len(cell_q_vals)):
-                            if act_idx < len(labels):
-                                lbl_name = labels[act_idx]
-                                abbr = abbr_map.get(lbl_name, lbl_name[:1].upper())
-                                star = star_sz if act_idx == best_a else ""
-                                lines.append(f"{abbr}{star}:{cell_q_vals[act_idx]:.2f}")
-                        ax.text(x, y, "\n".join(lines),
-                                ha='center', va='center', color=txt_c,
-                                fontsize=font_sz, fontweight='normal', linespacing=line_spacing)
+                        if not np.isnan(cell_q_vals).all():
+                            max_q = float(np.nanmax(cell_q_vals))
+                            max_act_indices = [i for i, q in enumerate(cell_q_vals) if np.isclose(q, max_q, atol=1e-5)]
+                            arrows = []
+                            for act_idx in max_act_indices:
+                                if act_idx < len(labels):
+                                    sym = get_action_arrow_or_symbol(labels[act_idx], d_idx)
+                                    if sym not in arrows:
+                                        arrows.append(sym)
+                            arrow_str = " ".join(arrows)
+                            cell_text = f"{arrow_str}\n{max_q:.2f}"
+                            ax.text(x, y, cell_text,
+                                    ha='center', va='center', color=txt_c,
+                                    fontsize=font_sz * 1.3, fontweight='bold', linespacing=1.1)
 
             _style_heatmap_ax(ax, width, height)
 

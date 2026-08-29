@@ -47,6 +47,9 @@ from pathlib import Path
 # json: Available for reading config files if needed in future extensions.
 import json
 
+# random: Python's random module for uniform sampling.
+import random
+
 # ============================================================================
 # THIRD-PARTY IMPORTS
 # ============================================================================
@@ -86,6 +89,29 @@ import torch
 # make_env: Creates the MiniGrid environment with all wrappers (FullyObs, FlatObs, etc.)
 # action_names: Returns human-readable names for the actions (e.g., ["left", "right", "forward"])
 from dqn_common import QNetwork, make_env, action_names
+
+DIR_ARROWS = {0: "→", 1: "↓", 2: "←", 3: "↑"}
+
+def get_action_arrow_or_symbol(act_name, facing_dir):
+    """
+    Given an action name and agent's facing direction (0=E, 1=S, 2=W, 3=N),
+    returns the resulting movement direction arrow or interaction symbol.
+    """
+    if act_name == "forward":
+        return DIR_ARROWS[facing_dir]
+    elif act_name == "left":
+        return DIR_ARROWS[(facing_dir - 1) % 4]
+    elif act_name == "right":
+        return DIR_ARROWS[(facing_dir + 1) % 4]
+    elif act_name == "pickup":
+        return "P"
+    elif act_name == "drop":
+        return "Dp"
+    elif act_name == "toggle":
+        return "T"
+    elif act_name == "done":
+        return "Dn"
+    return act_name[:1].upper()
 
 
 # ============================================================================
@@ -202,8 +228,10 @@ def get_agent_data(env, q_net, episodes, seed, num_actions, device, target_stage
             else:
                 with torch.no_grad():
                     obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-                    q_values = q_net(obs_tensor)
-                    action = int(torch.argmax(q_values, dim=1).item())
+                    q_values = q_net(obs_tensor).squeeze(0)
+                    max_q = torch.max(q_values)
+                    max_indices = (q_values == max_q).nonzero(as_tuple=True)[0].tolist()
+                    action = int(random.choice(max_indices))
 
             if (target_stage is None or current_stage == target_stage) and agent_pos is not None:
                 agent_dir = env.unwrapped.agent_dir
@@ -343,39 +371,24 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
 
         for x in range(width):
             for y in range(height):
-                f_parts = []
-                other_parts = []
+                symbol_counts = {}
                 for act_idx in range(num_actions):
                     act_name = names[act_idx]
-                    abbr = abbr_map.get(act_name, act_name[:1].upper())
-                    
-                    if act_name == "forward":
-                        for d_idx in range(4):
-                            count = state_action_counts[x, y, act_idx, d_idx]
-                            if count > 0:
-                                f_parts.append(f"{dir_map[d_idx]}:{count}")
-                    else:
-                        count = np.sum(state_action_counts[x, y, act_idx, :])
-                        if count > 0:
-                            other_parts.append(f"{abbr}:{count}")
+                    for d_idx in range(4):
+                        cnt = state_action_counts[x, y, act_idx, d_idx]
+                        if cnt > 0:
+                            sym = get_action_arrow_or_symbol(act_name, d_idx)
+                            symbol_counts[sym] = symbol_counts.get(sym, 0) + cnt
                 
-                lines = []
-                if other_parts:
-                    if len(other_parts) <= 2:
-                        lines.append("  ".join(other_parts))
-                    else:
-                        lines.append("  ".join(other_parts[:2]))
-                        lines.append("  ".join(other_parts[2:]))
-                if f_parts:
-                    lines.append("F: " + " ".join(f_parts))
-
-                cell_text = "\n".join(lines)
-                alpha_val = 1.0 if visit_counts[x, y] > 0 else 0.2
-                
-                if cell_text:
+                if symbol_counts:
+                    max_cnt = max(symbol_counts.values())
+                    max_symbols = [s for s, c in symbol_counts.items() if c == max_cnt]
+                    arrow_str = " ".join(max_symbols)
+                    cell_text = f"{arrow_str}\n{visit_counts[x, y]}"
+                    alpha_val = 1.0 if visit_counts[x, y] > 0 else 0.2
                     axes[0, col].text(
                         x, y, cell_text,
-                        ha="center", va="center", fontsize=6.5, fontweight="bold", color="black", alpha=alpha_val
+                        ha="center", va="center", fontsize=8.0, fontweight="bold", color="black", alpha=alpha_val
                     )
 
         for ax in [axes[0, col]]:

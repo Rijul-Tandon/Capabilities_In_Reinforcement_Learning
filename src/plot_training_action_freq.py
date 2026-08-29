@@ -23,6 +23,25 @@ import matplotlib.patheffects as path_effects
 # We only need action_names to label the text inside the cells.
 from dqn_common import action_names, make_env
 
+DIR_ARROWS = {0: "→", 1: "↓", 2: "←", 3: "↑"}
+
+def get_action_arrow_or_symbol(act_name, facing_dir):
+    if act_name == "forward":
+        return DIR_ARROWS[facing_dir]
+    elif act_name == "left":
+        return DIR_ARROWS[(facing_dir - 1) % 4]
+    elif act_name == "right":
+        return DIR_ARROWS[(facing_dir + 1) % 4]
+    elif act_name == "pickup":
+        return "P"
+    elif act_name == "drop":
+        return "Dp"
+    elif act_name == "toggle":
+        return "T"
+    elif act_name == "done":
+        return "Dn"
+    return act_name[:1].upper()
+
 def get_dirs_by_seed(results_dir, env_id, exp_name):
     """Finds the run directories for a given experiment, grouped by seed."""
     dirs = {}
@@ -179,18 +198,18 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title
                         continue
                         
                     cell_counts = counts[x, y, d_idx, :]
-                    
-                    lines = []
-                    for act_idx, act_name in enumerate(names):
-                        c = cell_counts[act_idx]
-                        if c <= 0:
-                            continue
-                        abbr = abbr_map.get(act_name, act_name[:1].upper())
-                        c_str = f"{c/1000:.1f}k" if c >= 1000 else str(c)
-                        lines.append(f"{abbr}: {c_str}")
-                            
-                    if lines:
-                        text = "\n".join(lines)
+                    total_c = cell_counts.sum()
+                    if total_c > 0:
+                        max_c = cell_counts.max()
+                        max_acts = [act_idx for act_idx, c in enumerate(cell_counts) if c == max_c and c > 0]
+                        symbols = []
+                        for act_idx in max_acts:
+                            sym = get_action_arrow_or_symbol(names[act_idx], d_idx)
+                            if sym not in symbols:
+                                symbols.append(sym)
+                        arrow_str = " ".join(symbols)
+                        c_str = f"{total_c/1000:.1f}k" if total_c >= 1000 else str(total_c)
+                        text = f"{arrow_str}\n{c_str}"
                         max_total = action_total.max()
                         text_color = "white" if max_total > 0 and np.log1p(action_total[x, y]) > np.log1p(max_total) * 0.55 else "black"
                         ax.text(x, y, text, ha="center", va="center", fontsize=8, color=text_color, fontweight="bold")
@@ -224,6 +243,85 @@ def plot_3x4_frequencies(env_id, results_dir, seed, action_set, suffix="", title
     plt.close(fig)
     print(f"Plot saved to {output_path}")
 
+def compute_irrelevant_actions(env_id, run_dir, action_set="task"):
+    """
+    Quantifies ineffective/irrelevant actions taken by the agent:
+    - Bumping into walls (forward action when facing wall or boundary)
+    - Suboptimal pickups (pickup action when no key in front)
+    - Suboptimal toggles (toggle action when no door in front)
+    - Suboptimal drops (drop action when no drop target)
+    """
+    counts_path = run_dir / "state_action_counts.npy"
+    if not counts_path.exists():
+        return None
+
+    counts = np.load(counts_path)
+    env = make_env(env_id, 1, action_set, capture_video=False, run_name="dummy_quant", max_steps=10)
+    env.reset(seed=1)
+    wall_mask, annotations, width, height = extract_layout(env)
+    num_actions = env.action_space.n
+    names = action_names(env_id, action_set, num_actions)
+    env.close()
+
+    dir_offsets = {0: (1, 0), 1: (0, 1), 2: (-1, 0), 3: (0, -1)}
+
+    fwd_idx = names.index("forward") if "forward" in names else -1
+    pickup_idx = names.index("pickup") if "pickup" in names else -1
+    toggle_idx = names.index("toggle") if "toggle" in names else -1
+    drop_idx = names.index("drop") if "drop" in names else -1
+
+    key_pos = [pos for pos, label in annotations.items() if label == "K"]
+    door_pos = [pos for pos, label in annotations.items() if label == "D"]
+
+    if counts.ndim == 5:
+        counts = counts.sum(axis=-1)
+
+    total_actions = counts.sum()
+    wall_bumps = 0
+    suboptimal_pickups = 0
+    suboptimal_toggles = 0
+    suboptimal_drops = 0
+
+    for x in range(width):
+        for y in range(height):
+            if wall_mask[x, y]:
+                continue
+
+            for d_idx in range(4):
+                dx, dy = dir_offsets[d_idx]
+                fx, fy = x + dx, y + dy
+
+                is_front_wall = (
+                    fx < 0 or fx >= width or fy < 0 or fy >= height or wall_mask[fx, fy]
+                )
+                is_front_key = (fx, fy) in key_pos
+                is_front_door = (fx, fy) in door_pos
+
+                if fwd_idx != -1 and is_front_wall:
+                    wall_bumps += counts[x, y, d_idx, fwd_idx]
+                if pickup_idx != -1 and not is_front_key:
+                    suboptimal_pickups += counts[x, y, d_idx, pickup_idx]
+                if toggle_idx != -1 and not is_front_door:
+                    suboptimal_toggles += counts[x, y, d_idx, toggle_idx]
+                if drop_idx != -1:
+                    suboptimal_drops += counts[x, y, d_idx, drop_idx]
+
+    total_irrelevant = wall_bumps + suboptimal_pickups + suboptimal_toggles + suboptimal_drops
+    pct_irrelevant = (total_irrelevant / total_actions * 100.0) if total_actions > 0 else 0.0
+    pct_wall_bumps = (wall_bumps / total_actions * 100.0) if total_actions > 0 else 0.0
+
+    return {
+        "total_actions": int(total_actions),
+        "wall_bumps": int(wall_bumps),
+        "pct_wall_bumps": float(pct_wall_bumps),
+        "suboptimal_pickups": int(suboptimal_pickups),
+        "suboptimal_toggles": int(suboptimal_toggles),
+        "suboptimal_drops": int(suboptimal_drops),
+        "total_irrelevant": int(total_irrelevant),
+        "pct_irrelevant": float(pct_irrelevant),
+    }
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-id", type=str, default="MiniGrid-Empty-8x8-v0")
@@ -250,17 +348,44 @@ if __name__ == "__main__":
 
     env_clean = "DoorKey" if "DoorKey" in args.env_id else ("Empty" if "Empty" in args.env_id else args.env_id)
 
+    print(f"=== Irrelevant Actions & Wall Bump Quantification for {args.env_id} ===")
+    shaped_dirs = get_dirs_by_seed(args.results_dir, args.env_id, "ddqn_reward_shaping")
+    if not shaped_dirs:
+        shaped_dirs = get_dirs_by_seed(args.results_dir, args.env_id, "dqn_reward_shaping")
+
+    quant_results = {}
     for seed in seeds:
-        dir_50 = Path(args.plots_dir) / "last_50_percent" / env_clean / f"seed_{seed}"
+        b_dir = baseline_dirs.get(seed)
+        s_dir = shaped_dirs.get(seed)
+
+        b_stats = compute_irrelevant_actions(args.env_id, b_dir, args.action_set) if b_dir else None
+        s_stats = compute_irrelevant_actions(args.env_id, s_dir, args.action_set) if s_dir else None
+
+        quant_results[seed] = {"baseline": b_stats, "reward_shaping": s_stats}
+
+        if b_stats:
+            print(f"[Seed {seed} Baseline]   Total Steps: {b_stats['total_actions']} | Wall Bumps: {b_stats['wall_bumps']} ({b_stats['pct_wall_bumps']:.1f}%) | Suboptimal Pickup/Toggle: {b_stats['suboptimal_pickups'] + b_stats['suboptimal_toggles']} | Total Irrelevant: {b_stats['total_irrelevant']} ({b_stats['pct_irrelevant']:.1f}%)")
+        if s_stats:
+            print(f"[Seed {seed} RS-DDQN]     Total Steps: {s_stats['total_actions']} | Wall Bumps: {s_stats['wall_bumps']} ({s_stats['pct_wall_bumps']:.1f}%) | Suboptimal Pickup/Toggle: {s_stats['suboptimal_pickups'] + s_stats['suboptimal_toggles']} | Total Irrelevant: {s_stats['total_irrelevant']} ({s_stats['pct_irrelevant']:.1f}%)")
+
+    # Save summary json
+    quant_path = Path(args.plots_dir) / f"{args.env_id}_irrelevant_actions_quantification.json"
+    quant_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(quant_path, "w", encoding="utf-8") as f:
+        json.dump(quant_results, f, indent=2)
+    print(f"Quantification report saved to {quant_path}")
+
+    for seed in seeds:
+        dir_100 = Path(args.plots_dir) / "full_100_percent" / env_clean / f"seed_{seed}"
         dir_25 = Path(args.plots_dir) / "last_25_percent" / env_clean / f"seed_{seed}"
 
         for stage_idx, stage_name in stages_to_run:
             s_title = f" [{stage_name}]" if stage_name else ""
-            print(f"Generating training action freq plot for {args.env_id} seed={seed} (Last 50%{s_title}) ...")
+            print(f"Generating training action freq plot for {args.env_id} seed={seed} (Full 100%{s_title}) ...")
             plot_3x4_frequencies(
                 args.env_id, args.results_dir, seed, args.action_set, 
-                suffix="_last_half", title_suffix=f"(Last 50%{s_title})", 
-                plots_dir=dir_50,
+                suffix="", title_suffix=f"(Full 100% - All Steps{s_title})", 
+                plots_dir=dir_100,
                 stage_idx=stage_idx, stage_name=stage_name
             )
             print(f"Generating training action freq plot for {args.env_id} seed={seed} (Last 25%{s_title}) ...")
