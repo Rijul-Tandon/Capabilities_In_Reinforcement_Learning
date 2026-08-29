@@ -311,7 +311,7 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
     plt.rcParams['font.family'] = 'sans-serif'
     plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
 
-    fig, axes = plt.subplots(1, len(agents), figsize=(6.2 * len(agents), 5.5), squeeze=False)
+    fig, axes = plt.subplots(1, len(agents), figsize=(8.5 * len(agents), 7.5), squeeze=False)
     title_suffix = f" [{stage_name}]" if stage_name else ""
     eps_label = "Greedy (Q-values)" if epsilon == 0.0 else f"5% Exploration (ε={epsilon:g})"
     fig.suptitle(
@@ -336,10 +336,10 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
 
         for ax_row in [0]:
             if layout["start"] and "Start" not in legend_handles:
-                h, = axes[ax_row, col].plot(layout["start"][0], layout["start"][1], 'bo', markersize=9, markeredgecolor='white', label="Start")
+                h, = axes[ax_row, col].plot(layout["start"][0] - 0.35, layout["start"][1] - 0.35, 'bo', markersize=9, markeredgecolor='white', label="Start")
                 legend_handles["Start"] = h
             elif layout["start"]:
-                axes[ax_row, col].plot(layout["start"][0], layout["start"][1], 'bo', markersize=9, markeredgecolor='white')
+                axes[ax_row, col].plot(layout["start"][0] - 0.35, layout["start"][1] - 0.35, 'bo', markersize=9, markeredgecolor='white')
 
             if layout["goal"] and "Goal" not in legend_handles:
                 h, = axes[ax_row, col].plot(layout["goal"][0], layout["goal"][1], 'g*', markersize=14, markeredgecolor='white', label="Goal")
@@ -390,7 +390,7 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
                 if symbol_counts:
                     max_cnt = max(symbol_counts.values())
                     max_symbols = [s for s, c in symbol_counts.items() if c == max_cnt]
-                    arrow_str = " ".join(max_symbols)
+                    arrow_str = "\n".join(max_symbols)
                     cell_text = f"{arrow_str}\n{visit_counts[x, y]}"
                     alpha_val = 1.0 if visit_counts[x, y] > 0 else 0.2
                     axes[0, col].text(
@@ -416,8 +416,9 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
                 annotations[(kx, ky)] = "K"
 
             for (ax_x, ax_y), label in annotations.items():
+                offset_x, offset_y = (-0.35, -0.35) if label == "S" else (0.32, -0.32)
                 ax.text(
-                    ax_x + 0.32, ax_y - 0.32, label,
+                    ax_x + offset_x, ax_y + offset_y, label,
                     color='white', fontsize=10, fontweight='bold',
                     ha='center', va='center',
                     path_effects=[path_effects.withStroke(linewidth=2, foreground='black')]
