@@ -1,4 +1,4 @@
-name: Run Experiments (200k Steps)
+name: Run Agent Comparison Experiments
 
 on:
   workflow_dispatch:  # Trigger manually from GitHub UI or `gh workflow run`
@@ -13,7 +13,7 @@ on:
           - 8x8
           - 10x10
       num_seeds:
-        description: 'Number of seeds to run (1 to 10)'
+        description: 'Number of seeds for experiments (1 to 10)'
         required: false
         default: '3'
       max_steps:
@@ -53,19 +53,19 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
         
-      - name: "Run Agent (Dynamic Steps, environment-specific decay schedules)"
+      - name: "Run Agents Across All Requested Seeds"
         run: |
+          GRID_SIZE="${{ github.event.inputs.grid_size || '6x6' }}"
+          ENV_ID=$(echo "${{ matrix.env_id }}" | sed "s/6x6/$GRID_SIZE/")
+
+          # Skip seeds beyond user-requested num_seeds
           NUM_SEEDS="${{ github.event.inputs.num_seeds || '3' }}"
           if [ "${{ matrix.seed }}" -gt "$NUM_SEEDS" ]; then
-            echo "Skipping seed ${{ matrix.seed }} (requested num_seeds=$NUM_SEEDS)"
+            echo "Skipping seed ${{ matrix.seed }} for $ENV_ID (requested num_seeds=$NUM_SEEDS)"
             exit 0
           fi
 
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
-          GRID_SIZE="${{ github.event.inputs.grid_size || '6x6' }}"
-          
-          # Replace 6x6 in the matrix env_id with the selected grid_size
-          ENV_ID=$(echo "${{ matrix.env_id }}" | sed "s/6x6/$GRID_SIZE/")
 
           if [ "$GRID_SIZE" = "10x10" ]; then
             TIMESTEPS=2000000
@@ -98,8 +98,8 @@ jobs:
           retention-days: 14
 
   plot:
-    name: Generate Plots & Push to Repo
-    needs: train  # Wait for all matrix training jobs to finish
+    name: Compare Agents, Generate Plots & Push to Repo
+    needs: train  # Wait for all training matrix jobs to finish
     runs-on: ubuntu-latest
     permissions:
       contents: write  # Needed to push commits back to the repo
@@ -126,11 +126,11 @@ jobs:
       - name: Upload All Combined Results Zip
         uses: actions/upload-artifact@v4
         with:
-          name: all_combined_results_${{ github.event.inputs.grid_size || '6x6' }}
+          name: agent_comparison_combined_results_${{ github.event.inputs.grid_size || '6x6' }}
           path: results/
           retention-days: 14
 
-      - name: Generate All Comparison and Analysis Plots
+      - name: Generate Agent Comparison, Q-Overestimation & State-Action Frequency Plots
         run: |
           TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
           PLOTS_DIR="plots/plots_${TIMESTAMP}"
@@ -138,26 +138,19 @@ jobs:
           
           GRID_SIZE="${{ github.event.inputs.grid_size || '6x6' }}"
           for env in "MiniGrid-Empty-Random-${GRID_SIZE}-v0" "MiniGrid-DoorKey-${GRID_SIZE}-v0"; do
-            echo "Generating all plots for $env..."
+            echo "Generating all comparison and evaluation plots for $env..."
             python src/plot_comparison.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison"
             python src/plot_q_overestimation.py --env-id $env --plots-dir "$PLOTS_DIR"
             python src/plot_state_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison"
             python src/plot_training_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/action_freq"
           done
 
-      - name: Run Statistical Analysis
-        run: |
-          GRID_SIZE="${{ github.event.inputs.grid_size || '6x6' }}"
-          TIMESTAMP=$(ls -d plots/plots_* 2>/dev/null | sort | tail -1 | xargs basename)
-          PLOTS_DIR="plots/${TIMESTAMP}"
-          python src/statistical_analysis.py --results-dir results --output-dir "$PLOTS_DIR"
-          
-      - name: Commit and Push Plots
+      - name: Commit and Push Evaluation Plots
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
           git add plots/
-          git commit -m "Auto-generated timestamped structured evaluation plots" || echo "No changes to commit"
+          git commit -m "Auto-generated agent comparison and frequency evaluation plots" || echo "No changes to commit"
           git pull --rebase origin main
           git push origin main

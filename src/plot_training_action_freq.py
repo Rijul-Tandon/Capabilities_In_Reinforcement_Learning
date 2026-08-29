@@ -26,21 +26,23 @@ from dqn_common import action_names, make_env
 DIR_ARROWS = {0: "→", 1: "↓", 2: "←", 3: "↑"}
 
 def get_action_arrow_or_symbol(act_name, facing_dir):
-    if act_name == "forward":
-        return DIR_ARROWS[facing_dir]
-    elif act_name == "left":
-        return DIR_ARROWS[(facing_dir - 1) % 4]
-    elif act_name == "right":
-        return DIR_ARROWS[(facing_dir + 1) % 4]
-    elif act_name == "pickup":
-        return "P"
-    elif act_name == "drop":
-        return "Dp"
-    elif act_name == "toggle":
-        return "T"
-    elif act_name == "done":
-        return "Dn"
-    return act_name[:1].upper()
+    """
+    Given an action name and agent's facing direction (0=E, 1=S, 2=W, 3=N),
+    returns the resulting movement direction arrow along with the action abbreviation.
+    """
+    abbr_map = {
+        "left": "L", "right": "R", "forward": "F",
+        "pickup": "P", "drop": "Dp", "toggle": "T", "done": "Dn"
+    }
+    abbr = abbr_map.get(act_name.lower(), act_name[:1].upper())
+
+    if act_name.lower() == "forward":
+        return f"{DIR_ARROWS[facing_dir]} {abbr}"
+    elif act_name.lower() == "left":
+        return f"{DIR_ARROWS[(facing_dir - 1) % 4]} {abbr}"
+    elif act_name.lower() == "right":
+        return f"{DIR_ARROWS[(facing_dir + 1) % 4]} {abbr}"
+    return abbr
 
 def get_dirs_by_seed(results_dir, env_id, exp_name):
     """Finds the run directories for a given experiment, grouped by seed."""

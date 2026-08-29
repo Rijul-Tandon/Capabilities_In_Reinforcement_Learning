@@ -95,23 +95,21 @@ DIR_ARROWS = {0: "→", 1: "↓", 2: "←", 3: "↑"}
 def get_action_arrow_or_symbol(act_name, facing_dir):
     """
     Given an action name and agent's facing direction (0=E, 1=S, 2=W, 3=N),
-    returns the resulting movement direction arrow or interaction symbol.
+    returns the resulting movement direction arrow along with the action abbreviation.
     """
-    if act_name == "forward":
-        return DIR_ARROWS[facing_dir]
-    elif act_name == "left":
-        return DIR_ARROWS[(facing_dir - 1) % 4]
-    elif act_name == "right":
-        return DIR_ARROWS[(facing_dir + 1) % 4]
-    elif act_name == "pickup":
-        return "P"
-    elif act_name == "drop":
-        return "Dp"
-    elif act_name == "toggle":
-        return "T"
-    elif act_name == "done":
-        return "Dn"
-    return act_name[:1].upper()
+    abbr_map = {
+        "left": "L", "right": "R", "forward": "F",
+        "pickup": "P", "drop": "Dp", "toggle": "T", "done": "Dn"
+    }
+    abbr = abbr_map.get(act_name.lower(), act_name[:1].upper())
+
+    if act_name.lower() == "forward":
+        return f"{DIR_ARROWS[facing_dir]} {abbr}"
+    elif act_name.lower() == "left":
+        return f"{DIR_ARROWS[(facing_dir - 1) % 4]} {abbr}"
+    elif act_name.lower() == "right":
+        return f"{DIR_ARROWS[(facing_dir + 1) % 4]} {abbr}"
+    return abbr
 
 
 # ============================================================================
@@ -159,7 +157,7 @@ def get_models_by_seed(results_dir, env_id, exp_name):
     return models  # {seed: Path}
 
 
-def get_agent_data(env, q_net, episodes, seed, num_actions, device, target_stage=None):
+def get_agent_data(env, q_net, episodes, seed, num_actions, device, target_stage=None, epsilon=0.0):
     """
     Runs an agent through the environment for multiple episodes and records
     which tiles it visits and which actions it takes, optionally filtered to a specific task stage:
@@ -226,12 +224,15 @@ def get_agent_data(env, q_net, episodes, seed, num_actions, device, target_stage
             if q_net is None:
                 action = env.action_space.sample()
             else:
-                with torch.no_grad():
-                    obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-                    q_values = q_net(obs_tensor).squeeze(0)
-                    max_q = torch.max(q_values)
-                    max_indices = (q_values == max_q).nonzero(as_tuple=True)[0].tolist()
-                    action = int(random.choice(max_indices))
+                if random.random() < epsilon:
+                    action = env.action_space.sample()
+                else:
+                    with torch.no_grad():
+                        obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+                        q_values = q_net(obs_tensor).squeeze(0)
+                        max_q = torch.max(q_values)
+                        max_indices = (q_values == max_q).nonzero(as_tuple=True)[0].tolist()
+                        action = int(random.choice(max_indices))
 
             if (target_stage is None or current_stage == target_stage) and agent_pos is not None:
                 agent_dir = env.unwrapped.agent_dir
@@ -262,7 +263,7 @@ def get_decay_str(model_path):
             pass
     return ""
 
-def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=256, action_set="task", include_random=True, target_stage=None, stage_name="", plots_dir="plots/reward_comparison"):
+def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=256, action_set="task", include_random=True, target_stage=None, stage_name="", plots_dir="plots/reward_comparison", epsilon=0.0):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     env = make_env(env_id, seed, action_set)
@@ -307,8 +308,9 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
 
     fig, axes = plt.subplots(1, len(agents), figsize=(6.2 * len(agents), 5.5), squeeze=False)
     title_suffix = f" [{stage_name}]" if stage_name else ""
+    eps_label = "Greedy (Q-values)" if epsilon == 0.0 else f"5% Exploration (ε={epsilon:g})"
     fig.suptitle(
-        f"{env_id}{title_suffix} — Evaluation Test (Seed {seed})",
+        f"{env_id}{title_suffix} — Evaluation Test [{eps_label}] (Seed {seed})",
         fontsize=17, fontweight="bold", y=1.05
     )
 
@@ -320,7 +322,7 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
             continue
 
         visit_counts, state_action_counts, layout = get_agent_data(
-            env, q_net, episodes, seed, num_actions, device, target_stage=target_stage
+            env, q_net, episodes, seed, num_actions, device, target_stage=target_stage, epsilon=epsilon
         )
 
         if visit_counts.sum() == 0:
@@ -444,8 +446,19 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
     suffix = f"_{stage_name.lower().replace(' ', '_')}" if stage_name else ""
     output_dir = Path(plots_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{env_id}_test_seed{seed}{suffix}.png"
+
+    if epsilon == 0.0:
+        eps_suffix = "_q_values"
+    else:
+        eps_suffix = f"_eps_{epsilon:g}".replace(".", "_")
+
+    output_path = output_dir / f"{env_id}_test_seed{seed}{eps_suffix}{suffix}.png"
     plt.savefig(output_path, dpi=200, bbox_inches="tight")
+
+    if epsilon == 0.0:
+        compat_path = output_dir / f"{env_id}_test_seed{seed}{suffix}.png"
+        plt.savefig(compat_path, dpi=200, bbox_inches="tight")
+
     plt.close(fig)
     print(f"Test plot saved to {output_path}")
 
@@ -462,6 +475,7 @@ if __name__ == "__main__":
     parser.add_argument("--episodes", type=int, default=1)
     parser.add_argument("--action-set", choices=["task", "full"], default="task")
     parser.add_argument("--plots-dir", type=str, default="plots/reward_comparison")
+    parser.add_argument("--epsilons", nargs="+", type=float, default=[0.0, 0.05], help="Epsilon exploration values for evaluation (default: 0.0 0.05)")
 
     args = parser.parse_args()
 
@@ -480,22 +494,25 @@ if __name__ == "__main__":
 
     print(f"Found seeds: {all_seeds} for {args.env_id}")
 
-    first_seed = all_seeds[0]
     stages_to_run = [(None, "")]
 
     for seed in all_seeds:
         for stage_num, stage_name in stages_to_run:
-            print(f"Generating combined test plot for seed={seed} ...")
-            plot_all_frequencies(
-                env_id=args.env_id,
-                results_dir=args.results_dir,
-                episodes=args.episodes,
-                seed=seed,
-                action_set=args.action_set,
-                include_random=False,
-                target_stage=stage_num,
-                stage_name=stage_name,
-                plots_dir=args.plots_dir,
-            )
+            for eps in args.epsilons:
+                mode_desc = "Greedy Q-values" if eps == 0.0 else f"{eps*100:g}% random exploration"
+                print(f"Generating combined test plot for seed={seed} ({mode_desc}) ...")
+                plot_all_frequencies(
+                    env_id=args.env_id,
+                    results_dir=args.results_dir,
+                    episodes=args.episodes,
+                    seed=seed,
+                    action_set=args.action_set,
+                    include_random=False,
+                    target_stage=stage_num,
+                    stage_name=stage_name,
+                    plots_dir=args.plots_dir,
+                    epsilon=eps,
+                )
 
     print(f"Done. Performance test plots saved to {args.plots_dir}")
+

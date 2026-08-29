@@ -551,12 +551,16 @@ class ReplayBuffer:
 # EXPLORATION SCHEDULE
 # ============================================================================
 
-def linear_schedule(start_e, end_e, duration, step):
+def linear_schedule(start_e, end_e, duration, step, start_delay=0):
     """
     Computes the current epsilon value for epsilon-greedy exploration using a linear decay.
+    Supports an optional start_delay (steps before linear decay begins).
     """
+    if step < start_delay:
+        return start_e
+    adjusted_step = step - start_delay
     slope = (end_e - start_e) / duration
-    return max(slope * step + start_e, end_e)
+    return max(slope * adjusted_step + start_e, end_e)
 
 def polynomial_schedule(start_e, end_e, duration, step, power=4.0):
     """
@@ -1012,13 +1016,11 @@ def train(args, use_shaping):
                 action = env.action_space.sample()
                 was_random = True
             else:
-                # Exploit: choice among highest Q-values with random tie-breaking
+                # Exploit: pure greedy action choice (argmax Q-value)
                 with torch.no_grad():
                     obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-                    q_values = q_net(obs_tensor).squeeze(0)
-                    max_q = torch.max(q_values)
-                    max_indices = (q_values == max_q).nonzero(as_tuple=True)[0].tolist()
-                    action = int(random.choice(max_indices))
+                    q_values = q_net(obs_tensor)
+                    action = int(torch.argmax(q_values, dim=1).item())
 
         # Determine current stage monotonically for the episode
         carrying = getattr(env.unwrapped, 'carrying', None)
