@@ -1,2 +1,0 @@
-env_id,N,baseline_reward_mean,baseline_reward_std,shaped_reward_mean,shaped_reward_std,reward_pct_improvement,reward_W,reward_Z,reward_p,reward_r,reward_sig,reward_effect_label,baseline_goal_mean,baseline_goal_std,shaped_goal_mean,shaped_goal_std,goal_pct_improvement,goal_W,goal_Z,goal_p,goal_r,goal_sig,goal_effect_label
-MiniGrid-Empty-Random-10x10-v0,3,-0.296,0.272,0.8956,0.041,402.59,0.0,1.1503,0.25,0.6642,ns,Large,0.5445,0.1045,0.9999,0.0001,83.62,0.0,1.1503,0.25,0.6642,ns,Large
