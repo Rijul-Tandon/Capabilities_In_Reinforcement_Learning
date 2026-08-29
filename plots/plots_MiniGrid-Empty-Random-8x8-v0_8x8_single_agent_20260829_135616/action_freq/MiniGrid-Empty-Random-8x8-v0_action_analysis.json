@@ -1,0 +1,487 @@
+{
+  "environment": "MiniGrid-Empty-Random-8x8-v0",
+  "num_seeds": 5,
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "grid_size": "8x8",
+  "aggregated_summary": {
+    "full_training": {
+      "all_stages": {
+        "Baseline DDQN": {
+          "mean_pct_irrelevant": 2.07,
+          "mean_pct_wall_bumps": 2.07,
+          "mean_pct_suboptimal_pickups": 0.0,
+          "mean_pct_suboptimal_toggles": 0.0,
+          "mean_pct_suboptimal_drops": 0.0,
+          "num_seeds": 5
+        },
+        "RS-DDQN": {
+          "mean_pct_irrelevant": 1.85,
+          "mean_pct_wall_bumps": 1.85,
+          "mean_pct_suboptimal_pickups": 0.0,
+          "mean_pct_suboptimal_toggles": 0.0,
+          "mean_pct_suboptimal_drops": 0.0,
+          "num_seeds": 5
+        },
+        "rs_ddqn_improvement": {
+          "absolute_reduction_pct_points": 0.22,
+          "relative_improvement_pct": 10.61
+        }
+      }
+    },
+    "last_50_pct": {
+      "all_stages": {
+        "Baseline DDQN": {
+          "mean_pct_irrelevant": 0.54,
+          "mean_pct_wall_bumps": 0.54,
+          "mean_pct_suboptimal_pickups": 0.0,
+          "mean_pct_suboptimal_toggles": 0.0,
+          "mean_pct_suboptimal_drops": 0.0,
+          "num_seeds": 5
+        },
+        "RS-DDQN": {
+          "mean_pct_irrelevant": 0.16,
+          "mean_pct_wall_bumps": 0.16,
+          "mean_pct_suboptimal_pickups": 0.0,
+          "mean_pct_suboptimal_toggles": 0.0,
+          "mean_pct_suboptimal_drops": 0.0,
+          "num_seeds": 5
+        },
+        "rs_ddqn_improvement": {
+          "absolute_reduction_pct_points": 0.39,
+          "relative_improvement_pct": 71.22
+        }
+      }
+    },
+    "last_25_pct": {
+      "all_stages": {
+        "Baseline DDQN": {
+          "mean_pct_irrelevant": 0.26,
+          "mean_pct_wall_bumps": 0.26,
+          "mean_pct_suboptimal_pickups": 0.0,
+          "mean_pct_suboptimal_toggles": 0.0,
+          "mean_pct_suboptimal_drops": 0.0,
+          "num_seeds": 5
+        },
+        "RS-DDQN": {
+          "mean_pct_irrelevant": 0.16,
+          "mean_pct_wall_bumps": 0.16,
+          "mean_pct_suboptimal_pickups": 0.0,
+          "mean_pct_suboptimal_toggles": 0.0,
+          "mean_pct_suboptimal_drops": 0.0,
+          "num_seeds": 5
+        },
+        "rs_ddqn_improvement": {
+          "absolute_reduction_pct_points": 0.1,
+          "relative_improvement_pct": 36.92
+        }
+      }
+    }
+  },
+  "per_seed_details": {
+    "seed_1": {
+      "full_training": {
+        "all_stages": {
+          "baseline": {
+            "pct_irrelevant": 1.93,
+            "pct_wall_bumps": 1.93,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 4379,
+              "South": 3104,
+              "West": 1415,
+              "North": 763
+            }
+          },
+          "rs_ddqn": {
+            "pct_irrelevant": 1.66,
+            "pct_wall_bumps": 1.66,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 3370,
+              "South": 3051,
+              "West": 1127,
+              "North": 738
+            }
+          }
+        }
+      },
+      "last_50_pct": {
+        "all_stages": {
+          "baseline": {
+            "pct_irrelevant": 0.7,
+            "pct_wall_bumps": 0.7,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 1094,
+              "South": 211,
+              "West": 392,
+              "North": 45
+            }
+          },
+          "rs_ddqn": {
+            "pct_irrelevant": 0.22,
+            "pct_wall_bumps": 0.22,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 238,
+              "South": 197,
+              "West": 113
+            }
+          }
+        }
+      },
+      "last_25_pct": {
+        "all_stages": {
+          "baseline": {
+            "pct_irrelevant": 0.26,
+            "pct_wall_bumps": 0.26,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 323,
+              "South": 2
+            }
+          },
+          "rs_ddqn": {
+            "pct_irrelevant": 0.22,
+            "pct_wall_bumps": 0.22,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 179,
+              "South": 50,
+              "West": 40
+            }
+          }
+        }
+      }
+    },
+    "seed_2": {
+      "full_training": {
+        "all_stages": {
+          "baseline": {
+            "pct_irrelevant": 2.51,
+            "pct_wall_bumps": 2.51,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 9567,
+              "South": 1187,
+              "West": 500,
+              "North": 1307
+            }
+          },
+          "rs_ddqn": {
+            "pct_irrelevant": 2.24,
+            "pct_wall_bumps": 2.24,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 8255,
+              "South": 1160,
+              "West": 485,
+              "North": 1315
+            }
+          }
+        }
+      },
+      "last_50_pct": {
+        "all_stages": {
+          "baseline": {
+            "pct_irrelevant": 0.59,
+            "pct_wall_bumps": 0.59,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 1419,
+              "West": 4,
+              "North": 59
+            }
+          },
+          "rs_ddqn": {
+            "pct_irrelevant": 0.12,
+            "pct_wall_bumps": 0.12,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 249,
+              "South": 36,
+              "West": 24
+            }
+          }
+        }
+      },
+      "last_25_pct": {
+        "all_stages": {
+          "baseline": {
+            "pct_irrelevant": 0.3,
+            "pct_wall_bumps": 0.3,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 374
+            }
+          },
+          "rs_ddqn": {
+            "pct_irrelevant": 0.13,
+            "pct_wall_bumps": 0.13,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 168
+            }
+          }
+        }
+      }
+    },
+    "seed_3": {
+      "full_training": {
+        "all_stages": {
+          "baseline": {
+            "pct_irrelevant": 2.34,
+            "pct_wall_bumps": 2.34,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 4161,
+              "South": 2379,
+              "West": 1638,
+              "North": 3521
+            }
+          },
+          "rs_ddqn": {
+            "pct_irrelevant": 1.88,
+            "pct_wall_bumps": 1.88,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 3049,
+              "South": 2114,
+              "West": 1631,
+              "North": 2596
+            }
+          }
+        }
+      },
+      "last_50_pct": {
+        "all_stages": {
+          "baseline": {
+            "pct_irrelevant": 0.99,
+            "pct_wall_bumps": 0.99,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 1069,
+              "South": 314,
+              "West": 74,
+              "North": 1014
+            }
+          },
+          "rs_ddqn": {
+            "pct_irrelevant": 0.12,
+            "pct_wall_bumps": 0.12,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 174,
+              "South": 46,
+              "North": 89
+            }
+          }
+        }
+      },
+      "last_25_pct": {
+        "all_stages": {
+          "baseline": {
+            "pct_irrelevant": 0.64,
+            "pct_wall_bumps": 0.64,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 321,
+              "South": 51,
+              "North": 422
+            }
+          },
+          "rs_ddqn": {
+            "pct_irrelevant": 0.17,
+            "pct_wall_bumps": 0.17,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 130,
+              "South": 33,
+              "North": 52
+            }
+          }
+        }
+      }
+    },
+    "seed_4": {
+      "full_training": {
+        "all_stages": {
+          "baseline": {
+            "pct_irrelevant": 1.91,
+            "pct_wall_bumps": 1.91,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 2381,
+              "South": 5621,
+              "West": 1002,
+              "North": 550
+            }
+          },
+          "rs_ddqn": {
+            "pct_irrelevant": 1.82,
+            "pct_wall_bumps": 1.82,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 2187,
+              "South": 5414,
+              "West": 950,
+              "North": 532
+            }
+          }
+        }
+      },
+      "last_50_pct": {
+        "all_stages": {
+          "baseline": {
+            "pct_irrelevant": 0.37,
+            "pct_wall_bumps": 0.37,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 250,
+              "South": 615,
+              "West": 66
+            }
+          },
+          "rs_ddqn": {
+            "pct_irrelevant": 0.21,
+            "pct_wall_bumps": 0.21,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 92,
+              "South": 416,
+              "West": 26
+            }
+          }
+        }
+      },
+      "last_25_pct": {
+        "all_stages": {
+          "baseline": {
+            "pct_irrelevant": 0.1,
+            "pct_wall_bumps": 0.1,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 1,
+              "South": 126
+            }
+          },
+          "rs_ddqn": {
+            "pct_irrelevant": 0.19,
+            "pct_wall_bumps": 0.19,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 82,
+              "South": 125,
+              "West": 26
+            }
+          }
+        }
+      }
+    },
+    "seed_5": {
+      "full_training": {
+        "all_stages": {
+          "baseline": {
+            "pct_irrelevant": 1.68,
+            "pct_wall_bumps": 1.68,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 1734,
+              "South": 5644,
+              "West": 575,
+              "North": 448
+            }
+          },
+          "rs_ddqn": {
+            "pct_irrelevant": 1.67,
+            "pct_wall_bumps": 1.67,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 1804,
+              "South": 5595,
+              "West": 496,
+              "North": 472
+            }
+          }
+        }
+      },
+      "last_50_pct": {
+        "all_stages": {
+          "baseline": {
+            "pct_irrelevant": 0.06,
+            "pct_wall_bumps": 0.06,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "South": 162
+            }
+          },
+          "rs_ddqn": {
+            "pct_irrelevant": 0.11,
+            "pct_wall_bumps": 0.11,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "East": 38,
+              "South": 234
+            }
+          }
+        }
+      },
+      "last_25_pct": {
+        "all_stages": {
+          "baseline": {
+            "pct_irrelevant": 0.0,
+            "pct_wall_bumps": 0.0,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "South": 2
+            }
+          },
+          "rs_ddqn": {
+            "pct_irrelevant": 0.11,
+            "pct_wall_bumps": 0.11,
+            "pct_suboptimal_pickups": 0.0,
+            "pct_suboptimal_drops": 0.0,
+            "wall_bumps_by_direction": {
+              "South": 136
+            }
+          }
+        }
+      }
+    }
+  }
+}
