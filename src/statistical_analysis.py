@@ -64,8 +64,13 @@ def discover_runs(results_dir, env_id, exp_name):
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 config = json.load(f)
-            seed = int(config["seed"])
-        except (KeyError, ValueError, json.JSONDecodeError):
+            seed_val = config.get("seed", 1)
+            if isinstance(seed_val, list):
+                if not seed_val: continue
+                seed = int(seed_val[0])
+            else:
+                seed = int(seed_val)
+        except (KeyError, ValueError, TypeError, json.JSONDecodeError):
             continue
 
         runs[seed] = run_dir

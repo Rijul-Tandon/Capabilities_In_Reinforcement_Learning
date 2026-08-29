@@ -106,7 +106,14 @@ def load_runs(results_dir, env_id):
             exp_name = config.get("exp_name", "unknown")
             if exp_name == "random_agent":
                 continue
-            seed = int(config.get("seed", 1))
+            seed_val = config.get("seed", 1)
+            if isinstance(seed_val, list):
+                seed = int(seed_val[0])
+            else:
+                try:
+                    seed = int(seed_val)
+                except (ValueError, TypeError):
+                    seed = 1
             
             if exp_name not in runs_by_exp:
                 runs_by_exp[exp_name] = {}
