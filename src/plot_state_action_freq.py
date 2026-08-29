@@ -485,7 +485,8 @@ if __name__ == "__main__":
 
     if not all_seeds:
         print(f"No trained models found for {args.env_id} in {args.results_dir}")
-        raise SystemExit(1)
+        import sys
+        sys.exit(0)
 
     print(f"Found seeds: {all_seeds} for {args.env_id}")
 

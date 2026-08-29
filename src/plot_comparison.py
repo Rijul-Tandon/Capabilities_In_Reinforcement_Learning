@@ -67,31 +67,40 @@ def load_runs(results_dir, env_id):
         rows = []
         with open(episode_path, "r", encoding="utf-8") as f:
             for row in csv.DictReader(f):
-                rows.append(
-                    {
-                        "global_step": int(row["global_step"]),
-                        "episodic_return": float(row["episodic_return"]),
-                        "goal_reached": float(row["goal_reached"]),
-                        "epsilon": float(row.get("epsilon", 0.0)),
-                    }
-                )
+                if not row or "global_step" not in row or row["global_step"] is None or row["global_step"] == "":
+                    continue
+                try:
+                    rows.append(
+                        {
+                            "global_step": int(float(row["global_step"])),
+                            "episodic_return": float(row.get("episodic_return", 0.0)),
+                            "goal_reached": float(row.get("goal_reached", 0.0)),
+                            "epsilon": float(row.get("epsilon", 0.0)),
+                        }
+                    )
+                except (ValueError, KeyError) as e:
+                    continue
 
         metric_path = run_dir / "metrics.csv"
         metric_rows = []
         if metric_path.exists():
             with open(metric_path, "r", encoding="utf-8") as f:
                 for row in csv.DictReader(f):
-                    loss_val = row.get("td_loss", "nan")
+                    if not row or "global_step" not in row or row["global_step"] is None or row["global_step"] == "":
+                        continue
                     try:
-                        loss_val = float(loss_val)
-                    except ValueError:
+                        loss_val = float(row.get("td_loss", "nan"))
+                    except (ValueError, TypeError):
                         loss_val = float("nan")
-                    metric_rows.append(
-                        {
-                            "global_step": int(row["global_step"]),
-                            "td_loss": loss_val,
-                        }
-                    )
+                    try:
+                        metric_rows.append(
+                            {
+                                "global_step": int(float(row["global_step"])),
+                                "td_loss": loss_val,
+                            }
+                        )
+                    except (ValueError, KeyError):
+                        continue
 
         if rows:
             exp_name = config.get("exp_name", "unknown")
