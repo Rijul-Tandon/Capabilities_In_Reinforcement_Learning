@@ -510,12 +510,9 @@ def main():
         # 2. Mean comparison plot across ALL executed seeds
         if all_seeds:
             num_seeds = len(all_seeds)
-            print(f"Generating mean aggregated comparison plot across all {num_seeds} seeds for {args.env_id} ...")
-            out_mean = plots_dir / f"{args.env_id}_comparison_mean.png"
-            out_main = plots_dir / f"{args.env_id}_comparison.png"
+            print(f"Generating mean aggregated comparison plots across all {num_seeds} seeds for {args.env_id} ...")
+            out_mean = plots_dir / f"{args.env_id}_mean.png"
             plot_mean_figure(runs_by_exp, args.env_id, out_mean, args.rolling_window,
-                             title_suffix=f" | Mean Across {num_seeds} Seeds")
-            plot_mean_figure(runs_by_exp, args.env_id, out_main, args.rolling_window,
                              title_suffix=f" | Mean Across {num_seeds} Seeds")
 
 

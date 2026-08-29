@@ -454,11 +454,6 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
 
     output_path = output_dir / f"{env_id}_test_seed{seed}{eps_suffix}{suffix}.png"
     plt.savefig(output_path, dpi=200, bbox_inches="tight")
-
-    if epsilon == 0.0:
-        compat_path = output_dir / f"{env_id}_test_seed{seed}{suffix}.png"
-        plt.savefig(compat_path, dpi=200, bbox_inches="tight")
-
     plt.close(fig)
     print(f"Test plot saved to {output_path}")
 

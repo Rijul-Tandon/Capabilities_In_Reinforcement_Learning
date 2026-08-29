@@ -119,29 +119,48 @@ jobs:
 
       - name: Flatten Multi-Seed Results for Evaluation
         run: |
-          # The multi-seed training creates results/<run_name>/seed_X/ dirs.
-          # The evaluation scripts expect results/<env>__<agent>__<seed>__<ts>/ format.
-          # Symlink/copy each seed sub-directory to the expected format.
+          echo "=== Flattening multi-seed results into per-seed directories ==="
           for run_dir in results/*/; do
             if [ -d "$run_dir" ]; then
+              echo "Processing run_dir: $run_dir"
               for seed_dir in "$run_dir"seed_*/; do
                 if [ -d "$seed_dir" ]; then
-                  # Extract env_id and agent from config.json
-                  ENV_ID=$(python -c "import json; c=json.load(open('${seed_dir}config.json')); print(c['env_id'])" 2>/dev/null || echo "")
-                  AGENT=$(python -c "import json; c=json.load(open('${seed_dir}config.json')); print(c['exp_name'])" 2>/dev/null || echo "")
-                  SEED=$(python -c "import json; c=json.load(open('${seed_dir}config.json')); print(c['seed'])" 2>/dev/null || echo "")
+                  echo "  Found seed_dir: $seed_dir"
+                  
+                  # Extract env_id, agent, and seed from config.json
+                  ENV_ID=$(python3 -c "import json; c=json.load(open('${seed_dir}config.json')); print(c['env_id'])" 2>/dev/null || echo "")
+                  AGENT=$(python3 -c "import json; c=json.load(open('${seed_dir}config.json')); print(c['exp_name'])" 2>/dev/null || echo "")
+                  SEED=$(python3 -c "import json; c=json.load(open('${seed_dir}config.json')); print(c['seed'])" 2>/dev/null || echo "")
                   
                   if [ -n "$ENV_ID" ] && [ -n "$AGENT" ] && [ -n "$SEED" ]; then
                     TARGET="results/${ENV_ID}__${AGENT}__${SEED}__multiseed"
-                    echo "Linking $seed_dir -> $TARGET"
+                    echo "    Copying $seed_dir -> $TARGET"
                     cp -r "$seed_dir" "$TARGET"
+
+                    # Also copy metrics.csv from parent run dir if it exists
+                    if [ -f "${run_dir}metrics.csv" ] && [ ! -f "${TARGET}/metrics.csv" ]; then
+                      cp "${run_dir}metrics.csv" "${TARGET}/metrics.csv"
+                    fi
+                    
+                    echo "    Contents of $TARGET:"
+                    ls -la "$TARGET/" | head -15
+                  else
+                    echo "    WARNING: Could not extract ENV_ID=$ENV_ID AGENT=$AGENT SEED=$SEED from $seed_dir"
                   fi
                 fi
               done
             fi
           done
-          echo "Flattened results:"
-          ls -la results/ | head -40
+          
+          echo ""
+          echo "=== All flattened result directories ==="
+          ls -la results/ | grep -E "^d" | head -50
+          echo ""
+          echo "=== Checking for q_net.pt files ==="
+          find results/ -name "q_net.pt" | head -30
+          echo ""
+          echo "=== Checking for episodes.csv files ==="
+          find results/ -name "episodes.csv" | head -30
 
       - name: Upload All Combined Results
         uses: actions/upload-artifact@v4
@@ -157,11 +176,24 @@ jobs:
           for env in "MiniGrid-Empty-Random-${GRID_SIZE}-v0" "MiniGrid-DoorKey-${GRID_SIZE}-v0"; do
             PLOTS_DIR="plots/plots_${env}_${GRID_SIZE}_single_agent_${TIMESTAMP}"
             mkdir -p "$PLOTS_DIR"
+            echo ""
+            echo "============================================================"
             echo "Generating evaluation plots for $env in $PLOTS_DIR..."
+            echo "============================================================"
+
+            echo "--- Reward Comparison Plots ---"
             python src/plot_comparison.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison" || echo "plot_comparison failed for $env"
+
+            echo "--- Q-Value Overestimation Plots ---"
             python src/plot_q_overestimation.py --env-id $env --plots-dir "$PLOTS_DIR" || echo "plot_q_overestimation failed for $env"
+
+            echo "--- Testing Heatmaps (Deterministic + 5% Epsilon) ---"
             python src/plot_state_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison" || echo "plot_state_action_freq failed for $env"
+
+            echo "--- Training Action Analysis (JSON) ---"
             python src/plot_training_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/action_freq" || echo "plot_training_action_freq failed for $env"
+
+            echo "--- Statistical Analysis ---"
             python src/statistical_analysis.py --results-dir results --env-id $env --output-dir "$PLOTS_DIR" || echo "statistical_analysis failed for $env"
           done
 
