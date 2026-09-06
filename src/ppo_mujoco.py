@@ -109,6 +109,7 @@ class ContinuousPPOAgent(nn.Module):
     def get_action_and_value(self, x, action=None):
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
+        action_logstd = torch.clamp(action_logstd, -20.0, 2.0)
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
 
@@ -247,6 +248,9 @@ def train(args):
             next_obs_np, reward, terminated, truncated, _ = env.step(action.cpu().numpy()[0])
             done = terminated or truncated
 
+            # Sanitize observation array against unexpected NaNs
+            next_obs_np = np.nan_to_num(next_obs_np, nan=0.0, posinf=1.0, neginf=-1.0)
+
             # Apply VQ-VAE State Retention Action Mask Penalty (Penalize Self-Loop Transitions)
             if agent.use_action_masking and agent.vqvae_model is not None:
                 with torch.no_grad():
@@ -264,7 +268,8 @@ def train(args):
             if done:
                 episodic_returns.append(reward)
                 next_obs, _ = env.reset()
-                next_obs = torch.Tensor(next_obs).to(device)
+                next_obs_np = np.nan_to_num(next_obs, nan=0.0, posinf=1.0, neginf=-1.0)
+                next_obs = torch.Tensor(next_obs_np).to(device)
 
         # GAE Advantage Estimation
         with torch.no_grad():
