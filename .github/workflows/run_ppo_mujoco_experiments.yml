@@ -1,0 +1,80 @@
+name: Run MuJoCo PPO Experiments
+
+on:
+  workflow_dispatch:
+    inputs:
+      env_id:
+        description: 'MuJoCo Environment'
+        required: false
+        default: 'Hopper-v4'
+        type: choice
+        options:
+          - InvertedPendulum-v4
+          - Hopper-v4
+          - Walker2d-v4
+          - HalfCheetah-v4
+          - Ant-v4
+      num_seeds:
+        description: 'Number of seeds to run (1 to 5)'
+        required: false
+        default: '3'
+      total_timesteps:
+        description: 'Total training timesteps'
+        required: false
+        default: '200000'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  train_ppo:
+    name: Train (${{ matrix.agent }}, ${{ github.event.inputs.env_id || 'Hopper-v4' }}, seed ${{ matrix.seed }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [ppo_baseline, ppo_vqvae_masked]
+        seed: [1, 2, 3, 4, 5]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install System Dependencies for MuJoCo Rendering
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libosmesa6-dev libgl1-mesa-glx libglfw3 patchelf
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run PPO Agent
+        run: |
+          NUM_SEEDS="${{ github.event.inputs.num_seeds || '3' }}"
+          if [ "${{ matrix.seed }}" -gt "$NUM_SEEDS" ]; then
+            echo "Skipping seed ${{ matrix.seed }} (requested num_seeds=$NUM_SEEDS)"
+            exit 0
+          fi
+
+          ENV_ID="${{ github.event.inputs.env_id || 'Hopper-v4' }}"
+          TIMESTEPS="${{ github.event.inputs.total_timesteps || '200000' }}"
+
+          python src/ppo_mujoco.py \
+            --env-id $ENV_ID \
+            --agent ${{ matrix.agent }} \
+            --seed ${{ matrix.seed }} \
+            --total-timesteps $TIMESTEPS
+
+      - name: Upload Run Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ppo_result_${{ matrix.agent }}_${{ github.event.inputs.env_id || 'Hopper-v4' }}_seed${{ matrix.seed }}
+          path: results/
+          if-no-files-found: ignore
+          retention-days: 14
