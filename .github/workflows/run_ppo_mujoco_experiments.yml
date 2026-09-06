@@ -78,3 +78,48 @@ jobs:
           path: results/
           if-no-files-found: ignore
           retention-days: 14
+
+  plot_ppo:
+    name: Generate PPO Plots & Commit to Repo
+    needs: train_ppo
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download all results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ppo_result_*
+          path: results/
+          merge-multiple: true
+
+      - name: Generate Comparison Plot
+        run: |
+          ENV_ID="${{ github.event.inputs.env_id || 'Hopper-v4' }}"
+          TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
+          PLOTS_DIR="plots/plots_ppo_${ENV_ID}_${TIMESTAMP}"
+          mkdir -p "$PLOTS_DIR"
+
+          python src/plot_ppo_comparison.py --env-id $ENV_ID --output-dir "$PLOTS_DIR"
+
+      - name: Commit and Push PPO Plots
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add plots/
+          git commit -m "Auto-generated PPO baseline vs VQ-VAE action masked plots" || echo "No changes to commit"
+          git pull --rebase origin main
+          git push origin main
