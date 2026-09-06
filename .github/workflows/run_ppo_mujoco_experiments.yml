@@ -68,6 +68,7 @@ jobs:
           python src/ppo_mujoco.py \
             --env-id $ENV_ID \
             --agent ${{ matrix.agent }} \
+            --mask-penalty 5.0 \
             --seed ${{ matrix.seed }} \
             --total-timesteps $TIMESTEPS
 

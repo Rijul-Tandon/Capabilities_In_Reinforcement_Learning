@@ -181,6 +181,16 @@ def train(args):
 
             next_obs_np, reward, terminated, truncated, _ = env.step(action.cpu().numpy()[0])
             done = terminated or truncated
+
+            # Apply VQ-VAE State Retention Action Mask Penalty
+            if agent.use_action_masking and agent.vqvae_model is not None:
+                with torch.no_grad():
+                    z_curr = agent.vqvae_model.encode_to_discrete(next_obs.unsqueeze(0))
+                    z_next = agent.vqvae_model.encode_to_discrete(torch.Tensor(next_obs_np).unsqueeze(0).to(device))
+                    # Apply substantial negative penalty if action fails to maintain discrete state
+                    if z_curr.item() != z_next.item():
+                        reward -= args.mask_penalty
+
             rewards[step] = torch.tensor(reward).to(device)
 
             next_obs = torch.Tensor(next_obs_np).to(device)
@@ -253,6 +263,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-id", type=str, default="Hopper-v4")
     parser.add_argument("--agent", type=str, default="ppo_baseline", choices=["ppo_baseline", "ppo_vqvae_masked"])
+    parser.add_argument("--mask-penalty", type=float, default=5.0, help="Heavy negative reward penalty applied when an unmasked action causes an unwanted discrete state change")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--total-timesteps", type=int, default=200000)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
