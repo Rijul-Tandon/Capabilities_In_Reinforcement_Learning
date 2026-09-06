@@ -36,7 +36,13 @@ class VectorQuantizer(nn.Module):
         loss = q_latent_loss + self.commitment_cost * e_latent_loss
         
         quantized = inputs + (quantized - inputs).detach()
-        return quantized, loss, encoding_indices
+
+        # Compute Codebook Perplexity
+        encodings = F.one_hot(encoding_indices, self.num_embeddings).float()
+        avg_probs = torch.mean(encodings, dim=0)
+        perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
+
+        return quantized, loss, encoding_indices, perplexity
 
 class VQVAEStateDiscretizer(nn.Module):
     def __init__(self, state_dim, hidden_dim=128, embedding_dim=16, num_embeddings=64):
@@ -59,7 +65,7 @@ class VQVAEStateDiscretizer(nn.Module):
         
     def encode_to_discrete(self, state):
         z_e = self.encoder(state)
-        _, _, encoding_indices = self.vq_layer(z_e)
+        _, _, encoding_indices, _ = self.vq_layer(z_e)
         return encoding_indices
 
 # ---------------------------------------------------------
@@ -137,9 +143,68 @@ def train(args):
 
     # Pre-train / Initialize VQ-VAE if masking enabled
     vqvae_model = None
+    recon_loss_history, vq_loss_history, perplexity_history = [], [], []
     if args.agent == "ppo_vqvae_masked":
-        vqvae_model = VQVAEStateDiscretizer(state_dim=state_dim).to(device)
+        print(f"Pre-training VQ-VAE for {args.vqvae_epochs} epochs on {args.env_id} trajectory dataset...")
+        vqvae_model = VQVAEStateDiscretizer(
+            state_dim=state_dim,
+            hidden_dim=args.vqvae_hidden_dim,
+            embedding_dim=args.embedding_dim,
+            num_embeddings=args.num_embeddings
+        ).to(device)
+
+        # Collect random state transitions dataset
+        dataset_states = []
+        state, _ = env.reset(seed=args.seed)
+        for _ in range(20000):
+            action = env.action_space.sample()
+            next_state, _, done, truncated, _ = env.step(action)
+            dataset_states.append(state)
+            state = next_state
+            if done or truncated:
+                state, _ = env.reset()
+
+        states_tensor = torch.Tensor(np.array(dataset_states)).to(device)
+        from torch.utils.data import DataLoader, TensorDataset
+        dataset = TensorDataset(states_tensor)
+        dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
+
+        vq_optimizer = optim.Adam(vqvae_model.parameters(), lr=1e-3)
+        vqvae_model.train()
+
+        for epoch in range(1, args.vqvae_epochs + 1):
+            total_recon, total_vq, total_perp = 0.0, 0.0, 0.0
+            for batch in dataloader:
+                b_states = batch[0]
+                vq_optimizer.zero_grad()
+                z_e = vqvae_model.encoder(b_states)
+                z_q, vq_loss, _, perplexity = vqvae_model.vq_layer(z_e)
+                state_recon = vqvae_model.decoder(z_q)
+
+                recon_loss = F.mse_loss(state_recon, b_states)
+                loss = recon_loss + vq_loss
+
+                loss.backward()
+                vq_optimizer.step()
+
+                total_recon += recon_loss.item()
+                total_vq += vq_loss.item()
+                total_perp += perplexity.item()
+
+            n_batches = len(dataloader)
+            avg_recon = total_recon / n_batches
+            avg_vq = total_vq / n_batches
+            avg_perp = total_perp / n_batches
+
+            recon_loss_history.append(avg_recon)
+            vq_loss_history.append(avg_vq)
+            perplexity_history.append(avg_perp)
+
+            if epoch % 10 == 0 or epoch == 1:
+                print(f"VQ-VAE Epoch [{epoch:02d}/{args.vqvae_epochs}] | Recon MSE: {avg_recon:.5f} | VQ Loss: {avg_vq:.5f} | Perplexity: {avg_perp:.2f}/{args.num_embeddings}")
+
         vqvae_model.eval()
+        print("VQ-VAE Pre-training Complete!")
 
     agent = ContinuousPPOAgent(
         state_dim=state_dim,
@@ -182,13 +247,13 @@ def train(args):
             next_obs_np, reward, terminated, truncated, _ = env.step(action.cpu().numpy()[0])
             done = terminated or truncated
 
-            # Apply VQ-VAE State Retention Action Mask Penalty
+            # Apply VQ-VAE State Retention Action Mask Penalty (Penalize Self-Loop Transitions)
             if agent.use_action_masking and agent.vqvae_model is not None:
                 with torch.no_grad():
                     z_curr = agent.vqvae_model.encode_to_discrete(next_obs.unsqueeze(0))
                     z_next = agent.vqvae_model.encode_to_discrete(torch.Tensor(next_obs_np).unsqueeze(0).to(device))
-                    # Apply substantial negative penalty if action fails to maintain discrete state
-                    if z_curr.item() != z_next.item():
+                    # Apply substantial negative penalty when action causes a self-loop (same discrete state transition)
+                    if z_curr.item() == z_next.item():
                         reward -= args.mask_penalty
 
             rewards[step] = torch.tensor(reward).to(device)
@@ -259,6 +324,33 @@ def train(args):
     np.save(f"results/{run_name}/returns.npy", np.array(episodic_returns))
     print(f"Training Complete! Saved metrics to results/{run_name}/")
 
+    # Generate VQ-VAE & Action Masking plots if VQ-VAE agent
+    if args.agent == "ppo_vqvae_masked" and vqvae_model is not None:
+        try:
+            import matplotlib.pyplot as plt
+            fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+            axes[0].plot(recon_loss_history, label='Reconstruction MSE Loss', color='tab:blue')
+            axes[0].plot(vq_loss_history, label='VQ Loss', color='tab:orange')
+            axes[0].set_title(f'VQ-VAE Loss Convergence ({args.env_id})')
+            axes[0].set_xlabel('Epoch')
+            axes[0].set_ylabel('Loss')
+            axes[0].legend()
+            axes[0].grid(True)
+
+            axes[1].plot(perplexity_history, label='Active Codebook Utilization (Perplexity)', color='tab:green')
+            axes[1].axhline(y=args.num_embeddings, color='r', linestyle='--', label=f'Max Codebook Capacity ({args.num_embeddings})')
+            axes[1].set_title('Codebook Perplexity over Training')
+            axes[1].set_xlabel('Epoch')
+            axes[1].set_ylabel('Perplexity')
+            axes[1].legend()
+            axes[1].grid(True)
+            plt.tight_layout()
+            plt.savefig(f"results/{run_name}/vqvae_training_diagnostics.png", dpi=300)
+            plt.close()
+            print(f"Saved VQ-VAE training plot to results/{run_name}/vqvae_training_diagnostics.png")
+        except Exception as e:
+            print(f"Could not save VQ-VAE diagnostic plots: {e}")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-id", type=str, default="Hopper-v4")
@@ -277,5 +369,12 @@ if __name__ == "__main__":
     parser.add_argument("--vf-coef", type=float, default=0.5)
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
     parser.add_argument("--cuda", type=bool, default=True)
+
+    # VQ-VAE Discretizer Hyperparameters
+    parser.add_argument("--vqvae-epochs", type=int, default=50, help="Number of pre-training epochs for VQ-VAE state discretizer")
+    parser.add_argument("--num-embeddings", type=int, default=64, help="Number of discrete state clusters in codebook")
+    parser.add_argument("--embedding-dim", type=int, default=16, help="Latent embedding dimension of codebook vectors")
+    parser.add_argument("--vqvae-hidden-dim", type=int, default=128, help="Hidden dimension of VQ-VAE encoder/decoder networks")
+
     args = parser.parse_args()
     train(args)

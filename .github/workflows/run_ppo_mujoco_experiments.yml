@@ -57,8 +57,9 @@ jobs:
       - name: Run PPO Agent
         run: |
           NUM_SEEDS="${{ github.event.inputs.num_seeds || '3' }}"
-          if [ "${{ matrix.seed }}" -gt "$NUM_SEEDS" ]; then
-            echo "Skipping seed ${{ matrix.seed }} (requested num_seeds=$NUM_SEEDS)"
+          CURRENT_SEED="${{ matrix.seed }}"
+          if [ "$CURRENT_SEED" -gt "$NUM_SEEDS" ]; then
+            echo "Skipping seed $CURRENT_SEED (requested num_seeds=$NUM_SEEDS)"
             exit 0
           fi
 
@@ -69,10 +70,14 @@ jobs:
             --env-id $ENV_ID \
             --agent ${{ matrix.agent }} \
             --mask-penalty 5.0 \
+            --vqvae-epochs 50 \
+            --num-embeddings 64 \
+            --embedding-dim 16 \
             --seed ${{ matrix.seed }} \
             --total-timesteps $TIMESTEPS
 
       - name: Upload Run Results
+        if: ${{ matrix.seed <= (github.event.inputs.num_seeds || 3) }}
         uses: actions/upload-artifact@v4
         with:
           name: ppo_result_${{ matrix.agent }}_${{ github.event.inputs.env_id || 'Hopper-v4' }}_seed${{ matrix.seed }}
