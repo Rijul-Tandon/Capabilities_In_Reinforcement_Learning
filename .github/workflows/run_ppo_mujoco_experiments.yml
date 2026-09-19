@@ -9,11 +9,7 @@ on:
         default: 'Hopper-v4'
         type: choice
         options:
-          - InvertedPendulum-v4
           - Hopper-v4
-          - Walker2d-v4
-          - HalfCheetah-v4
-          - Ant-v4
       num_seeds:
         description: 'Number of seeds to run (1 to 5)'
         required: false
@@ -71,8 +67,8 @@ jobs:
             --agent ${{ matrix.agent }} \
             --mask-penalty 5.0 \
             --vqvae-epochs 50 \
-            --num-embeddings 64 \
-            --embedding-dim 16 \
+            --num-embeddings 256 \
+            --embedding-dim 4 \
             --seed ${{ matrix.seed }} \
             --total-timesteps $TIMESTEPS
 
