@@ -69,6 +69,7 @@ jobs:
             --vqvae-epochs 50 \
             --num-embeddings 256 \
             --embedding-dim 4 \
+            --tree-separability-threshold 0.70 \
             --seed ${{ matrix.seed }} \
             --total-timesteps $TIMESTEPS
 

@@ -207,12 +207,69 @@ def train(args):
         vqvae_model.eval()
         print("VQ-VAE Pre-training Complete!")
 
+        # ---------------------------------------------------------
+        # Decision Tree Boundary Separability Check per Cluster
+        # ---------------------------------------------------------
+        print(f"Evaluating decision boundary separability for discrete clusters (threshold={args.tree_separability_threshold})...")
+        from sklearn.tree import DecisionTreeClassifier
+        from sklearn.model_selection import train_test_split
+
+        with torch.no_grad():
+            dataset_next_states = []
+            dataset_actions = []
+            state, _ = env.reset(seed=args.seed)
+            for _ in range(15000):
+                action = env.action_space.sample()
+                next_state, _, done, truncated, _ = env.step(action)
+                dataset_actions.append(action)
+                dataset_next_states.append(next_state)
+                if done or truncated:
+                    state, _ = env.reset()
+
+            z_currs = vqvae_model.encode_to_discrete(states_tensor[:15000]).cpu().numpy()
+            next_states_tensor = torch.Tensor(np.array(dataset_next_states)).to(device)
+            z_nexts = vqvae_model.encode_to_discrete(next_states_tensor).cpu().numpy()
+            actions_np = np.array(dataset_actions[:15000])
+
+        separable_clusters = set()
+        unique_clusters = np.unique(z_currs)
+
+        for cid in unique_clusters:
+            mask = (z_currs == cid)
+            if np.sum(mask) < 20:
+                continue
+
+            c_actions = actions_np[mask]
+            c_is_self_loop = (z_currs[mask] == z_nexts[mask]).astype(int)
+
+            # Need at least two classes to evaluate classification boundary
+            if len(np.unique(c_is_self_loop)) < 2:
+                continue
+
+            try:
+                X_tr, X_te, y_tr, y_te = train_test_split(c_actions, c_is_self_loop, test_size=0.3, random_state=args.seed, stratify=c_is_self_loop)
+                clf = DecisionTreeClassifier(max_depth=5, random_state=args.seed, class_weight="balanced")
+                clf.fit(X_tr, y_tr)
+                y_pred = clf.predict(X_te)
+                
+                from sklearn.metrics import precision_score
+                prec_self_loop = precision_score(y_te, y_pred, pos_label=1, zero_division=0)
+
+                # Strictly require Self-Loop (Class 1) Precision >= threshold before enabling mask for this cluster
+                if prec_self_loop >= args.tree_separability_threshold:
+                    separable_clusters.add(int(cid))
+            except Exception:
+                pass
+
+        print(f"Separability Check Completed: {len(separable_clusters)}/{len(unique_clusters)} clusters identified as separable (Self-Loop Precision >= {args.tree_separability_threshold*100:.0f}%).")
+
     agent = ContinuousPPOAgent(
         state_dim=state_dim,
         action_dim=action_dim,
         use_action_masking=(args.agent == "ppo_vqvae_masked"),
         vqvae_model=vqvae_model
     ).to(device)
+    agent.separable_clusters = separable_clusters if args.agent == "ppo_vqvae_masked" else set()
 
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
@@ -249,17 +306,17 @@ def train(args):
             done = terminated or truncated
 
             # Sanitize observation array against unexpected NaNs
-            next_obs_np = np.nan_to_num(next_obs_np, nan=0.0, posinf=1.0, neginf=-1.0)
-
-            # Apply VQ-VAE State Retention Action Mask Penalty (Penalize Self-Loop Transitions)
+            next_obs_np = np.nan_to_num(next_obs_np, nan=0.0, posinf=1.0, neginf=-1.0)            # Apply VQ-VAE State Retention Action Mask Penalty (Penalize Self-Loop Transitions)
+            # ONLY applied if the cluster's action boundary is well-separated according to DecisionTreeClassifier
             if agent.use_action_masking and agent.vqvae_model is not None:
                 with torch.no_grad():
-                    z_curr = agent.vqvae_model.encode_to_discrete(next_obs.unsqueeze(0))
-                    z_next = agent.vqvae_model.encode_to_discrete(torch.Tensor(next_obs_np).unsqueeze(0).to(device))
-                    # Apply substantial negative penalty when action causes a self-loop (same discrete state transition)
-                    if z_curr.item() == z_next.item():
-                        reward -= args.mask_penalty
-
+                    z_curr = agent.vqvae_model.encode_to_discrete(next_obs.unsqueeze(0)).item()
+                    z_next = agent.vqvae_model.encode_to_discrete(torch.Tensor(next_obs_np).unsqueeze(0).to(device)).item()
+                    
+                    # Check if cluster has a well-separated decision boundary
+                    if z_curr in getattr(agent, "separable_clusters", set()):
+                        if z_curr == z_next:
+                            reward -= args.mask_penalty
             rewards[step] = torch.tensor(reward).to(device)
 
             next_obs = torch.Tensor(next_obs_np).to(device)
@@ -380,6 +437,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-embeddings", type=int, default=64, help="Number of discrete state clusters in codebook")
     parser.add_argument("--embedding-dim", type=int, default=16, help="Latent embedding dimension of codebook vectors")
     parser.add_argument("--vqvae-hidden-dim", type=int, default=128, help="Hidden dimension of VQ-VAE encoder/decoder networks")
+    parser.add_argument("--tree-separability-threshold", type=float, default=0.70, help="Minimum Decision Tree accuracy required to consider cluster action boundary well-separated for masking")
 
     args = parser.parse_args()
     train(args)
