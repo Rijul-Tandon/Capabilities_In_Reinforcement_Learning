@@ -1,0 +1,4 @@
+env_id,seed,baseline_mean_reward,rs_ddqn_mean_reward,reward_diff,baseline_goal_rate,rs_ddqn_goal_rate,goal_rate_diff,baseline_eval_episodes,rs_ddqn_eval_episodes
+MiniGrid-Empty-Random-6x6-v0,1,0.9594310998735781,0.9594924242424245,6.132436884642711e-05,1.0,1.0,0.0,3955,3960
+MiniGrid-Empty-Random-6x6-v0,2,0.9796371641111282,0.9796371641111282,0.0,1.0,1.0,0.0,6587,6587
+MiniGrid-Empty-Random-6x6-v0,3,0.9391176470588233,0.9391282778171507,1.0630758327412337e-05,1.0,1.0,0.0,2822,2822
