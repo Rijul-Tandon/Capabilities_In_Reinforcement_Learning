@@ -87,11 +87,42 @@ def plot_ppo_comparison(runs, env_id, output_dir, window=10):
     ax.grid(True, linestyle="--", alpha=0.35)
     ax.legend(fontsize=9, loc="best", frameon=True)
     
+    # 1. Overall Mean Comparison Plot across seeds
     output_path = Path(output_dir) / f"{env_id}_ppo_comparison.png"
     fig.tight_layout()
     fig.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
-    print(f"Saved PPO comparison plot → {output_path}")
+    print(f"Saved aggregated PPO comparison plot → {output_path}")
+
+    # 2. Individual Per-Seed Reward Comparison Plots
+    all_seeds = set()
+    for agent_seeds in runs.values():
+        all_seeds.update(agent_seeds.keys())
+
+    for seed in sorted(all_seeds):
+        fig_s, ax_s = plt.subplots(figsize=(7, 4.5), dpi=300)
+        has_data = False
+        
+        for agent in ["ppo_baseline", "ppo_vqvae_masked"]:
+            if seed in runs[agent]:
+                arr = runs[agent][seed]
+                smoothed = rolling_mean(arr, window=window)
+                episodes = np.arange(1, len(smoothed) + 1)
+                ax_s.plot(episodes, smoothed, label=labels[agent], color=colors[agent], linewidth=2.0)
+                has_data = True
+                
+        if has_data:
+            ax_s.set_title(f"MuJoCo Performance ({env_id}) — Seed {seed}", fontsize=11, fontweight="bold", pad=10)
+            ax_s.set_xlabel("Completed Episodes", fontsize=9.5, fontweight="medium")
+            ax_s.set_ylabel("Episodic Return", fontsize=9.5, fontweight="medium")
+            ax_s.grid(True, linestyle="--", alpha=0.35)
+            ax_s.legend(fontsize=9, loc="best", frameon=True)
+            
+            seed_output_path = Path(output_dir) / f"{env_id}_ppo_comparison_seed{seed}.png"
+            fig_s.tight_layout()
+            fig_s.savefig(seed_output_path, dpi=300, bbox_inches="tight")
+            print(f"Saved Per-Seed reward comparison plot → {seed_output_path}")
+        plt.close(fig_s)
 
 def plot_cluster_and_masking_diagnostics(results_dir, env_id, output_dir):
     """

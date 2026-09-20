@@ -1,2 +1,0 @@
-env_id,N,baseline_reward_mean,baseline_reward_std,shaped_reward_mean,shaped_reward_std,reward_pct_improvement,reward_W,reward_Z,reward_p,reward_r,reward_sig,reward_effect_label,baseline_goal_mean,baseline_goal_std,shaped_goal_mean,shaped_goal_std,goal_pct_improvement,goal_W,goal_Z,goal_p,goal_r,goal_sig,goal_effect_label
-MiniGrid-DoorKey-8x8-v0,3,-4.0059,4.1467,0.7907,0.0278,119.74,0.0,1.1503,0.25,0.6642,ns,Large,0.3292,0.5703,0.9919,0.0031,201.26,0.0,1.1503,0.25,0.6642,ns,Large

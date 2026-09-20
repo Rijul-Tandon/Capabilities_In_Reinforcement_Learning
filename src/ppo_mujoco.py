@@ -383,8 +383,41 @@ def train(args):
         if iteration % 10 == 0:
             print(f"Step {global_step}/{args.total_timesteps} | Mean Return: {np.mean(episodic_returns[-20:]):.2f} | Policy Loss: {pg_loss.item():.4f}")
 
+    # Save agent model weights
+    torch.save(agent.state_dict(), f"results/{run_name}/agent.pt")
     np.save(f"results/{run_name}/returns.npy", np.array(episodic_returns))
-    print(f"Training Complete! Saved metrics to results/{run_name}/")
+    print(f"Training Complete! Saved metrics & model to results/{run_name}/")
+
+    # Record evaluation episode video
+    try:
+        video_folder = f"results/videos_hopper/v_seed{args.seed}/{args.agent}"
+        os.makedirs(video_folder, exist_ok=True)
+        eval_env = gym.make(args.env_id, render_mode="rgb_array")
+        eval_env = gym.wrappers.RecordVideo(
+            eval_env,
+            video_folder=video_folder,
+            episode_trigger=lambda ep_id: True,
+            name_prefix=f"{args.agent}_seed{args.seed}"
+        )
+
+        eval_obs, _ = eval_env.reset(seed=args.seed)
+        eval_done = False
+        eval_return = 0.0
+
+        agent.eval()
+        with torch.no_grad():
+            while not eval_done:
+                eval_obs_t = torch.Tensor(eval_obs).to(device).unsqueeze(0)
+                action_mean = agent.actor_mean(eval_obs_t)
+                action = action_mean.cpu().numpy()[0]
+                eval_obs, eval_reward, eval_term, eval_trunc, _ = eval_env.step(action)
+                eval_return += eval_reward
+                eval_done = eval_term or eval_trunc
+
+        eval_env.close()
+        print(f"Recorded test evaluation video ({args.agent}, seed {args.seed}) with return {eval_return:.2f} -> {video_folder}")
+    except Exception as e:
+        print(f"Could not record evaluation video: {e}")
 
     # Generate VQ-VAE & Action Masking plots if VQ-VAE agent
     if args.agent == "ppo_vqvae_masked" and vqvae_model is not None:

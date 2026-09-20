@@ -74,8 +74,15 @@ jobs:
             --total-timesteps $TIMESTEPS
 
       - name: Upload Run Results
-        if: ${{ matrix.seed <= (github.event.inputs.num_seeds || 3) }}
-        uses: actions/upload-artifact@v4
+        run: |
+          NUM_SEEDS="${{ github.event.inputs.num_seeds || '3' }}"
+          CURRENT_SEED="${{ matrix.seed }}"
+          if [ "$CURRENT_SEED" -gt "$NUM_SEEDS" ]; then
+            echo "Skipping upload for seed $CURRENT_SEED"
+            exit 0
+          fi
+      - uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: ppo_result_${{ matrix.agent }}_${{ github.event.inputs.env_id || 'Hopper-v4' }}_seed${{ matrix.seed }}
           path: results/
@@ -117,7 +124,15 @@ jobs:
 
           python src/plot_ppo_comparison.py --env-id $ENV_ID --output-dir "$PLOTS_DIR"
 
-      - name: Commit and Push PPO Plots
+      - name: Upload All Evaluation Videos Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ppo_evaluation_videos_${{ github.event.inputs.env_id || 'Hopper-v4' }}
+          path: results/videos_hopper/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Commit and Push PPO Plots & Videos
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
