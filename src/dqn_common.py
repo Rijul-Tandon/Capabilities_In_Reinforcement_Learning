@@ -302,18 +302,18 @@ class FlatImageAndDirectionWrapper(gym.ObservationWrapper):
     A custom wrapper that takes the 3D image output from ImgObsWrapper,
     applies component-wise min-max normalization ([0, 1]) to each channel
     (object_type / 10.0, color / 5.0, state / 3.0), flattens it into a 1D array,
-    and appends the normalized agent direction (direction / 3.0).
+    and appends a 4-element one-hot encoded vector representing the agent's facing direction.
     """
     def __init__(self, env):
         super().__init__(env)
         image_shape = env.observation_space.shape
         flat_size = int(np.prod(image_shape))
         
-        # Observation space bounds are now normalized between 0.0 and 1.0
+        # Observation space bounds: normalized flattened image + 4-dim one-hot direction vector
         self.observation_space = gym.spaces.Box(
             low=0.0,
             high=1.0,
-            shape=(flat_size + 1,),
+            shape=(flat_size + 4,),
             dtype=np.float32
         )
 
@@ -328,10 +328,11 @@ class FlatImageAndDirectionWrapper(gym.ObservationWrapper):
         
         flat_image = img.flatten()
         
-        # Normalize agent direction (0..3) to [0, 1]
-        direction = np.array([self.env.unwrapped.agent_dir / 3.0], dtype=np.float32)
+        # One-hot encode agent direction (0..3) as a 4-element vector
+        direction_one_hot = np.zeros(4, dtype=np.float32)
+        direction_one_hot[self.env.unwrapped.agent_dir] = 1.0
         
-        return np.concatenate([flat_image, direction])
+        return np.concatenate([flat_image, direction_one_hot])
 
 
 def make_env(env_id, seed, action_set, capture_video=False, run_name="", max_steps=None):
@@ -724,7 +725,7 @@ def parse_args(default_exp_name, use_shaping):
     #   needs to keep exploring to handle new configurations.
     parser.add_argument("--end-e", type=float, default=0.01)
     # --exploration-fraction: What fraction of training to decay epsilon over
-    parser.add_argument("--exploration-fraction", type=float, default=0.50)
+    parser.add_argument("--exploration-fraction", type=float, default=0.75)
     
     # --epsilon-schedule: Which decay schedule to use for epsilon
     parser.add_argument("--epsilon-schedule", choices=["linear", "polynomial", "hardcoded", "cosine", "exponential", "cyclic"], default="polynomial")
