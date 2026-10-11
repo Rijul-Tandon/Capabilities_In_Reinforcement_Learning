@@ -532,6 +532,8 @@ def main():
         shaped_runs = discover_runs(results_dir, env_id, "ddqn_reward_shaping")
         if not shaped_runs:
             shaped_runs = discover_runs(results_dir, env_id, "dqn_reward_shaping")
+        if not shaped_runs:
+            shaped_runs = discover_runs(results_dir, env_id, "dqn_vqvae_masked")
 
         common_seeds = sorted(set(baseline_runs.keys()) & set(shaped_runs.keys()))
 

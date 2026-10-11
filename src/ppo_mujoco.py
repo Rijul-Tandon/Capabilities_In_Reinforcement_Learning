@@ -388,7 +388,7 @@ def train(args):
     np.save(f"results/{run_name}/returns.npy", np.array(episodic_returns))
     print(f"Training Complete! Saved metrics & model to results/{run_name}/")
 
-    # Record evaluation episode video
+    # Record evaluation episode video (Headless safe)
     try:
         video_folder = f"results/videos_hopper/v_seed{args.seed}/{args.agent}"
         os.makedirs(video_folder, exist_ok=True)
@@ -417,7 +417,7 @@ def train(args):
         eval_env.close()
         print(f"Recorded test evaluation video ({args.agent}, seed {args.seed}) with return {eval_return:.2f} -> {video_folder}")
     except Exception as e:
-        print(f"Could not record evaluation video: {e}")
+        print(f"Warning: Skipped video recording due to headless rendering error: {e}")
 
     # Generate VQ-VAE & Action Masking plots if VQ-VAE agent
     if args.agent == "ppo_vqvae_masked" and vqvae_model is not None:

@@ -145,8 +145,9 @@ AGENT_COLORS = {
     "random_agent":          "dimgray",
     "ddqn_baseline":         "#1f77b4",  # Blue
     "ddqn_reward_shaping":   "#ff7f0e",  # Orange
-    "dqn_baseline":          "#1f77b4",
-    "dqn_reward_shaping":    "#ff7f0e",
+    "dqn_baseline":          "#1f77b4",  # Blue
+    "dqn_reward_shaping":    "#ff7f0e",  # Orange
+    "dqn_vqvae_masked":      "#ff7f0e",  # Orange
     "dqn_vanilla":           "#2ca02c",  # Green
 }
 
@@ -171,12 +172,15 @@ def format_exp_label(exp_name):
     Formats raw experiment directory names into clean legend labels.
     e.g., 'ddqn_baseline_decay_linear' -> 'Baseline DDQN (linear)'
           'ddqn_reward_shaping_decay_linear' -> 'RS-DDQN (linear)'
+          'dqn_vqvae_masked' -> 'RS-DQN (VQ-VAE Masked)'
     """
     label = exp_name
-    if "reward_shaping" in label:
+    if "dqn_vqvae_masked" in label:
+        label = label.replace("dqn_vqvae_masked", "RS-DQN (VQ-VAE Masked)")
+    elif "reward_shaping" in label:
         label = label.replace("ddqn_reward_shaping", "RS-DDQN").replace("dqn_reward_shaping", "RS-DDQN")
     elif "baseline" in label:
-        label = label.replace("ddqn_baseline", "Baseline DDQN").replace("dqn_baseline", "Baseline DDQN")
+        label = label.replace("ddqn_baseline", "Baseline DDQN").replace("dqn_baseline", "Baseline DQN")
     
     if "_decay_" in exp_name:
         parts = exp_name.split("_decay_")
@@ -185,6 +189,8 @@ def format_exp_label(exp_name):
             return f"RS-DDQN ({decay_part})"
         elif "Baseline DDQN" in label:
             return f"Baseline DDQN ({decay_part})"
+        elif "Baseline DQN" in label:
+            return f"Baseline DQN ({decay_part})"
         else:
             return f"{parts[0].replace('_', ' ').title()} ({decay_part})"
     return label.replace("_", " ").title() if label == exp_name else label

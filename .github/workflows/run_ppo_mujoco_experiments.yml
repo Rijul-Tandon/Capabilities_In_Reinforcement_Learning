@@ -21,8 +21,8 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  MUJOCO_GL: osmesa
-  PYOPENGL_PLATFORM: osmesa
+  MUJOCO_GL: egl
+  PYOPENGL_PLATFORM: egl
 
 jobs:
   train_ppo:
@@ -47,7 +47,7 @@ jobs:
       - name: Install System Dependencies for MuJoCo Rendering & Video Encoding
         run: |
           sudo apt-get update
-          sudo apt-get install -y libosmesa6-dev libgl1-mesa-dev libglx-mesa0 libglfw3 patchelf ffmpeg
+          sudo apt-get install -y libosmesa6-dev libgl1-mesa-dev libglx-mesa0 libegl1-mesa-dev libglfw3 patchelf ffmpeg
 
       - name: Install Python dependencies
         run: pip install -r requirements.txt

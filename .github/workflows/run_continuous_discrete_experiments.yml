@@ -1,0 +1,136 @@
+name: Run Continuous-Discrete VQ-VAE Experiments
+
+on:
+  workflow_dispatch:
+    inputs:
+      env_id:
+        description: 'Continuous-State Discrete-Action Environment'
+        required: false
+        default: 'Acrobot-v1'
+        type: choice
+        options:
+          - Acrobot-v1
+          - CartPole-v1
+          - MountainCar-v0
+          - LunarLander-v3
+      num_seeds:
+        description: 'Number of seeds to run'
+        required: false
+        default: '1'
+      total_timesteps:
+        description: 'Total training timesteps'
+        required: false
+        default: '200000'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  train:
+    name: Train (${{ matrix.agent }}, ${{ github.event.inputs.env_id || 'Acrobot-v1' }}, seed ${{ matrix.seed }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [dqn_baseline, dqn_vqvae_masked]
+        seed: [1]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install System Dependencies for Box2D / Swig
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y swig ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run DQN / VQ-VAE Agent
+        run: |
+          NUM_SEEDS="${{ github.event.inputs.num_seeds || '3' }}"
+          CURRENT_SEED="${{ matrix.seed }}"
+          if [ "$CURRENT_SEED" -gt "$NUM_SEEDS" ]; then
+            echo "Skipping seed $CURRENT_SEED (requested num_seeds=$NUM_SEEDS)"
+            exit 0
+          fi
+
+          ENV_ID="${{ github.event.inputs.env_id || 'Acrobot-v1' }}"
+          TIMESTEPS="${{ github.event.inputs.total_timesteps || '200000' }}"
+
+          python src/dqn_vqvae_masked.py \
+            --env-id $ENV_ID \
+            --agent ${{ matrix.agent }} \
+            --mask-penalty 1.0 \
+            --vqvae-epochs 50 \
+            --num-embeddings 256 \
+            --embedding-dim 8 \
+            --seed ${{ matrix.seed }} \
+            --total-timesteps $TIMESTEPS
+
+      - name: Upload Run Results
+        run: |
+          NUM_SEEDS="${{ github.event.inputs.num_seeds || '3' }}"
+          CURRENT_SEED="${{ matrix.seed }}"
+          if [ "$CURRENT_SEED" -gt "$NUM_SEEDS" ]; then
+            echo "Skipping upload for seed $CURRENT_SEED"
+            exit 0
+          fi
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: dqn_result_${{ matrix.agent }}_${{ github.event.inputs.env_id || 'Acrobot-v1' }}_seed${{ matrix.seed }}
+          path: results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  plot_and_evaluate:
+    name: Generate Comparison Plots
+    needs: train
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download all results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dqn_result_*
+          path: results/
+          merge-multiple: true
+
+      - name: Generate Comparison Plots
+        run: |
+          ENV_ID="${{ github.event.inputs.env_id || 'Acrobot-v1' }}"
+          PLOTS_DIR="plots/reward_comparison"
+          mkdir -p "$PLOTS_DIR"
+
+          python src/plot_comparison.py --env-id $ENV_ID --plots-dir "$PLOTS_DIR"
+
+      - name: Commit and Push Diagnostic Artifacts
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add plots/
+          git commit -m "Auto-generated continuous-discrete DQN VQ-VAE masked comparison plots" || echo "No changes to commit"
+          git pull --rebase origin main
+          git push origin main
