@@ -1,0 +1,2 @@
+env_id,N,baseline_reward_mean,baseline_reward_std,shaped_reward_mean,shaped_reward_std,reward_pct_improvement,reward_W,reward_Z,reward_p,reward_r,reward_sig,reward_effect_label,baseline_goal_mean,baseline_goal_std,shaped_goal_mean,shaped_goal_std,goal_pct_improvement,goal_W,goal_Z,goal_p,goal_r,goal_sig,goal_effect_label
+MiniGrid-DoorKey-6x6-v0,10,0.8767,0.0229,0.8687,0.0431,-0.92,25.0,0.1946,0.845703125,0.0615,ns,Negligible,0.997,0.003,0.9948,0.009,-0.22,24.0,0.293,0.76953125,0.0927,ns,Negligible
