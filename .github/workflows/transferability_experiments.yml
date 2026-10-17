@@ -347,9 +347,8 @@ jobs:
           GRID="${{ github.event.inputs.grid_size || '6x6' }}"
 
           # --- Seed-transferability plots ---
-          # One plot per env showing training curves for both seeds
-          # (Seed-A run and the Seed-B transfer run will both appear
-          #  because they share the same env_id prefix in results/)
+          # One plot per env showing only the transferred Seed-B runs
+          # for Baseline DDQN and RS-DDQN.
           for env in "MiniGrid-Empty-Random-${GRID}-v0" "MiniGrid-DoorKey-${GRID}-v0"; do
             PLOTS_DIR="plots/transferability/seed_transfer/${env}_${TIMESTAMP}"
             mkdir -p "$PLOTS_DIR"
@@ -357,8 +356,7 @@ jobs:
             python src/plot_comparison.py \
               --env-id "$env" \
               --results-dir results \
-              --exp-name-contains seed_transfer_ \
-              --combine-all-runs \
+              --exp-name-contains _seed_transfer_seed_b \
               --plots-dir "$PLOTS_DIR" || echo "WARNING: plot_comparison failed for $env"
           done
 
