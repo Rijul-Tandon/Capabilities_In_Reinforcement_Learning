@@ -34,9 +34,9 @@ on:
         required: false
         default: '1'
       seed_b:
-        description: 'Second training seed (transfer-to seed)'
+        description: 'Three transfer-to seeds for DoorKey, comma-separated'
         required: false
-        default: '2'
+        default: '2,3,4'
       timesteps_phase1:
         description: 'Timesteps for each phase-1 leg (per seed)'
         required: false
@@ -63,7 +63,7 @@ jobs:
       fail-fast: false
       matrix:
         agent: [ddqn_baseline, ddqn_reward_shaping]
-        env_suffix: [Empty, DoorKey]
+        env_suffix: [DoorKey]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -82,7 +82,11 @@ jobs:
         run: |
           GRID="${{ github.event.inputs.grid_size || '6x6' }}"
           SEED_A="${{ github.event.inputs.seed_a || '1' }}"
-          SEED_B="${{ github.event.inputs.seed_b || '2' }}"
+          SEED_BS=$(echo "${{ github.event.inputs.seed_b || '2,3,4' }}" | tr ',' ' ')
+          if [ "$(echo "$SEED_BS" | wc -w)" -ne 3 ]; then
+            echo "ERROR: seed_b must contain exactly three comma-separated seeds (for example: 2,3,4)."
+            exit 1
+          fi
           T1="${{ github.event.inputs.timesteps_phase1 || '200000' }}"
 
           if [ "${{ matrix.env_suffix }}" = "Empty" ]; then
@@ -103,7 +107,7 @@ jobs:
 
           echo "env_id=$ENV_ID"          >> "$GITHUB_OUTPUT"
           echo "seed_a=$SEED_A"          >> "$GITHUB_OUTPUT"
-          echo "seed_b=$SEED_B"          >> "$GITHUB_OUTPUT"
+          echo "seed_bs=$SEED_BS"        >> "$GITHUB_OUTPUT"
           echo "timesteps=$T1"           >> "$GITHUB_OUTPUT"
           echo "explore_frac=$EXPLORE_FRAC" >> "$GITHUB_OUTPUT"
           echo "end_e=$END_E"            >> "$GITHUB_OUTPUT"
@@ -148,18 +152,21 @@ jobs:
       # ---------- Leg B: load checkpoint, continue on SEED_B ----------
       - name: "Leg B – Transfer to Seed ${{ steps.cfg.outputs.seed_b }}"
         run: |
-          python src/${{ matrix.agent }}.py \
+          for SEED_B in ${{ steps.cfg.outputs.seed_bs }}; do
+            echo "=== Transfer Seed A to DoorKey Seed B: $SEED_B ==="
+            python src/${{ matrix.agent }}.py \
             --exp-name    ${{ steps.cfg.outputs.seed_b_exp }} \
             --env-id      ${{ steps.cfg.outputs.env_id }} \
             --total-timesteps ${{ steps.cfg.outputs.timesteps }} \
-            --seed        ${{ steps.cfg.outputs.seed_b }} \
+              --seed        "$SEED_B" \
             --exploration-fraction ${{ steps.cfg.outputs.explore_frac }} \
             --end-e       ${{ steps.cfg.outputs.end_e }} \
             --epsilon-schedule linear \
             --action-set full \
             --load-model  "${{ steps.ckpt.outputs.model_path }}" \
             --save-model  true \
-            --fixed-layout
+              --fixed-layout
+          done
 
       - name: Upload Seed-Transfer Results
         uses: actions/upload-artifact@v4
@@ -347,23 +354,15 @@ jobs:
           PLOTS_DIR="plots/transferability/reward_comparison"
           mkdir -p "$PLOTS_DIR"
 
-          # 1. Seed 2 on DoorKey, initialized from Seed 1 on DoorKey.
+          # 1. DoorKey Seed-B runs, each initialized from DoorKey Seed A.
           python src/plot_comparison.py \
             --env-id "MiniGrid-DoorKey-${GRID}-v0" \
             --results-dir results \
             --exp-name-contains _seed_transfer_seed_b \
-            --mean-reward-only \
+            --per-seed-mean-reward-only \
             --plots-dir "$PLOTS_DIR/seed_b_doorkey"
 
-          # 2. Seed 2 on Empty, initialized from Seed 1 on Empty.
-          python src/plot_comparison.py \
-            --env-id "MiniGrid-Empty-Random-${GRID}-v0" \
-            --results-dir results \
-            --exp-name-contains _seed_transfer_seed_b \
-            --mean-reward-only \
-            --plots-dir "$PLOTS_DIR/seed_b_empty"
-
-          # 3. Empty Seed 1, initialized from DoorKey Seed 1.
+          # 2. Empty Seed 1, initialized from DoorKey Seed 1.
           python src/plot_comparison.py \
             --env-id "MiniGrid-Empty-Random-${GRID}-v0" \
             --results-dir results \
@@ -371,7 +370,7 @@ jobs:
             --mean-reward-only \
             --plots-dir "$PLOTS_DIR/doorkey_to_empty"
 
-          # 4. DoorKey Seed 1, initialized from Empty Seed 1.
+          # 3. DoorKey Seed 1, initialized from Empty Seed 1.
           python src/plot_comparison.py \
             --env-id "MiniGrid-DoorKey-${GRID}-v0" \
             --results-dir results \

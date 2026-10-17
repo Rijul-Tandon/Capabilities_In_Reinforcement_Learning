@@ -463,6 +463,8 @@ def main():
                         help="Draw all matching runs in one comparison figure, even when their seeds differ.")
     parser.add_argument("--mean-reward-only", action="store_true",
                         help="Generate only the mean episodic-reward comparison plot.")
+    parser.add_argument("--per-seed-mean-reward-only", action="store_true",
+                        help="Generate one mean episodic-reward comparison plot for each seed.")
     parser.add_argument("--decay-comparison", action="store_true",
                         help="Generate decay comparison plots for Baseline, Reward Shaped, and Best of Both.")
     args = parser.parse_args()
@@ -486,6 +488,27 @@ def main():
             "Episodic Return",
             title_suffix=" | Transfer Performance",
         )
+        return
+
+    if args.per_seed_mean_reward_only:
+        seeds = sorted({safe_get_seed(config) for run_list in runs_by_exp.values() for _, config, _, _ in run_list})
+        for seed in seeds:
+            seed_runs = {
+                exp_name: [run for run in run_list if safe_get_seed(run[1]) == seed]
+                for exp_name, run_list in runs_by_exp.items()
+            }
+            seed_runs = {exp_name: run_list for exp_name, run_list in seed_runs.items() if run_list}
+            output_path = plots_dir / f"{args.env_id}_seed{seed}_mean_reward_comparison.png"
+            plot_single_mean_metric(
+                seed_runs,
+                args.env_id,
+                output_path,
+                args.rolling_window,
+                "episodic_return",
+                "Mean Episodic Return",
+                "Episodic Return",
+                title_suffix=f" | Seed {seed} Transfer Performance",
+            )
         return
 
     if args.combine_all_runs:
