@@ -901,7 +901,8 @@ def train(args, use_shaping):
     # If loading a pre-trained model (e.g. for curriculum learning across stages)
     if args.load_model:
         print(f"[{args.exp_name}] Loading pre-trained model from {args.load_model}")
-        q_net.load_state_dict(torch.load(args.load_model, map_location=device))
+        # Load pretrained model with flexible shape handling to accommodate action space changes
+        q_net.load_state_dict(torch.load(args.load_model, map_location=device), strict=False)
         
         # When continuing from a previous stage, we shouldn't spend thousands of steps
         # doing purely random actions, because the network is already trained.
