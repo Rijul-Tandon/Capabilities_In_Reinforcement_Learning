@@ -130,11 +130,11 @@ jobs:
         id: ckpt
         run: |
           ENV="${{ steps.cfg.outputs.env_id }}"
-          AGENT="${{ matrix.agent }}"
-          # Run dirs are named: results/<env_id>__<agent>__<timestamp>
-          CKPT=$(ls -td results/${ENV}__${AGENT}__* 2>/dev/null | head -1)
+          EXP_NAME="${{ steps.cfg.outputs.seed_a_exp }}"
+          # Run dirs are named: results/<env_id>__<exp_name>__<seed>__<timestamp>
+          CKPT=$(ls -td results/${ENV}__${EXP_NAME}__* 2>/dev/null | head -1)
           if [ -z "$CKPT" ]; then
-            echo "ERROR: no run directory found for ${ENV}__${AGENT}"
+            echo "ERROR: no run directory found for ${ENV}__${EXP_NAME}"
             exit 1
           fi
           MODEL="$CKPT/q_net.pt"
@@ -256,10 +256,10 @@ jobs:
         id: ckpt
         run: |
           SRC="${{ steps.cfg.outputs.src_env }}"
-          AGENT="${{ matrix.agent }}"
-          CKPT=$(ls -td results/${SRC}__${AGENT}__* 2>/dev/null | head -1)
+          EXP_NAME="${{ steps.cfg.outputs.src_exp }}"
+          CKPT=$(ls -td results/${SRC}__${EXP_NAME}__* 2>/dev/null | head -1)
           if [ -z "$CKPT" ]; then
-            echo "ERROR: no run directory found for ${SRC}__${AGENT}"
+            echo "ERROR: no run directory found for ${SRC}__${EXP_NAME}"
             exit 1
           fi
           MODEL="$CKPT/q_net.pt"
