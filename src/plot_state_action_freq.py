@@ -268,7 +268,7 @@ def get_decay_str(model_path):
             pass
     return ""
 
-def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=256, action_set="task", include_random=True, target_stage=None, stage_name="", plots_dir="plots/reward_comparison", epsilon=0.0):
+def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=256, action_set="task", include_random=True, target_stage=None, stage_name="", plots_dir="plots/reward_comparison", epsilon=0.0, model_specs=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     env = make_env(env_id, seed, action_set)
@@ -279,33 +279,31 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
     width = env.unwrapped.width
     height = env.unwrapped.height
 
-    baseline_models = get_models_by_seed(results_dir, env_id, "ddqn_baseline")
-    if not baseline_models:
-        baseline_models = get_models_by_seed(results_dir, env_id, "dqn_baseline")
-    shaped_models = get_models_by_seed(results_dir, env_id, "ddqn_reward_shaping")
-    if not shaped_models:
-        shaped_models = get_models_by_seed(results_dir, env_id, "dqn_reward_shaping")
-
-    baseline_model_path = baseline_models.get(seed)
-    shaped_model_path   = shaped_models.get(seed)
-
     agents = [("Random Agent", None)] if include_random else []
-
-    if baseline_model_path:
-        q_net_base = QNetwork(obs_dim, num_actions, hidden_size).to(device)
-        q_net_base.load_state_dict(torch.load(baseline_model_path, map_location=device))
-        q_net_base.eval()
-        agents.append((f"Baseline DDQN{get_decay_str(baseline_model_path)}", q_net_base))
+    if model_specs:
+        for exp_name, label in model_specs:
+            model_path = get_models_by_seed(results_dir, env_id, exp_name).get(seed)
+            if model_path:
+                q_net = QNetwork(obs_dim, num_actions, hidden_size).to(device)
+                q_net.load_state_dict(torch.load(model_path, map_location=device))
+                q_net.eval()
+                agents.append((label, q_net))
+            else:
+                agents.append((f"{label} (Not Found)", None))
     else:
-        agents.append(("Baseline DDQN (Not Found)", None))
-
-    if shaped_model_path:
-        q_net_shape = QNetwork(obs_dim, num_actions, hidden_size).to(device)
-        q_net_shape.load_state_dict(torch.load(shaped_model_path, map_location=device))
-        q_net_shape.eval()
-        agents.append((f"RS-DDQN{get_decay_str(shaped_model_path)}", q_net_shape))
-    else:
-        agents.append(("RS-DDQN (Not Found)", None))
+        baseline_models = get_models_by_seed(results_dir, env_id, "ddqn_baseline") or get_models_by_seed(results_dir, env_id, "dqn_baseline")
+        shaped_models = get_models_by_seed(results_dir, env_id, "ddqn_reward_shaping") or get_models_by_seed(results_dir, env_id, "dqn_reward_shaping")
+        for label, model_path in [
+            ("Baseline DDQN", baseline_models.get(seed)),
+            ("RS-DDQN", shaped_models.get(seed)),
+        ]:
+            if model_path:
+                q_net = QNetwork(obs_dim, num_actions, hidden_size).to(device)
+                q_net.load_state_dict(torch.load(model_path, map_location=device))
+                q_net.eval()
+                agents.append((f"{label}{get_decay_str(model_path)}", q_net))
+            else:
+                agents.append((f"{label} (Not Found)", None))
 
     # Set publication styling
     plt.rcParams['font.family'] = 'sans-serif'
@@ -477,8 +475,18 @@ if __name__ == "__main__":
     parser.add_argument("--action-set", choices=["task", "full"], default="task")
     parser.add_argument("--plots-dir", type=str, default="plots/reward_comparison")
     parser.add_argument("--epsilons", nargs="+", type=float, default=[0.0, 0.05], help="Epsilon exploration values for evaluation (default: 0.0 0.05)")
+    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--model-spec", action="append", default=[], metavar="EXP_NAME|LABEL",
+                        help="Evaluate a named experiment model with a custom label. May be repeated.")
 
     args = parser.parse_args()
+
+    model_specs = []
+    for spec in args.model_spec:
+        if "|" not in spec:
+            parser.error("--model-spec must use EXP_NAME|LABEL")
+        exp_name, label = spec.split("|", 1)
+        model_specs.append((exp_name, label))
 
     baseline_models = get_models_by_seed(args.results_dir, args.env_id, "ddqn_baseline")
     if not baseline_models:
@@ -487,7 +495,7 @@ if __name__ == "__main__":
     if not shaped_models:
         shaped_models = get_models_by_seed(args.results_dir, args.env_id, "dqn_reward_shaping")
 
-    all_seeds = sorted(set(baseline_models.keys()) | set(shaped_models.keys()))
+    all_seeds = [args.seed] if model_specs else sorted(set(baseline_models.keys()) | set(shaped_models.keys()))
 
     if not all_seeds:
         print(f"No trained models found for {args.env_id} in {args.results_dir}")
@@ -514,6 +522,7 @@ if __name__ == "__main__":
                     stage_name=stage_name,
                     plots_dir=args.plots_dir,
                     epsilon=eps,
+                    model_specs=model_specs,
                 )
 
     print(f"Done. Performance test plots saved to {args.plots_dir}")

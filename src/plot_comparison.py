@@ -58,7 +58,7 @@ def safe_get_seed(config):
         return 1
 
 
-def load_runs(results_dir, env_id):
+def load_runs(results_dir, env_id, exp_name_contains=None):
     """
     Scans the results directory for all experiment runs matching a specific environment,
     and returns the LATEST run per (experiment type, seed).
@@ -115,6 +115,8 @@ def load_runs(results_dir, env_id):
 
         if rows:
             exp_name = config.get("exp_name", "unknown")
+            if exp_name_contains and not any(token in exp_name for token in exp_name_contains):
+                continue
             if exp_name == "random_agent":
                 continue
             seed_val = config.get("seed", 1)
@@ -174,6 +176,19 @@ def format_exp_label(exp_name):
           'ddqn_reward_shaping_decay_linear' -> 'RS-DDQN (linear)'
           'dqn_vqvae_masked' -> 'RS-DQN (VQ-VAE Masked)'
     """
+    if "_transfer_" in exp_name:
+        agent = "RS-DDQN" if "reward_shaping" in exp_name else "Baseline DDQN"
+        direction = exp_name.split("_transfer_", 1)[1].replace("_to_", " → ")
+        return f"{agent} | Transfer {direction.title()}"
+    if "_scratch_" in exp_name:
+        agent = "RS-DDQN" if "reward_shaping" in exp_name else "Baseline DDQN"
+        context = exp_name.split("_scratch_", 1)[1].replace("_for_", " (for ").replace("_transfer", ")")
+        return f"{agent} | Fresh {context.replace('_', ' ').title()}"
+    if "_seed_transfer_seed_" in exp_name:
+        agent = "RS-DDQN" if "reward_shaping" in exp_name else "Baseline DDQN"
+        seed_leg = exp_name.rsplit("_", 1)[1].upper()
+        return f"{agent} | Seed-transfer leg {seed_leg}"
+
     label = exp_name
     if "dqn_vqvae_masked" in label:
         label = label.replace("dqn_vqvae_masked", "RS-DQN (VQ-VAE Masked)")
@@ -442,16 +457,31 @@ def main():
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--plots-dir", type=str, default="plots/reward_comparison")
     parser.add_argument("--rolling-window", type=int, default=20)
+    parser.add_argument("--exp-name-contains", action="append", default=[],
+                        help="Only plot runs whose experiment name contains this value. May be repeated.")
+    parser.add_argument("--combine-all-runs", action="store_true",
+                        help="Draw all matching runs in one comparison figure, even when their seeds differ.")
     parser.add_argument("--decay-comparison", action="store_true",
                         help="Generate decay comparison plots for Baseline, Reward Shaped, and Best of Both.")
     args = parser.parse_args()
 
-    runs_by_exp = load_runs(args.results_dir, args.env_id)
+    runs_by_exp = load_runs(args.results_dir, args.env_id, args.exp_name_contains)
     if not runs_by_exp:
         raise SystemExit(f"No runs found for {args.env_id} in {args.results_dir}")
 
     plots_dir = Path(args.plots_dir)
     plots_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.combine_all_runs:
+        output_path = plots_dir / f"{args.env_id}_combined_comparison.png"
+        plot_figure(
+            runs_by_exp,
+            args.env_id,
+            output_path,
+            args.rolling_window,
+            title_suffix=" | Combined Transfer Comparison",
+        )
+        return
 
     # Auto-detect if decay runs are present
     is_decay_run = args.decay_comparison or any("_decay_" in exp for exp in runs_by_exp.keys())

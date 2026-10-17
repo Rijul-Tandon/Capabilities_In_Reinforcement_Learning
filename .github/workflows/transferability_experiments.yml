@@ -90,6 +90,8 @@ jobs:
           else
             ENV_ID="MiniGrid-DoorKey-${GRID}-v0"
           fi
+          SEED_A_EXP="${{ matrix.agent }}_seed_transfer_seed_a"
+          SEED_B_EXP="${{ matrix.agent }}_seed_transfer_seed_b"
 
           if [ "$GRID" = "10x10" ]; then
             EXPLORE_FRAC=0.80; END_E=0.1
@@ -105,11 +107,14 @@ jobs:
           echo "timesteps=$T1"           >> "$GITHUB_OUTPUT"
           echo "explore_frac=$EXPLORE_FRAC" >> "$GITHUB_OUTPUT"
           echo "end_e=$END_E"            >> "$GITHUB_OUTPUT"
+          echo "seed_a_exp=$SEED_A_EXP"  >> "$GITHUB_OUTPUT"
+          echo "seed_b_exp=$SEED_B_EXP"  >> "$GITHUB_OUTPUT"
 
       # ---------- Leg A: train from scratch on SEED_A ----------
       - name: "Leg A – Train from scratch on Seed ${{ steps.cfg.outputs.seed_a }}"
         run: |
           python src/${{ matrix.agent }}.py \
+            --exp-name    ${{ steps.cfg.outputs.seed_a_exp }} \
             --env-id      ${{ steps.cfg.outputs.env_id }} \
             --total-timesteps ${{ steps.cfg.outputs.timesteps }} \
             --seed        ${{ steps.cfg.outputs.seed_a }} \
@@ -144,6 +149,7 @@ jobs:
       - name: "Leg B – Transfer to Seed ${{ steps.cfg.outputs.seed_b }}"
         run: |
           python src/${{ matrix.agent }}.py \
+            --exp-name    ${{ steps.cfg.outputs.seed_b_exp }} \
             --env-id      ${{ steps.cfg.outputs.env_id }} \
             --total-timesteps ${{ steps.cfg.outputs.timesteps }} \
             --seed        ${{ steps.cfg.outputs.seed_b }} \
@@ -204,9 +210,13 @@ jobs:
           if [ "${{ matrix.direction }}" = "empty_to_doorkey" ]; then
             SRC_ENV="$EMPTY_ID"
             DST_ENV="$DOORKEY_ID"
+            SRC_EXP="${{ matrix.agent }}_scratch_empty_for_empty_to_doorkey_transfer"
+            DST_EXP="${{ matrix.agent }}_transfer_empty_to_doorkey"
           else
             SRC_ENV="$DOORKEY_ID"
             DST_ENV="$EMPTY_ID"
+            SRC_EXP="${{ matrix.agent }}_scratch_doorkey_for_doorkey_to_empty_transfer"
+            DST_EXP="${{ matrix.agent }}_transfer_doorkey_to_empty"
           fi
 
           if [ "$GRID" = "10x10" ]; then
@@ -223,11 +233,14 @@ jobs:
           echo "timesteps=$T2"           >> "$GITHUB_OUTPUT"
           echo "explore_frac=$EXPLORE_FRAC" >> "$GITHUB_OUTPUT"
           echo "end_e=$END_E"            >> "$GITHUB_OUTPUT"
+          echo "src_exp=$SRC_EXP"        >> "$GITHUB_OUTPUT"
+          echo "dst_exp=$DST_EXP"        >> "$GITHUB_OUTPUT"
 
       # ---------- Leg A: train from scratch on source environment ----------
       - name: "Leg A – Train on source env (${{ steps.cfg.outputs.src_env }})"
         run: |
           python src/${{ matrix.agent }}.py \
+            --exp-name    ${{ steps.cfg.outputs.src_exp }} \
             --env-id      ${{ steps.cfg.outputs.src_env }} \
             --total-timesteps ${{ steps.cfg.outputs.timesteps }} \
             --seed        ${{ steps.cfg.outputs.seed_a }} \
@@ -261,6 +274,7 @@ jobs:
       - name: "Leg B – Transfer to destination env (${{ steps.cfg.outputs.dst_env }})"
         run: |
           python src/${{ matrix.agent }}.py \
+            --exp-name    ${{ steps.cfg.outputs.dst_exp }} \
             --env-id      ${{ steps.cfg.outputs.dst_env }} \
             --total-timesteps ${{ steps.cfg.outputs.timesteps }} \
             --seed        ${{ steps.cfg.outputs.seed_a }} \
@@ -343,6 +357,8 @@ jobs:
             python src/plot_comparison.py \
               --env-id "$env" \
               --results-dir results \
+              --exp-name-contains seed_transfer_ \
+              --combine-all-runs \
               --plots-dir "$PLOTS_DIR" || echo "WARNING: plot_comparison failed for $env"
           done
 
@@ -356,7 +372,26 @@ jobs:
             python src/plot_comparison.py \
               --env-id "$env" \
               --results-dir results \
+              --exp-name-contains scratch_ \
+              --exp-name-contains transfer_ \
               --plots-dir "$PLOTS_DIR" || echo "WARNING: plot_comparison failed for $env"
+
+            NAV_DIR="$PLOTS_DIR/trained_agent_navigation"
+            if [[ "$env" == *"Empty"* ]]; then
+              echo "=== Greedy navigation test: DoorKey → Empty ==="
+              python src/plot_state_action_freq.py \
+                --env-id "$env" --results-dir results --action-set full --seed 1 \
+                --epsilons 0.0 --plots-dir "$NAV_DIR" \
+                --model-spec "ddqn_baseline_transfer_doorkey_to_empty|Baseline DDQN: Transfer DoorKey → Empty" \
+                --model-spec "ddqn_reward_shaping_transfer_doorkey_to_empty|RS-DDQN: Transfer DoorKey → Empty"
+            else
+              echo "=== Greedy navigation test: Empty → DoorKey ==="
+              python src/plot_state_action_freq.py \
+                --env-id "$env" --results-dir results --action-set full --seed 1 \
+                --epsilons 0.0 --plots-dir "$NAV_DIR" \
+                --model-spec "ddqn_baseline_transfer_empty_to_doorkey|Baseline DDQN: Transfer Empty → DoorKey" \
+                --model-spec "ddqn_reward_shaping_transfer_empty_to_doorkey|RS-DDQN: Transfer Empty → DoorKey"
+            fi
           done
 
       - name: Commit and Push Plots
