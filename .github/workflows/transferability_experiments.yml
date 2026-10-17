@@ -343,54 +343,41 @@ jobs:
 
       - name: Generate Comparison Plots
         run: |
-          TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
           GRID="${{ github.event.inputs.grid_size || '6x6' }}"
+          PLOTS_DIR="plots/transferability/reward_comparison"
+          mkdir -p "$PLOTS_DIR"
 
-          # --- Seed-transferability plots ---
-          # One plot per env showing only the transferred Seed-B runs
-          # for Baseline DDQN and RS-DDQN.
-          for env in "MiniGrid-Empty-Random-${GRID}-v0" "MiniGrid-DoorKey-${GRID}-v0"; do
-            PLOTS_DIR="plots/transferability/seed_transfer/${env}_${TIMESTAMP}"
-            mkdir -p "$PLOTS_DIR"
-            echo "=== Seed-transfer plots for $env ==="
-            python src/plot_comparison.py \
-              --env-id "$env" \
-              --results-dir results \
-              --exp-name-contains _seed_transfer_seed_b \
-              --plots-dir "$PLOTS_DIR" || echo "WARNING: plot_comparison failed for $env"
-          done
+          # 1. Seed 2 on DoorKey, initialized from Seed 1 on DoorKey.
+          python src/plot_comparison.py \
+            --env-id "MiniGrid-DoorKey-${GRID}-v0" \
+            --results-dir results \
+            --exp-name-contains _seed_transfer_seed_b \
+            --mean-reward-only \
+            --plots-dir "$PLOTS_DIR/seed_b_doorkey"
 
-          # --- Cross-environment transferability plots ---
-          # Plot the destination-env training curves so we can compare
-          # a fresh agent vs the transferred agent on the same env.
-          for env in "MiniGrid-Empty-Random-${GRID}-v0" "MiniGrid-DoorKey-${GRID}-v0"; do
-            PLOTS_DIR="plots/transferability/env_transfer/${env}_${TIMESTAMP}"
-            mkdir -p "$PLOTS_DIR"
-            echo "=== Env-transfer plots for $env ==="
-            python src/plot_comparison.py \
-              --env-id "$env" \
-              --results-dir results \
-              --exp-name-contains scratch_ \
-              --exp-name-contains transfer_ \
-              --plots-dir "$PLOTS_DIR" || echo "WARNING: plot_comparison failed for $env"
+          # 2. Seed 2 on Empty, initialized from Seed 1 on Empty.
+          python src/plot_comparison.py \
+            --env-id "MiniGrid-Empty-Random-${GRID}-v0" \
+            --results-dir results \
+            --exp-name-contains _seed_transfer_seed_b \
+            --mean-reward-only \
+            --plots-dir "$PLOTS_DIR/seed_b_empty"
 
-            NAV_DIR="$PLOTS_DIR/trained_agent_navigation"
-            if [[ "$env" == *"Empty"* ]]; then
-              echo "=== Greedy navigation test: DoorKey → Empty ==="
-              python src/plot_state_action_freq.py \
-                --env-id "$env" --results-dir results --action-set full --seed 1 \
-                --epsilons 0.0 --plots-dir "$NAV_DIR" \
-                --model-spec "ddqn_baseline_transfer_doorkey_to_empty|Baseline DDQN: Transfer DoorKey → Empty" \
-                --model-spec "ddqn_reward_shaping_transfer_doorkey_to_empty|RS-DDQN: Transfer DoorKey → Empty"
-            else
-              echo "=== Greedy navigation test: Empty → DoorKey ==="
-              python src/plot_state_action_freq.py \
-                --env-id "$env" --results-dir results --action-set full --seed 1 \
-                --epsilons 0.0 --plots-dir "$NAV_DIR" \
-                --model-spec "ddqn_baseline_transfer_empty_to_doorkey|Baseline DDQN: Transfer Empty → DoorKey" \
-                --model-spec "ddqn_reward_shaping_transfer_empty_to_doorkey|RS-DDQN: Transfer Empty → DoorKey"
-            fi
-          done
+          # 3. Empty Seed 1, initialized from DoorKey Seed 1.
+          python src/plot_comparison.py \
+            --env-id "MiniGrid-Empty-Random-${GRID}-v0" \
+            --results-dir results \
+            --exp-name-contains _transfer_doorkey_to_empty \
+            --mean-reward-only \
+            --plots-dir "$PLOTS_DIR/doorkey_to_empty"
+
+          # 4. DoorKey Seed 1, initialized from Empty Seed 1.
+          python src/plot_comparison.py \
+            --env-id "MiniGrid-DoorKey-${GRID}-v0" \
+            --results-dir results \
+            --exp-name-contains _transfer_empty_to_doorkey \
+            --mean-reward-only \
+            --plots-dir "$PLOTS_DIR/empty_to_doorkey"
 
       - name: Commit and Push Plots
         run: |

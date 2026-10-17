@@ -461,6 +461,8 @@ def main():
                         help="Only plot runs whose experiment name contains this value. May be repeated.")
     parser.add_argument("--combine-all-runs", action="store_true",
                         help="Draw all matching runs in one comparison figure, even when their seeds differ.")
+    parser.add_argument("--mean-reward-only", action="store_true",
+                        help="Generate only the mean episodic-reward comparison plot.")
     parser.add_argument("--decay-comparison", action="store_true",
                         help="Generate decay comparison plots for Baseline, Reward Shaped, and Best of Both.")
     args = parser.parse_args()
@@ -471,6 +473,20 @@ def main():
 
     plots_dir = Path(args.plots_dir)
     plots_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.mean_reward_only:
+        output_path = plots_dir / f"{args.env_id}_mean_reward_comparison.png"
+        plot_single_mean_metric(
+            runs_by_exp,
+            args.env_id,
+            output_path,
+            args.rolling_window,
+            "episodic_return",
+            "Mean Episodic Return",
+            "Episodic Return",
+            title_suffix=" | Transfer Performance",
+        )
+        return
 
     if args.combine_all_runs:
         output_path = plots_dir / f"{args.env_id}_combined_comparison.png"
