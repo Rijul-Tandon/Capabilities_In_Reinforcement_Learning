@@ -116,6 +116,7 @@ jobs:
             --exploration-fraction ${{ steps.cfg.outputs.explore_frac }} \
             --end-e       ${{ steps.cfg.outputs.end_e }} \
             --epsilon-schedule linear \
+            --action-set full \
             --save-model  true \
             --fixed-layout
 
@@ -149,6 +150,7 @@ jobs:
             --exploration-fraction ${{ steps.cfg.outputs.explore_frac }} \
             --end-e       ${{ steps.cfg.outputs.end_e }} \
             --epsilon-schedule linear \
+            --action-set full \
             --load-model  "${{ steps.ckpt.outputs.model_path }}" \
             --save-model  true \
             --fixed-layout
@@ -232,6 +234,7 @@ jobs:
             --exploration-fraction ${{ steps.cfg.outputs.explore_frac }} \
             --end-e       ${{ steps.cfg.outputs.end_e }} \
             --epsilon-schedule linear \
+            --action-set full \
             --save-model  true \
             --fixed-layout
 
@@ -264,6 +267,7 @@ jobs:
             --exploration-fraction ${{ steps.cfg.outputs.explore_frac }} \
             --end-e       ${{ steps.cfg.outputs.end_e }} \
             --epsilon-schedule linear \
+            --action-set full \
             --load-model  "${{ steps.ckpt.outputs.model_path }}" \
             --save-model  true \
             --fixed-layout
