@@ -1,0 +1,366 @@
+name: Transferability Experiments
+
+# ============================================================
+# OVERVIEW
+# Three experiment phases, all fully automated:
+#
+# Phase 1 – Seed Transferability (per env × agent)
+#   a. Train on SEED_A  →  save checkpoint
+#   b. Load checkpoint, continue training on SEED_B  →  save results
+#   All per-seed episode CSVs land in the SAME results dir so
+#   plot_comparison.py can overlay both training curves.
+#
+# Phase 2 – Cross-Environment Transferability
+#   a. Train on Empty (SEED_A)  →  checkpoint
+#   b. Load checkpoint, train on DoorKey (SEED_A)  →  results
+#   c. Train on DoorKey (SEED_A)  →  checkpoint
+#   d. Load checkpoint, train on Empty (SEED_A)  →  results
+#
+# Phase 3 – Plot
+#   Runs plot_comparison.py for every env that produced results.
+# ============================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      grid_size:
+        description: 'Grid size for both environments'
+        required: false
+        default: '6x6'
+        type: choice
+        options: [6x6, 8x8, 10x10]
+      seed_a:
+        description: 'First training seed (train-from-scratch seed)'
+        required: false
+        default: '1'
+      seed_b:
+        description: 'Second training seed (transfer-to seed)'
+        required: false
+        default: '2'
+      timesteps_phase1:
+        description: 'Timesteps for each phase-1 leg (per seed)'
+        required: false
+        default: '200000'
+      timesteps_phase2:
+        description: 'Timesteps for each phase-2 leg (per environment)'
+        required: false
+        default: '200000'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# ============================================================
+# JOB 1 – SEED TRANSFERABILITY
+# Trains agent on SEED_A, then loads that checkpoint and
+# continues training on SEED_B for the same environment.
+# Both Baseline DDQN and RS-DDQN are tested in parallel.
+# ============================================================
+jobs:
+  seed_transfer:
+    name: "Seed Transfer | ${{ matrix.agent }} | ${{ matrix.env_suffix }} | A→B"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [ddqn_baseline, ddqn_reward_shaping]
+        env_suffix: [Empty, DoorKey]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Resolve environment IDs and hyperparameters
+        id: cfg
+        run: |
+          GRID="${{ github.event.inputs.grid_size || '6x6' }}"
+          SEED_A="${{ github.event.inputs.seed_a || '1' }}"
+          SEED_B="${{ github.event.inputs.seed_b || '2' }}"
+          T1="${{ github.event.inputs.timesteps_phase1 || '200000' }}"
+
+          if [ "${{ matrix.env_suffix }}" = "Empty" ]; then
+            ENV_ID="MiniGrid-Empty-Random-${GRID}-v0"
+          else
+            ENV_ID="MiniGrid-DoorKey-${GRID}-v0"
+          fi
+
+          if [ "$GRID" = "10x10" ]; then
+            EXPLORE_FRAC=0.80; END_E=0.1
+          elif [ "$GRID" = "8x8" ]; then
+            EXPLORE_FRAC=0.50; END_E=0.01
+          else
+            EXPLORE_FRAC=0.50; END_E=0.01
+          fi
+
+          echo "env_id=$ENV_ID"          >> "$GITHUB_OUTPUT"
+          echo "seed_a=$SEED_A"          >> "$GITHUB_OUTPUT"
+          echo "seed_b=$SEED_B"          >> "$GITHUB_OUTPUT"
+          echo "timesteps=$T1"           >> "$GITHUB_OUTPUT"
+          echo "explore_frac=$EXPLORE_FRAC" >> "$GITHUB_OUTPUT"
+          echo "end_e=$END_E"            >> "$GITHUB_OUTPUT"
+
+      # ---------- Leg A: train from scratch on SEED_A ----------
+      - name: "Leg A – Train from scratch on Seed ${{ steps.cfg.outputs.seed_a }}"
+        run: |
+          python src/${{ matrix.agent }}.py \
+            --env-id      ${{ steps.cfg.outputs.env_id }} \
+            --total-timesteps ${{ steps.cfg.outputs.timesteps }} \
+            --seed        ${{ steps.cfg.outputs.seed_a }} \
+            --exploration-fraction ${{ steps.cfg.outputs.explore_frac }} \
+            --end-e       ${{ steps.cfg.outputs.end_e }} \
+            --epsilon-schedule linear \
+            --save-model  true \
+            --fixed-layout
+
+      # Locate the checkpoint saved by Leg A (most recent run dir for this env+agent)
+      - name: Locate Leg-A checkpoint
+        id: ckpt
+        run: |
+          ENV="${{ steps.cfg.outputs.env_id }}"
+          AGENT="${{ matrix.agent }}"
+          # Run dirs are named: results/<env_id>__<agent>__<timestamp>
+          CKPT=$(ls -td results/${ENV}__${AGENT}__* 2>/dev/null | head -1)
+          if [ -z "$CKPT" ]; then
+            echo "ERROR: no run directory found for ${ENV}__${AGENT}"
+            exit 1
+          fi
+          MODEL="$CKPT/q_net.pt"
+          if [ ! -f "$MODEL" ]; then
+            echo "ERROR: q_net.pt not found in $CKPT"
+            exit 1
+          fi
+          echo "model_path=$MODEL" >> "$GITHUB_OUTPUT"
+          echo "Leg-A checkpoint: $MODEL"
+
+      # ---------- Leg B: load checkpoint, continue on SEED_B ----------
+      - name: "Leg B – Transfer to Seed ${{ steps.cfg.outputs.seed_b }}"
+        run: |
+          python src/${{ matrix.agent }}.py \
+            --env-id      ${{ steps.cfg.outputs.env_id }} \
+            --total-timesteps ${{ steps.cfg.outputs.timesteps }} \
+            --seed        ${{ steps.cfg.outputs.seed_b }} \
+            --exploration-fraction ${{ steps.cfg.outputs.explore_frac }} \
+            --end-e       ${{ steps.cfg.outputs.end_e }} \
+            --epsilon-schedule linear \
+            --load-model  "${{ steps.ckpt.outputs.model_path }}" \
+            --save-model  true \
+            --fixed-layout
+
+      - name: Upload Seed-Transfer Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: "seed_transfer_${{ matrix.agent }}_${{ matrix.env_suffix }}_${{ github.event.inputs.grid_size || '6x6' }}"
+          path: results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ============================================================
+  # JOB 2 – CROSS-ENVIRONMENT TRANSFERABILITY
+  # Two directions:
+  #   Empty → DoorKey  (train on Empty, transfer to DoorKey)
+  #   DoorKey → Empty  (train on DoorKey, transfer to Empty)
+  # Both agents run in parallel.
+  # ============================================================
+  env_transfer:
+    name: "Env Transfer | ${{ matrix.agent }} | ${{ matrix.direction }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [ddqn_baseline, ddqn_reward_shaping]
+        direction: [empty_to_doorkey, doorkey_to_empty]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Resolve environment IDs and hyperparameters
+        id: cfg
+        run: |
+          GRID="${{ github.event.inputs.grid_size || '6x6' }}"
+          SEED_A="${{ github.event.inputs.seed_a || '1' }}"
+          T2="${{ github.event.inputs.timesteps_phase2 || '200000' }}"
+
+          EMPTY_ID="MiniGrid-Empty-Random-${GRID}-v0"
+          DOORKEY_ID="MiniGrid-DoorKey-${GRID}-v0"
+
+          if [ "${{ matrix.direction }}" = "empty_to_doorkey" ]; then
+            SRC_ENV="$EMPTY_ID"
+            DST_ENV="$DOORKEY_ID"
+          else
+            SRC_ENV="$DOORKEY_ID"
+            DST_ENV="$EMPTY_ID"
+          fi
+
+          if [ "$GRID" = "10x10" ]; then
+            EXPLORE_FRAC=0.80; END_E=0.1
+          elif [ "$GRID" = "8x8" ]; then
+            EXPLORE_FRAC=0.50; END_E=0.01
+          else
+            EXPLORE_FRAC=0.50; END_E=0.01
+          fi
+
+          echo "src_env=$SRC_ENV"        >> "$GITHUB_OUTPUT"
+          echo "dst_env=$DST_ENV"        >> "$GITHUB_OUTPUT"
+          echo "seed_a=$SEED_A"          >> "$GITHUB_OUTPUT"
+          echo "timesteps=$T2"           >> "$GITHUB_OUTPUT"
+          echo "explore_frac=$EXPLORE_FRAC" >> "$GITHUB_OUTPUT"
+          echo "end_e=$END_E"            >> "$GITHUB_OUTPUT"
+
+      # ---------- Leg A: train from scratch on source environment ----------
+      - name: "Leg A – Train on source env (${{ steps.cfg.outputs.src_env }})"
+        run: |
+          python src/${{ matrix.agent }}.py \
+            --env-id      ${{ steps.cfg.outputs.src_env }} \
+            --total-timesteps ${{ steps.cfg.outputs.timesteps }} \
+            --seed        ${{ steps.cfg.outputs.seed_a }} \
+            --exploration-fraction ${{ steps.cfg.outputs.explore_frac }} \
+            --end-e       ${{ steps.cfg.outputs.end_e }} \
+            --epsilon-schedule linear \
+            --save-model  true \
+            --fixed-layout
+
+      # Locate checkpoint from Leg A
+      - name: Locate Leg-A checkpoint
+        id: ckpt
+        run: |
+          SRC="${{ steps.cfg.outputs.src_env }}"
+          AGENT="${{ matrix.agent }}"
+          CKPT=$(ls -td results/${SRC}__${AGENT}__* 2>/dev/null | head -1)
+          if [ -z "$CKPT" ]; then
+            echo "ERROR: no run directory found for ${SRC}__${AGENT}"
+            exit 1
+          fi
+          MODEL="$CKPT/q_net.pt"
+          if [ ! -f "$MODEL" ]; then
+            echo "ERROR: q_net.pt not found in $CKPT"
+            exit 1
+          fi
+          echo "model_path=$MODEL" >> "$GITHUB_OUTPUT"
+          echo "Leg-A checkpoint: $MODEL"
+
+      # ---------- Leg B: load checkpoint, train on destination environment ----------
+      - name: "Leg B – Transfer to destination env (${{ steps.cfg.outputs.dst_env }})"
+        run: |
+          python src/${{ matrix.agent }}.py \
+            --env-id      ${{ steps.cfg.outputs.dst_env }} \
+            --total-timesteps ${{ steps.cfg.outputs.timesteps }} \
+            --seed        ${{ steps.cfg.outputs.seed_a }} \
+            --exploration-fraction ${{ steps.cfg.outputs.explore_frac }} \
+            --end-e       ${{ steps.cfg.outputs.end_e }} \
+            --epsilon-schedule linear \
+            --load-model  "${{ steps.ckpt.outputs.model_path }}" \
+            --save-model  true \
+            --fixed-layout
+
+      - name: Upload Cross-Env Transfer Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: "env_transfer_${{ matrix.agent }}_${{ matrix.direction }}_${{ github.event.inputs.grid_size || '6x6' }}"
+          path: results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ============================================================
+  # JOB 3 – GENERATE COMPARISON PLOTS
+  # Runs after BOTH transfer jobs are complete.
+  # Downloads all results, generates per-env training-curve
+  # comparison plots (seed A vs seed B, and source vs transfer),
+  # then commits them back to the repo.
+  # ============================================================
+  plot:
+    name: Generate Transferability Plots & Push
+    needs: [seed_transfer, env_transfer]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download all results (seed transfer)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: seed_transfer_*
+          path: results/
+          merge-multiple: true
+
+      - name: Download all results (env transfer)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: env_transfer_*
+          path: results/
+          merge-multiple: true
+
+      - name: Upload Combined Results Archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: "all_transfer_results_${{ github.event.inputs.grid_size || '6x6' }}"
+          path: results/
+          retention-days: 14
+
+      - name: Generate Comparison Plots
+        run: |
+          TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
+          GRID="${{ github.event.inputs.grid_size || '6x6' }}"
+
+          # --- Seed-transferability plots ---
+          # One plot per env showing training curves for both seeds
+          # (Seed-A run and the Seed-B transfer run will both appear
+          #  because they share the same env_id prefix in results/)
+          for env in "MiniGrid-Empty-Random-${GRID}-v0" "MiniGrid-DoorKey-${GRID}-v0"; do
+            PLOTS_DIR="plots/transferability/seed_transfer/${env}_${TIMESTAMP}"
+            mkdir -p "$PLOTS_DIR"
+            echo "=== Seed-transfer plots for $env ==="
+            python src/plot_comparison.py \
+              --env-id "$env" \
+              --results-dir results \
+              --plots-dir "$PLOTS_DIR" || echo "WARNING: plot_comparison failed for $env"
+          done
+
+          # --- Cross-environment transferability plots ---
+          # Plot the destination-env training curves so we can compare
+          # a fresh agent vs the transferred agent on the same env.
+          for env in "MiniGrid-Empty-Random-${GRID}-v0" "MiniGrid-DoorKey-${GRID}-v0"; do
+            PLOTS_DIR="plots/transferability/env_transfer/${env}_${TIMESTAMP}"
+            mkdir -p "$PLOTS_DIR"
+            echo "=== Env-transfer plots for $env ==="
+            python src/plot_comparison.py \
+              --env-id "$env" \
+              --results-dir results \
+              --plots-dir "$PLOTS_DIR" || echo "WARNING: plot_comparison failed for $env"
+          done
+
+      - name: Commit and Push Plots
+        run: |
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add plots/transferability/
+          git commit -m "Auto-generated transferability comparison plots [${{ github.event.inputs.grid_size || '6x6' }}]" \
+            || echo "No changes to commit"
+          git pull --rebase origin main
+          git push origin main
