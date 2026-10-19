@@ -83,7 +83,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: dqn_result_${{ matrix.agent }}_${{ github.event.inputs.env_id || 'ALE/DemonAttack-v5' }}_seed${{ matrix.seed }}
+          name: dqn_result_${{ matrix.agent }}_DemonAttack-v5_seed${{ matrix.seed }}
           path: results/
           if-no-files-found: ignore
           retention-days: 14

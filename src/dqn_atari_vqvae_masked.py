@@ -146,8 +146,12 @@ def train(args):
     print(f"{args.env_id}: actions={env.unwrapped.get_action_meanings()}")
     run_dir = Path(args.results_dir) / f"{args.env_id.replace('/', '_')}__{args.agent}__{args.seed}__{int(time.time())}"
     run_dir.mkdir(parents=True, exist_ok=True)
+    config = vars(args).copy()
+    # plot_comparison groups runs by this field, so baseline and masked runs
+    # remain distinct even when they use the same environment and seed.
+    config["exp_name"] = args.agent
     with open(run_dir / "config.json", "w", encoding="utf-8") as handle:
-        json.dump(vars(args), handle, indent=2)
+        json.dump(config, handle, indent=2)
 
     vqvae = None
     if args.agent == "dqn_vqvae_masked":

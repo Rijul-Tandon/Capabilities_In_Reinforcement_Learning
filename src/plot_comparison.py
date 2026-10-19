@@ -65,7 +65,10 @@ def load_runs(results_dir, env_id, exp_name_contains=None):
     """
     runs_by_exp = {}
 
-    for run_dir in sorted(Path(results_dir).glob(f"{env_id}__*")):
+    # Run directories sanitize Atari IDs such as ALE/DemonAttack-v5 because a
+    # slash cannot be part of a single portable directory name.
+    run_prefix = env_id.replace("/", "_")
+    for run_dir in sorted(Path(results_dir).glob(f"{run_prefix}__*")):
         config_path = run_dir / "config.json"
         episode_path = run_dir / "episodes.csv"
 
@@ -469,6 +472,10 @@ def main():
                         help="Generate decay comparison plots for Baseline, Reward Shaped, and Best of Both.")
     args = parser.parse_args()
 
+    # Keep the human-readable Atari ID in chart titles, but never use its
+    # slash in an output filename.
+    safe_env_id = args.env_id.replace("/", "_")
+
     runs_by_exp = load_runs(args.results_dir, args.env_id, args.exp_name_contains)
     if not runs_by_exp:
         raise SystemExit(f"No runs found for {args.env_id} in {args.results_dir}")
@@ -477,7 +484,7 @@ def main():
     plots_dir.mkdir(parents=True, exist_ok=True)
 
     if args.mean_reward_only:
-        output_path = plots_dir / f"{args.env_id}_mean_reward_comparison.png"
+        output_path = plots_dir / f"{safe_env_id}_mean_reward_comparison.png"
         plot_single_mean_metric(
             runs_by_exp,
             args.env_id,
@@ -498,7 +505,7 @@ def main():
                 for exp_name, run_list in runs_by_exp.items()
             }
             seed_runs = {exp_name: run_list for exp_name, run_list in seed_runs.items() if run_list}
-            output_path = plots_dir / f"{args.env_id}_seed{seed}_mean_reward_comparison.png"
+            output_path = plots_dir / f"{safe_env_id}_seed{seed}_mean_reward_comparison.png"
             plot_single_mean_metric(
                 seed_runs,
                 args.env_id,
@@ -512,7 +519,7 @@ def main():
         return
 
     if args.combine_all_runs:
-        output_path = plots_dir / f"{args.env_id}_combined_comparison.png"
+        output_path = plots_dir / f"{safe_env_id}_combined_comparison.png"
         plot_figure(
             runs_by_exp,
             args.env_id,
@@ -552,13 +559,13 @@ def main():
 
             # 1. Compare all decay strategies for Baseline DDQN on seed `s`
             if seed_b_runs:
-                out_b_s = plots_dir / f"{args.env_id}_decay_comparison_baseline_seed{s}.png"
+                out_b_s = plots_dir / f"{safe_env_id}_decay_comparison_baseline_seed{s}.png"
                 plot_figure(seed_b_runs, args.env_id, out_b_s, args.rolling_window,
                             title_suffix=f" | Baseline DDQN (Seed {s})")
 
             # 2. Compare all decay strategies for Reward Shaped DDQN on seed `s`
             if seed_s_runs:
-                out_s_s = plots_dir / f"{args.env_id}_decay_comparison_reward_shaping_seed{s}.png"
+                out_s_s = plots_dir / f"{safe_env_id}_decay_comparison_reward_shaping_seed{s}.png"
                 plot_figure(seed_s_runs, args.env_id, out_s_s, args.rolling_window,
                             title_suffix=f" | Reward Shaped DDQN (Seed {s})")
 
@@ -573,7 +580,7 @@ def main():
                 best_s_dict[winner_s_s] = seed_s_runs[winner_s_s]
 
             if best_s_dict:
-                out_best_s = plots_dir / f"{args.env_id}_decay_comparison_best_of_both_seed{s}.png"
+                out_best_s = plots_dir / f"{safe_env_id}_decay_comparison_best_of_both_seed{s}.png"
                 plot_figure(best_s_dict, args.env_id, out_best_s, args.rolling_window,
                             title_suffix=f" | Best Baseline vs Best Shaped (Seed {s})")
 
@@ -605,7 +612,7 @@ def main():
             if not filtered:
                 continue
 
-            out = plots_dir / f"{args.env_id}_comparison_seed{seed}.png"
+            out = plots_dir / f"{safe_env_id}_comparison_seed{seed}.png"
             plot_figure(filtered, args.env_id, out, args.rolling_window,
                         title_suffix=f" | Seed {seed}")
 
@@ -613,7 +620,7 @@ def main():
         if all_seeds:
             num_seeds = len(all_seeds)
             print(f"Generating mean aggregated comparison plots across all {num_seeds} seeds for {args.env_id} ...")
-            out_mean = plots_dir / f"{args.env_id}_mean.png"
+            out_mean = plots_dir / f"{safe_env_id}_mean.png"
             plot_mean_figure(runs_by_exp, args.env_id, out_mean, args.rolling_window,
                              title_suffix=f" | Mean Across {num_seeds} Seeds")
 
