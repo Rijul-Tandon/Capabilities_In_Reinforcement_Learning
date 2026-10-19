@@ -1,18 +1,15 @@
-name: Run Continuous-Discrete VQ-VAE Experiments
+name: Run Atari VQ-VAE Action-Masking Experiments
 
 on:
   workflow_dispatch:
     inputs:
       env_id:
-        description: 'Continuous-State Discrete-Action Environment'
+        description: 'Atari benchmark environment (full 18-action space)'
         required: false
-        default: 'Acrobot-v1'
+        default: 'ALE/DemonAttack-v5'
         type: choice
         options:
-          - Acrobot-v1
-          - CartPole-v1
-          - MountainCar-v0
-          - LunarLander-v3
+          - ALE/DemonAttack-v5
       num_seeds:
         description: 'Number of seeds to run'
         required: false
@@ -27,7 +24,7 @@ env:
 
 jobs:
   train:
-    name: Train (${{ matrix.agent }}, ${{ github.event.inputs.env_id || 'Acrobot-v1' }}, seed ${{ matrix.seed }})
+    name: Train (${{ matrix.agent }}, ${{ github.event.inputs.env_id || 'ALE/DemonAttack-v5' }}, seed ${{ matrix.seed }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -45,7 +42,7 @@ jobs:
           python-version: '3.10'
           cache: 'pip'
 
-      - name: Install System Dependencies for Box2D / Swig
+      - name: Install Atari system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y swig ffmpeg
@@ -62,14 +59,14 @@ jobs:
             exit 0
           fi
 
-          ENV_ID="${{ github.event.inputs.env_id || 'Acrobot-v1' }}"
+          ENV_ID="${{ github.event.inputs.env_id || 'ALE/DemonAttack-v5' }}"
           TIMESTEPS="${{ github.event.inputs.total_timesteps || '200000' }}"
 
-          python src/dqn_vqvae_masked.py \
+          python src/dqn_atari_vqvae_masked.py \
             --env-id $ENV_ID \
             --agent ${{ matrix.agent }} \
             --mask-penalty 1.0 \
-            --vqvae-epochs 50 \
+            --vqvae-epochs 10 \
             --num-embeddings 256 \
             --embedding-dim 8 \
             --seed ${{ matrix.seed }} \
@@ -86,7 +83,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: dqn_result_${{ matrix.agent }}_${{ github.event.inputs.env_id || 'Acrobot-v1' }}_seed${{ matrix.seed }}
+          name: dqn_result_${{ matrix.agent }}_${{ github.event.inputs.env_id || 'ALE/DemonAttack-v5' }}_seed${{ matrix.seed }}
           path: results/
           if-no-files-found: ignore
           retention-days: 14
@@ -119,7 +116,7 @@ jobs:
 
       - name: Generate Comparison Plots
         run: |
-          ENV_ID="${{ github.event.inputs.env_id || 'Acrobot-v1' }}"
+          ENV_ID="${{ github.event.inputs.env_id || 'ALE/DemonAttack-v5' }}"
           PLOTS_DIR="plots/reward_comparison"
           mkdir -p "$PLOTS_DIR"
 
@@ -131,6 +128,6 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
           git add plots/
-          git commit -m "Auto-generated continuous-discrete DQN VQ-VAE masked comparison plots" || echo "No changes to commit"
+          git commit -m "Auto-generated Atari DQN VQ-VAE masked comparison plots" || echo "No changes to commit"
           git pull --rebase origin main
           git push origin main
