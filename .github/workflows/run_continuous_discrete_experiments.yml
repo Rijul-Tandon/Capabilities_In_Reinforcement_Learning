@@ -10,6 +10,9 @@ on:
         type: choice
         options:
           - ALE/DemonAttack-v5
+          - ALE/BeamRider-v5
+          - ALE/MsPacman-v5
+          - ALE/Qbert-v5
       num_seeds:
         description: 'Number of seeds to run'
         required: false
@@ -17,7 +20,7 @@ on:
       total_timesteps:
         description: 'Total training timesteps'
         required: false
-        default: '200000'
+        default: '10000000'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -29,7 +32,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        agent: [dqn_baseline, dqn_vqvae_masked]
+        # dqn_atari_vqvae_masked.py uses Double DQN targets for both DDQN entries.
+        agent: [ddqn_baseline, ddqn_vqvae_masked, ppo_baseline, ppo_vqvae_masked]
         seed: [1]
 
     steps:
@@ -50,7 +54,7 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Run DQN / VQ-VAE Agent
+      - name: Run DDQN or PPO Agent
         run: |
           NUM_SEEDS="${{ github.event.inputs.num_seeds || '3' }}"
           CURRENT_SEED="${{ matrix.seed }}"
@@ -60,17 +64,24 @@ jobs:
           fi
 
           ENV_ID="${{ github.event.inputs.env_id || 'ALE/DemonAttack-v5' }}"
-          TIMESTEPS="${{ github.event.inputs.total_timesteps || '200000' }}"
+          TIMESTEPS="${{ github.event.inputs.total_timesteps || '10000000' }}"
 
-          python src/dqn_atari_vqvae_masked.py \
-            --env-id $ENV_ID \
-            --agent ${{ matrix.agent }} \
+          if [[ "${{ matrix.agent }}" == ppo_* ]]; then
+            SCRIPT="src/ppo_atari_vqvae_masked.py"
+          else
+            SCRIPT="src/dqn_atari_vqvae_masked.py"
+          fi
+
+          python "$SCRIPT" \
+            --env-id "$ENV_ID" \
+            --full-action-space \
+            --agent "${{ matrix.agent }}" \
             --mask-penalty 1.0 \
             --vqvae-epochs 10 \
             --num-embeddings 256 \
             --embedding-dim 8 \
-            --seed ${{ matrix.seed }} \
-            --total-timesteps $TIMESTEPS
+            --seed "${{ matrix.seed }}" \
+            --total-timesteps "$TIMESTEPS"
 
       - name: Upload Run Results
         run: |
@@ -83,7 +94,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: dqn_result_${{ matrix.agent }}_DemonAttack-v5_seed${{ matrix.seed }}
+          name: atari_result_${{ matrix.agent }}_seed${{ matrix.seed }}
           path: results/
           if-no-files-found: ignore
           retention-days: 14
@@ -110,7 +121,7 @@ jobs:
       - name: Download all results
         uses: actions/download-artifact@v4
         with:
-          pattern: dqn_result_*
+          pattern: atari_result_*
           path: results/
           merge-multiple: true
 
@@ -128,6 +139,6 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
           git add plots/
-          git commit -m "Auto-generated Atari DQN VQ-VAE masked comparison plots" || echo "No changes to commit"
+          git commit -m "Auto-generated Atari DDQN and PPO comparison plots" || echo "No changes to commit"
           git pull --rebase origin main
           git push origin main

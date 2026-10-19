@@ -149,10 +149,13 @@ def load_runs(results_dir, env_id, exp_name_contains=None):
 AGENT_COLORS = {
     "random_agent":          "dimgray",
     "ddqn_baseline":         "#1f77b4",  # Blue
+    "ddqn_vqvae_masked":     "#ff7f0e",  # Orange
     "ddqn_reward_shaping":   "#ff7f0e",  # Orange
     "dqn_baseline":          "#1f77b4",  # Blue
     "dqn_reward_shaping":    "#ff7f0e",  # Orange
     "dqn_vqvae_masked":      "#ff7f0e",  # Orange
+    "ppo_baseline":          "#2ca02c",  # Green
+    "ppo_vqvae_masked":      "#d627a5",  # Purple
     "dqn_vanilla":           "#2ca02c",  # Green
 }
 
@@ -193,8 +196,14 @@ def format_exp_label(exp_name):
         return f"{agent} | Seed-transfer leg {seed_leg}"
 
     label = exp_name
-    if "dqn_vqvae_masked" in label:
+    if "ddqn_vqvae_masked" in label:
+        label = label.replace("ddqn_vqvae_masked", "RS-DDQN (VQ-VAE Masked)")
+    elif "dqn_vqvae_masked" in label:
         label = label.replace("dqn_vqvae_masked", "RS-DQN (VQ-VAE Masked)")
+    if "ppo_vqvae_masked" in label:
+        label = label.replace("ppo_vqvae_masked", "RS-PPO (VQ-VAE Masked)")
+    if "ppo_baseline" in label:
+        label = label.replace("ppo_baseline", "Baseline PPO")
     elif "reward_shaping" in label:
         label = label.replace("ddqn_reward_shaping", "RS-DDQN").replace("dqn_reward_shaping", "RS-DDQN")
     elif "baseline" in label:

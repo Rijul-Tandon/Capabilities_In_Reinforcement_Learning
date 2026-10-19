@@ -1,6 +1,6 @@
 __pycache__/
 *.pyc
-virtusl_env_capabilities
+virtual_env_
 # Artifacts
 runs/
 results/

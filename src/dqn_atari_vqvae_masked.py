@@ -102,9 +102,9 @@ class ReplayBuffer:
                      (self.obs, self.next_obs, self.actions, self.rewards, self.terminated))
 
 
-def make_env(env_id, seed):
+def make_env(env_id, seed, full_action_space=True):
     # full_action_space=True exposes all 18 Atari actions, including LEFTFIRE and UPLEFT.
-    env = gym.make(env_id, frameskip=1, full_action_space=True)
+    env = gym.make(env_id, frameskip=1, full_action_space=full_action_space)
     env = gym.wrappers.AtariPreprocessing(env, frame_skip=4, screen_size=84, grayscale_obs=True, scale_obs=False)
     env = gym.wrappers.FrameStack(env, 4)
     env.reset(seed=seed)
@@ -114,9 +114,11 @@ def make_env(env_id, seed):
 def parse_args():
     parser = argparse.ArgumentParser(description="Atari DQN with VQ-VAE action-alias masking")
     parser.add_argument("--env-id", default="ALE/DemonAttack-v5")
-    parser.add_argument("--agent", choices=["dqn_baseline", "dqn_vqvae_masked"], default="dqn_vqvae_masked")
+    parser.add_argument("--full-action-space", action=argparse.BooleanOptionalAction, default=True,
+                        help="Expose all 18 Atari actions (required for Demon Attack action aliases).")
+    parser.add_argument("--agent", choices=["ddqn_baseline", "ddqn_vqvae_masked"], default="ddqn_vqvae_masked")
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--total-timesteps", type=int, default=200000)
+    parser.add_argument("--total-timesteps", type=int, default=10_000_000)
     parser.add_argument("--buffer-size", type=int, default=10000)
     parser.add_argument("--learning-starts", type=int, default=10000)
     parser.add_argument("--batch-size", type=int, default=32)
@@ -140,7 +142,7 @@ def epsilon(step, total):
 def train(args):
     random.seed(args.seed); np.random.seed(args.seed); torch.manual_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    env = make_env(args.env_id, args.seed)
+    env = make_env(args.env_id, args.seed, args.full_action_space)
     if env.action_space.n != 18:
         raise RuntimeError(f"Expected full Atari action space (18 actions), got {env.action_space.n}.")
     print(f"{args.env_id}: actions={env.unwrapped.get_action_meanings()}")
@@ -154,7 +156,7 @@ def train(args):
         json.dump(config, handle, indent=2)
 
     vqvae = None
-    if args.agent == "dqn_vqvae_masked":
+    if args.agent == "ddqn_vqvae_masked":
         vqvae = AtariVQVAE(args.embedding_dim, args.num_embeddings).to(device)
         states, state = [], env.reset(seed=args.seed)[0]
         for _ in range(args.dataset_size):
