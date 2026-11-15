@@ -293,10 +293,14 @@ def plot_all_frequencies(env_id, results_dir, episodes=5, seed=1, hidden_size=25
     else:
         baseline_models = get_models_by_seed(results_dir, env_id, "ddqn_baseline") or get_models_by_seed(results_dir, env_id, "dqn_baseline")
         shaped_models = get_models_by_seed(results_dir, env_id, "ddqn_reward_shaping") or get_models_by_seed(results_dir, env_id, "dqn_reward_shaping")
-        for label, model_path in [
+        learned_models = get_models_by_seed(results_dir, env_id, "ddqn_learned_penalty")
+        default_specs = [
             ("Baseline DDQN", baseline_models.get(seed)),
             ("RS-DDQN", shaped_models.get(seed)),
-        ]:
+        ]
+        if learned_models:   # third column only when the learned-penalty agent was trained for this environment
+            default_specs.append(("LP-DDQN", learned_models.get(seed)))
+        for label, model_path in default_specs:
             if model_path:
                 q_net = QNetwork(obs_dim, num_actions, hidden_size).to(device)
                 q_net.load_state_dict(torch.load(model_path, map_location=device))
@@ -494,8 +498,9 @@ if __name__ == "__main__":
     shaped_models = get_models_by_seed(args.results_dir, args.env_id, "ddqn_reward_shaping")
     if not shaped_models:
         shaped_models = get_models_by_seed(args.results_dir, args.env_id, "dqn_reward_shaping")
+    learned_models = get_models_by_seed(args.results_dir, args.env_id, "ddqn_learned_penalty")
 
-    all_seeds = [args.seed] if model_specs else sorted(set(baseline_models.keys()) | set(shaped_models.keys()))
+    all_seeds = [args.seed] if model_specs else sorted(set(baseline_models.keys()) | set(shaped_models.keys()) | set(learned_models.keys()))
 
     if not all_seeds:
         print(f"No trained models found for {args.env_id} in {args.results_dir}")

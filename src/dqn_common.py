@@ -757,6 +757,8 @@ def parse_args(default_exp_name, use_shaping):
     parser.add_argument("--stuck-penalty", type=float, default=-1)
     # Learned penalty (ddqn_learned_penalty.py only): a small MLP decides the penalty of every transition
     #   instead of the fixed --stuck-penalty rule.  See learned_penalty.py for the meaning of each value.
+    parser.add_argument("--penalty-state", choices=["position_dir", "position", "full"], default="position_dir",
+                        help="state used to index the head: (x, y, direction) [default], (x, y) only, or with key/door flags")
     parser.add_argument("--penalty-rank", type=int, default=0,
                         help="0 = full N x N table over the enumerated states; r > 0 = low-rank table U V^T with N x r factors")
     parser.add_argument("--penalty-lr", type=float, default=5e-3,
@@ -953,9 +955,9 @@ def train(args, use_shaping, penalty_learner_factory=None):
     penalty_learner, state_space = None, None
     if penalty_learner_factory is not None:
         from learned_penalty import DiscreteStateSpace
-        state_space = DiscreteStateSpace(env, args.env_id)          # (x, y, dir[, key, door]) -> state index
+        state_space = DiscreteStateSpace(env, args.env_id, getattr(args, "penalty_state", "position_dir"))
         penalty_learner = penalty_learner_factory(state_space.size, device)
-        print(f"[{args.exp_name}] learned penalty head: {state_space.size} discrete states, "
+        print(f"[{args.exp_name}] learned penalty head: state = {state_space.mode}, {state_space.size} discrete states, "
               f"{penalty_learner.num_parameters():,} parameters")
 
     # --- State-Action Frequency Tracking ---

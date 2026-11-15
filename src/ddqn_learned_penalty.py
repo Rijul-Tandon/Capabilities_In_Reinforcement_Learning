@@ -3,7 +3,7 @@ ddqn_learned_penalty.py - Double DQN Agent WITH a LEARNED Reward-Shaping Penalty
 ================================================================================
 Same Double DQN as ddqn_reward_shaping.py, but the fixed stuck penalty is replaced by a ONE-LAYER head
 (learned_penalty.py).  In MiniGrid every state is an event, so the head is a table indexed by the
-enumerated state (x, y, direction[, key picked, door opened]): one-hot(s) -> one logit per next state,
+enumerated state, (x, y, direction) by default (see --penalty-state): one-hot(s) -> one logit per next state,
 read at the observed next state, sigmoid -> probability of penalising the transition.  The head is
 trained once per episode to maximise the true episode return and minimise the number of steps; the
 agent learns from the shaped reward r - penalty.
@@ -16,6 +16,8 @@ Usage:
   python ddqn_learned_penalty.py --env-id MiniGrid-DoorKey-6x6-v0 --total-timesteps 200000
 
 Extra arguments (defaults in dqn_common.parse_args):
+  --penalty-state position_dir  state that indexes the head: position_dir = (x, y, direction) [N = W*H*4],
+                               position = (x, y) [N = W*H; a turn then equals a wall bump], full = + key/door flags
   --penalty-rank 0             0 = full N x N table; r > 0 = low-rank factors U, V in R^{N x r} (2 N r parameters)
   --penalty-scale 1.0          size of the penalty when the head decides to penalise (matches the manual rule)
   --penalty-step-cost 0.01     cost per step in the head's objective  G = return - step_cost * length

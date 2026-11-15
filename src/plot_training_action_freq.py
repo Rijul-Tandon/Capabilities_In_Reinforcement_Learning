@@ -184,8 +184,9 @@ def build_analysis_report(env_id, results_dir, action_set="task"):
     shaped_dirs = get_dirs_by_seed(results_dir, env_id, "ddqn_reward_shaping")
     if not shaped_dirs:
         shaped_dirs = get_dirs_by_seed(results_dir, env_id, "dqn_reward_shaping")
+    learned_dirs = get_dirs_by_seed(results_dir, env_id, "ddqn_learned_penalty")   # LP-DDQN, present only in the learned-penalty runs
 
-    seeds = sorted(set(baseline_dirs.keys()) | set(shaped_dirs.keys()))
+    seeds = sorted(set(baseline_dirs.keys()) | set(shaped_dirs.keys()) | set(learned_dirs.keys()))
     if not seeds:
         return None
 
@@ -222,6 +223,7 @@ def build_analysis_report(env_id, results_dir, action_set="task"):
     for seed in seeds:
         b_dir = baseline_dirs.get(seed)
         s_dir = shaped_dirs.get(seed)
+        l_dir = learned_dirs.get(seed)
         seed_data = {}
 
         for tw_name, tw_suffix in time_windows:
@@ -230,6 +232,7 @@ def build_analysis_report(env_id, results_dir, action_set="task"):
                 for agent_key, agent_dir, agent_label in [
                     ("baseline", b_dir, "Baseline DDQN"),
                     ("rs_ddqn", s_dir, "RS-DDQN"),
+                    ("lp_ddqn", l_dir, "LP-DDQN"),
                 ]:
                     if agent_dir is None:
                         continue
@@ -267,7 +270,7 @@ def build_analysis_report(env_id, results_dir, action_set="task"):
     def _make_summary_block(tw_name, stage_name):
         """Create a compact summary for one (time_window, stage) combination."""
         block = {}
-        for agent_key, label in [("baseline", "Baseline DDQN"), ("rs_ddqn", "RS-DDQN")]:
+        for agent_key, label in [("baseline", "Baseline DDQN"), ("rs_ddqn", "RS-DDQN"), ("lp_ddqn", "LP-DDQN")]:
             pct_irr_vals = _aggregate_metric("pct_irrelevant", per_seed_data, tw_name, stage_name, agent_key)
             pct_wb_vals = _aggregate_metric("pct_wall_bumps", per_seed_data, tw_name, stage_name, agent_key)
             pct_sp_vals = _aggregate_metric("pct_suboptimal_pickups", per_seed_data, tw_name, stage_name, agent_key)
@@ -293,6 +296,18 @@ def build_analysis_report(env_id, results_dir, action_set="task"):
             reduction = b_mean - s_mean
             pct_improvement = _pct(reduction, b_mean) if b_mean > 0 else 0.0
             block["rs_ddqn_improvement"] = {
+                "absolute_reduction_pct_points": round(reduction, 2),
+                "relative_improvement_pct": round(pct_improvement, 2),
+            }
+
+        # Same improvement figure for the learned-penalty agent
+        l_vals = _aggregate_metric("pct_irrelevant", per_seed_data, tw_name, stage_name, "lp_ddqn")
+        if b_vals and l_vals:
+            b_mean = float(np.mean(b_vals))
+            l_mean = float(np.mean(l_vals))
+            reduction = b_mean - l_mean
+            pct_improvement = _pct(reduction, b_mean) if b_mean > 0 else 0.0
+            block["lp_ddqn_improvement"] = {
                 "absolute_reduction_pct_points": round(reduction, 2),
                 "relative_improvement_pct": round(pct_improvement, 2),
             }
@@ -327,7 +342,7 @@ def build_analysis_report(env_id, results_dir, action_set="task"):
             tw_entry = {}
             for stage_name, _ in stages:
                 stage_entry = {}
-                for agent_key in ["baseline", "rs_ddqn"]:
+                for agent_key in ["baseline", "rs_ddqn", "lp_ddqn"]:
                     try:
                         stats = per_seed_data[seed][tw_name][stage_name][agent_key]
                         dir_bumps = per_seed_data[seed][tw_name][stage_name].get(
@@ -389,7 +404,7 @@ if __name__ == "__main__":
     for tw_name, tw_data in agg.items():
         for stage_name, stage_data in tw_data.items():
             print(f"\n  [{tw_name} | {stage_name}]")
-            for agent_label in ["Baseline DDQN", "RS-DDQN"]:
+            for agent_label in ["Baseline DDQN", "RS-DDQN", "LP-DDQN"]:
                 if agent_label in stage_data:
                     d = stage_data[agent_label]
                     print(f"    {agent_label}: {d['mean_pct_irrelevant']:.1f}% irrelevant "
@@ -399,6 +414,10 @@ if __name__ == "__main__":
             if "rs_ddqn_improvement" in stage_data:
                 imp = stage_data["rs_ddqn_improvement"]
                 print(f"    → RS-DDQN Improvement: {imp['absolute_reduction_pct_points']:.1f} pp "
+                      f"({imp['relative_improvement_pct']:.1f}% relative)")
+            if "lp_ddqn_improvement" in stage_data:
+                imp = stage_data["lp_ddqn_improvement"]
+                print(f"    → LP-DDQN Improvement: {imp['absolute_reduction_pct_points']:.1f} pp "
                       f"({imp['relative_improvement_pct']:.1f}% relative)")
 
     print(f"\nDone. Analysis saved to {report_path}")

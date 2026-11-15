@@ -14,7 +14,7 @@ on:
           - ALE/MsPacman-v5
           - ALE/Qbert-v5
       num_seeds:
-        description: 'Number of seeds to run'
+        description: 'Number of seeds to run (1 to 10); exactly this many jobs per agent are created'
         required: false
         default: '1'
       total_timesteps:
@@ -26,8 +26,28 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  seeds:
+    # Turns the num_seeds input into the seed list [1, ..., N] so that only the requested seeds become jobs.
+    name: Resolve seed list
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.resolve.outputs.list }}
+    steps:
+      - id: resolve
+        run: |
+          N="${{ github.event.inputs.num_seeds || '1' }}"
+          if ! [ "$N" -ge 1 ] 2>/dev/null; then
+            echo "num_seeds must be a positive integer, got '$N'"
+            exit 1
+          fi
+          if [ "$N" -gt 10 ]; then N=10; fi
+          LIST="[$(seq -s, 1 "$N")]"
+          echo "list=$LIST" >> "$GITHUB_OUTPUT"
+          echo "Seeds to run: $LIST"
+
   train:
     name: Train (${{ matrix.agent }}, ${{ github.event.inputs.env_id || 'ALE/DemonAttack-v5' }}, seed ${{ matrix.seed }})
+    needs: seeds
     runs-on: ubuntu-latest
     # GitHub-hosted runners allow at most 360 minutes per job.
     timeout-minutes: 360
@@ -36,7 +56,7 @@ jobs:
       matrix:
         # dqn_atari_vqvae_masked.py uses Double DQN targets for both DDQN entries.
         agent: [ddqn_baseline, ddqn_vqvae_masked, ppo_baseline, ppo_vqvae_masked]
-        seed: [1]
+        seed: ${{ fromJSON(needs.seeds.outputs.list) }}
 
     steps:
       - name: Checkout Code
@@ -58,13 +78,6 @@ jobs:
 
       - name: Run DDQN or PPO Agent
         run: |
-          NUM_SEEDS="${{ github.event.inputs.num_seeds || '3' }}"
-          CURRENT_SEED="${{ matrix.seed }}"
-          if [ "$CURRENT_SEED" -gt "$NUM_SEEDS" ]; then
-            echo "Skipping seed $CURRENT_SEED (requested num_seeds=$NUM_SEEDS)"
-            exit 0
-          fi
-
           ENV_ID="${{ github.event.inputs.env_id || 'ALE/DemonAttack-v5' }}"
           TIMESTEPS="${{ github.event.inputs.total_timesteps || '10000000' }}"
 
@@ -86,14 +99,7 @@ jobs:
             --total-timesteps "$TIMESTEPS"
 
       - name: Upload Run Results
-        run: |
-          NUM_SEEDS="${{ github.event.inputs.num_seeds || '3' }}"
-          CURRENT_SEED="${{ matrix.seed }}"
-          if [ "$CURRENT_SEED" -gt "$NUM_SEEDS" ]; then
-            echo "Skipping upload for seed $CURRENT_SEED"
-            exit 0
-          fi
-      - uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4
         if: success()
         with:
           name: atari_result_${{ matrix.agent }}_seed${{ matrix.seed }}

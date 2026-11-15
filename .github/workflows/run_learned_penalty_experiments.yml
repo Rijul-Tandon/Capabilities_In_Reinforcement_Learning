@@ -19,7 +19,7 @@ on:
           - 8x8
           - 10x10
       num_seeds:
-        description: 'Number of seeds to run (1 to 10)'
+        description: 'Number of seeds to run (1 to 10); exactly this many jobs per agent and environment are created'
         required: false
         default: '3'
       max_steps:
@@ -38,13 +38,42 @@ on:
         description: 'Learned penalty only: size of the penalty when the MLP decides to penalise'
         required: false
         default: '1.0'
+      penalty_state:
+        description: 'Learned penalty only: state that indexes the head'
+        required: false
+        default: 'position_dir'
+        type: choice
+        options:
+          - position_dir
+          - position
+          - full
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  seeds:
+    # Turns the num_seeds input into the seed list [1, ..., N] so that only the requested seeds become jobs.
+    name: Resolve seed list
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.resolve.outputs.list }}
+    steps:
+      - id: resolve
+        run: |
+          N="${{ github.event.inputs.num_seeds || '3' }}"
+          if ! [ "$N" -ge 1 ] 2>/dev/null; then
+            echo "num_seeds must be a positive integer, got '$N'"
+            exit 1
+          fi
+          if [ "$N" -gt 10 ]; then N=10; fi
+          LIST="[$(seq -s, 1 "$N")]"
+          echo "list=$LIST" >> "$GITHUB_OUTPUT"
+          echo "Seeds to run: $LIST"
+
   train:
     name: Train (${{ matrix.agent }}, ${{ matrix.env_id }}, seed ${{ matrix.seed }})
+    needs: seeds
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false  # If one run fails, keep running the others
@@ -52,7 +81,7 @@ jobs:
         agent: [ddqn_baseline, ddqn_reward_shaping, ddqn_learned_penalty]
         env_id: [MiniGrid-Empty-Random-6x6-v0, MiniGrid-DoorKey-6x6-v0]
         decay: [linear]
-        seed: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        seed: ${{ fromJSON(needs.seeds.outputs.list) }}
 
     steps:
       - name: Checkout Code
@@ -69,12 +98,6 @@ jobs:
 
       - name: "Run Agent (Dynamic Steps, environment-specific decay schedules)"
         run: |
-          NUM_SEEDS="${{ github.event.inputs.num_seeds || '3' }}"
-          if [ "${{ matrix.seed }}" -gt "$NUM_SEEDS" ]; then
-            echo "Skipping seed ${{ matrix.seed }} (requested num_seeds=$NUM_SEEDS)"
-            exit 0
-          fi
-
           MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
           GRID_SIZE="${{ github.event.inputs.grid_size || '6x6' }}"
 
@@ -97,6 +120,7 @@ jobs:
           STRATEGY="${{ github.event.inputs.exploration_strategy || 'epsilon_greedy' }}"
           PENALTY_STEP_COST="${{ github.event.inputs.penalty_step_cost || '0.01' }}"
           PENALTY_SCALE="${{ github.event.inputs.penalty_scale || '1.0' }}"
+          PENALTY_STATE="${{ github.event.inputs.penalty_state || 'position_dir' }}"
 
           # The --penalty-* flags are read by ddqn_learned_penalty.py and ignored by the other two agents.
           python src/${{ matrix.agent }}.py \
@@ -110,6 +134,7 @@ jobs:
             --exploration-strategy $STRATEGY \
             --penalty-step-cost $PENALTY_STEP_COST \
             --penalty-scale $PENALTY_SCALE \
+            --penalty-state $PENALTY_STATE \
             --fixed-layout
 
       - name: Upload Run Results
@@ -161,11 +186,17 @@ jobs:
             PLOTS_DIR="plots/plots_learned_penalty_${env}_${GRID_SIZE}_${TIMESTAMP}"
             mkdir -p "$PLOTS_DIR"
             echo "Generating all plots for $env in $PLOTS_DIR..."
-            # Baseline vs manual penalty vs learned penalty on the same axes
+            # Learning curves: baseline vs manual penalty vs learned penalty on the same axes
             python src/plot_comparison.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison"
+            # Q-value overestimation, once per shaped agent (the script writes fixed file names, hence two folders)
+            python src/plot_q_overestimation.py --env-id $env --plots-dir "${PLOTS_DIR}/overestimation_manual_penalty" \
+              --compare ddqn_baseline ddqn_reward_shaping --label-a "Baseline DDQN" --label-b "RS-DDQN"
+            python src/plot_q_overestimation.py --env-id $env --plots-dir "${PLOTS_DIR}/overestimation_learned_penalty" \
+              --compare ddqn_baseline ddqn_learned_penalty --label-a "Baseline DDQN" --label-b "LP-DDQN"
+            # Navigation heat maps (one column per agent, LP-DDQN included) and the irrelevant-action report
             python src/plot_state_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison"
             python src/plot_training_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/action_freq"
-            # What did the one-layer head learn to penalise?  (penalty probability on stuck vs moving transitions)
+            # The learned penalty itself: stuck-vs-moving curves and the penalty table drawn on the grid
             python src/plot_learned_penalty.py --env-id $env --plots-dir "${PLOTS_DIR}/learned_penalty"
           done
 

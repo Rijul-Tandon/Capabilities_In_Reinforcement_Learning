@@ -4,10 +4,16 @@ learned_penalty.py - A ONE-LAYER head that replaces the fixed stuck penalty with
 ddqn_reward_shaping.py uses a hand-written rule: "penalise the step by a fixed amount if the observation did not
 change".  This module replaces that constant with a one-layer perceptron, the MiniGrid version of the event-
 transition head of the VQ-VAE action-masking pipeline.  In MiniGrid every state already IS an event, so the head is
-indexed directly by the enumerated state:
+indexed directly by the enumerated state (--penalty-state):
 
-    s = (x, y, direction)                              Empty environments      N = W * H * 4
-    s = (x, y, direction, key picked, door opened)     DoorKey environments    N = W * H * 4 * 2 * 2
+    position_dir (default)   s = (x, y, direction)                            N = W * H * 4     (144 on 6x6, 400 on 10x10)
+    position                 s = (x, y)                                       N = W * H         (36 on 6x6, 100 on 10x10)
+    full                     s = (x, y, direction, key picked, door opened)   N = W * H * 4 * 4 on DoorKey
+
+Key and door are left out by default: a wall bump, a pickup of nothing or a toggle without the key are all
+self-transitions whatever the key and door status, so the smaller space loses nothing for the stuck rule and the
+sparse episode signal is spread over far fewer weights.  Dropping the direction as well ("position") merges a turn
+with a wall bump, so the head can no longer separate the two.
 
 The head (TransitionPenaltyHead)
 --------------------------------
@@ -34,7 +40,7 @@ maximise the TRUE episode return and minimise the number of steps.
 
 Size
 ----
-    Empty 6x6: N = 144 (table 20.7k)   DoorKey 6x6: N = 576 (table 332k)   DoorKey 10x10: N = 1600 (table 2.56M)
+    position_dir: 6x6 N = 144 (table 20.7k)   10x10 N = 400 (table 160k)     position: 6x6 N = 36 (1.3k), 10x10 N = 100 (10k)
     A full table only ever updates entries the agent has visited; --penalty-rank 32 shares weights across states
     and needs 2 * N * 32 parameters instead.
 
@@ -54,17 +60,32 @@ import torch.nn as nn
 from torch.distributions import Bernoulli
 
 
-class DiscreteStateSpace:
-    """Enumerates the MiniGrid states of one environment and maps a state tuple to its index."""
+STATE_MODES = ("position_dir", "position", "full")
 
-    def __init__(self, env, env_id):
+
+class DiscreteStateSpace:
+    """Enumerates the MiniGrid states of one environment and maps a state tuple to its index.
+
+    mode = "position_dir"  s = (x, y, direction)                           N = W * H * 4          (default)
+    mode = "position"      s = (x, y)                                      N = W * H
+                           a turn and a wall bump are then the same self-transition: the head cannot tell them apart
+    mode = "full"          s = (x, y, direction, key picked, door opened)  N = W * H * 4 * 4 on DoorKey, else as position_dir
+    """
+
+    def __init__(self, env, env_id, mode="position_dir"):
+        if mode not in STATE_MODES:
+            raise ValueError(f"unknown penalty state mode {mode!r}; choose one of {STATE_MODES}")
+        self.mode = mode
         self.width = int(env.unwrapped.width)
         self.height = int(env.unwrapped.height)
-        self.with_key_door = "DoorKey" in env_id
-        self.size = self.width * self.height * 4 * (4 if self.with_key_door else 1)
+        self.with_direction = mode != "position"
+        self.with_key_door = mode == "full" and "DoorKey" in env_id
+        self.size = self.width * self.height * (4 if self.with_direction else 1) * (4 if self.with_key_door else 1)
 
-    def index(self, x, y, direction, has_key=False, door_open=False):
-        i = (int(x) * self.height + int(y)) * 4 + int(direction)
+    def index(self, x, y, direction=0, has_key=False, door_open=False):
+        i = int(x) * self.height + int(y)
+        if self.with_direction:
+            i = i * 4 + int(direction)
         if self.with_key_door:
             i = (i * 2 + int(bool(has_key))) * 2 + int(bool(door_open))
         return i
@@ -90,6 +111,12 @@ class TransitionPenaltyHead(nn.Module):
         if self.table is not None:
             return self.table[s, s_next] + self.bias[0]
         return (self.u[s] * self.v[s_next]).sum() + self.bias[0]
+
+    def logits(self, s, s_next):
+        """Vectorised: s and s_next are equal-length index tensors; returns one logit per pair (for plotting)."""
+        if self.table is not None:
+            return self.table[s, s_next] + self.bias[0]
+        return (self.u[s] * self.v[s_next]).sum(dim=-1) + self.bias[0]
 
     def num_parameters(self):
         return sum(p.numel() for p in self.parameters())
