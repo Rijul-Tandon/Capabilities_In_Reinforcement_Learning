@@ -29,6 +29,8 @@ jobs:
   train:
     name: Train (${{ matrix.agent }}, ${{ github.event.inputs.env_id || 'ALE/DemonAttack-v5' }}, seed ${{ matrix.seed }})
     runs-on: ubuntu-latest
+    # GitHub-hosted runners allow at most 360 minutes per job.
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
@@ -103,6 +105,7 @@ jobs:
     name: Generate Comparison Plots
     needs: train
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:

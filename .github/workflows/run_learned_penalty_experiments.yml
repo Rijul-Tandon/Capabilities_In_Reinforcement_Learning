@@ -1,0 +1,180 @@
+name: Run Learned-Penalty Experiments (MiniGrid, 200k Steps)
+
+# Tests the second layer of the action-masking pipeline on simple MiniGrid environments:
+# a small MLP decides the reward-shaping penalty of every state transition (ddqn_learned_penalty)
+# instead of the hand-written stuck penalty (ddqn_reward_shaping).  The MLP is trained to maximise
+# the true return and minimise the number of steps.  Baseline, manual-penalty and learned-penalty
+# agents run on the same seeds and are plotted together.
+
+on:
+  workflow_dispatch:  # Trigger manually from GitHub UI or `gh workflow run`
+    inputs:
+      grid_size:
+        description: 'Environment grid size'
+        required: false
+        default: '6x6'
+        type: choice
+        options:
+          - 6x6
+          - 8x8
+          - 10x10
+      num_seeds:
+        description: 'Number of seeds to run (1 to 10)'
+        required: false
+        default: '3'
+      max_steps:
+        description: 'Max steps per episode (-1 = env default)'
+        required: false
+        default: '-1'
+      exploration_strategy:
+        description: 'Exploration strategy: epsilon_greedy or softmax'
+        required: false
+        default: 'epsilon_greedy'
+      penalty_step_cost:
+        description: 'Learned penalty only: cost per step in the MLP objective (G = return - cost * steps)'
+        required: false
+        default: '0.01'
+      penalty_scale:
+        description: 'Learned penalty only: size of the penalty when the MLP decides to penalise'
+        required: false
+        default: '1.0'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  train:
+    name: Train (${{ matrix.agent }}, ${{ matrix.env_id }}, seed ${{ matrix.seed }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false  # If one run fails, keep running the others
+      matrix:
+        agent: [ddqn_baseline, ddqn_reward_shaping, ddqn_learned_penalty]
+        env_id: [MiniGrid-Empty-Random-6x6-v0, MiniGrid-DoorKey-6x6-v0]
+        decay: [linear]
+        seed: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: "Run Agent (Dynamic Steps, environment-specific decay schedules)"
+        run: |
+          NUM_SEEDS="${{ github.event.inputs.num_seeds || '3' }}"
+          if [ "${{ matrix.seed }}" -gt "$NUM_SEEDS" ]; then
+            echo "Skipping seed ${{ matrix.seed }} (requested num_seeds=$NUM_SEEDS)"
+            exit 0
+          fi
+
+          MAX_STEPS="${{ github.event.inputs.max_steps || '-1' }}"
+          GRID_SIZE="${{ github.event.inputs.grid_size || '6x6' }}"
+
+          # Replace 6x6 in the matrix env_id with the selected grid_size
+          ENV_ID=$(echo "${{ matrix.env_id }}" | sed "s/6x6/$GRID_SIZE/")
+
+          if [ "$GRID_SIZE" = "10x10" ]; then
+            TIMESTEPS=1000000
+            EXPLORE_FRAC=0.80
+            END_E=0.1
+          elif [ "$GRID_SIZE" = "8x8" ]; then
+            TIMESTEPS=500000
+            EXPLORE_FRAC=0.50
+            END_E=0.01
+          else
+            TIMESTEPS=200000
+            EXPLORE_FRAC=0.50
+            END_E=0.01
+          fi
+          STRATEGY="${{ github.event.inputs.exploration_strategy || 'epsilon_greedy' }}"
+          PENALTY_STEP_COST="${{ github.event.inputs.penalty_step_cost || '0.01' }}"
+          PENALTY_SCALE="${{ github.event.inputs.penalty_scale || '1.0' }}"
+
+          # The --penalty-* flags are read by ddqn_learned_penalty.py and ignored by the other two agents.
+          python src/${{ matrix.agent }}.py \
+            --env-id $ENV_ID \
+            --total-timesteps $TIMESTEPS \
+            --seed ${{ matrix.seed }} \
+            --max-steps $MAX_STEPS \
+            --exploration-fraction $EXPLORE_FRAC \
+            --epsilon-schedule ${{ matrix.decay }} \
+            --end-e $END_E \
+            --exploration-strategy $STRATEGY \
+            --penalty-step-cost $PENALTY_STEP_COST \
+            --penalty-scale $PENALTY_SCALE \
+            --fixed-layout
+
+      - name: Upload Run Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: result_lp_${{ matrix.agent }}_${{ matrix.env_id }}_${{ github.event.inputs.grid_size || '6x6' }}_seed${{ matrix.seed }}
+          path: results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  plot:
+    name: Generate Plots & Push to Repo
+    needs: train  # Wait for all matrix training jobs to finish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Needed to push commits back to the repo
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download all results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: result_lp_*
+          path: results/
+          merge-multiple: true
+
+      - name: Upload All Combined Results Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: all_combined_results_learned_penalty_${{ github.event.inputs.grid_size || '6x6' }}
+          path: results/
+          retention-days: 14
+
+      - name: Generate Comparison and Penalty-Diagnostic Plots
+        run: |
+          TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
+          GRID_SIZE="${{ github.event.inputs.grid_size || '6x6' }}"
+          for env in "MiniGrid-Empty-Random-${GRID_SIZE}-v0" "MiniGrid-DoorKey-${GRID_SIZE}-v0"; do
+            PLOTS_DIR="plots/plots_learned_penalty_${env}_${GRID_SIZE}_${TIMESTAMP}"
+            mkdir -p "$PLOTS_DIR"
+            echo "Generating all plots for $env in $PLOTS_DIR..."
+            # Baseline vs manual penalty vs learned penalty on the same axes
+            python src/plot_comparison.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison"
+            python src/plot_state_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/reward_comparison"
+            python src/plot_training_action_freq.py --env-id $env --plots-dir "${PLOTS_DIR}/action_freq"
+            # What did the one-layer head learn to penalise?  (penalty probability on stuck vs moving transitions)
+            python src/plot_learned_penalty.py --env-id $env --plots-dir "${PLOTS_DIR}/learned_penalty"
+          done
+
+      - name: Commit and Push Plots
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add plots/
+          git commit -m "Auto-generated learned-penalty (MiniGrid) comparison plots" || echo "No changes to commit"
+          git pull --rebase origin main
+          git push origin main

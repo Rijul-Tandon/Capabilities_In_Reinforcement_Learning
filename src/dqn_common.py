@@ -755,6 +755,15 @@ def parse_args(default_exp_name, use_shaping):
     # --- Reward Shaping ---
     # --stuck-penalty: Negative reward applied when the agent's observation doesn't change
     parser.add_argument("--stuck-penalty", type=float, default=-1)
+    # Learned penalty (ddqn_learned_penalty.py only): a small MLP decides the penalty of every transition
+    #   instead of the fixed --stuck-penalty rule.  See learned_penalty.py for the meaning of each value.
+    parser.add_argument("--penalty-rank", type=int, default=0,
+                        help="0 = full N x N table over the enumerated states; r > 0 = low-rank table U V^T with N x r factors")
+    parser.add_argument("--penalty-lr", type=float, default=5e-3,
+                        help="Adam step of the head; each visited table entry moves by about this much per episode")
+    parser.add_argument("--penalty-scale", type=float, default=1.0)
+    parser.add_argument("--penalty-step-cost", type=float, default=0.01)
+    parser.add_argument("--penalty-entropy-coef", type=float, default=0.01)
 
     # --- Logging ---
     # --log-interval: How often (in steps) to write training metrics to CSV and TensorBoard
@@ -790,7 +799,28 @@ def parse_args(default_exp_name, use_shaping):
 # MAIN TRAINING LOOP
 # ============================================================================
 
-def train(args, use_shaping):
+def update_stage_flags(env, has_picked_key, has_opened_door):
+    """
+    Returns the (has_picked_key, has_opened_door) flags for the environment's CURRENT state.
+    Both flags are sticky within an episode: once the key is carried or the door has been opened, they stay True.
+    """
+    carrying = getattr(env.unwrapped, 'carrying', None)
+    if carrying is not None and getattr(carrying, 'type', None) == "key":
+        has_picked_key = True
+    if not has_opened_door:
+        grid = env.unwrapped.grid
+        for wx in range(env.unwrapped.width):
+            for wy in range(env.unwrapped.height):
+                c = grid.get(wx, wy)
+                if c is not None and getattr(c, 'type', None) == "door" and getattr(c, 'is_open', False):
+                    has_opened_door = True
+                    break
+            if has_opened_door:
+                break
+    return has_picked_key, has_opened_door
+
+
+def train(args, use_shaping, penalty_learner_factory=None):
     """
     The main DQN training loop. This function:
       1. Creates the environment and neural networks
@@ -918,6 +948,15 @@ def train(args, use_shaping):
 
     # Create the replay buffer to store past experience
     rb = ReplayBuffer(args.buffer_size, obs_shape, device)
+    # Optional learned penalty (see learned_penalty.py): built here because it needs obs_dim and the device.
+    # When present it replaces the fixed stuck-penalty rule below.
+    penalty_learner, state_space = None, None
+    if penalty_learner_factory is not None:
+        from learned_penalty import DiscreteStateSpace
+        state_space = DiscreteStateSpace(env, args.env_id)          # (x, y, dir[, key, door]) -> state index
+        penalty_learner = penalty_learner_factory(state_space.size, device)
+        print(f"[{args.exp_name}] learned penalty head: {state_space.size} discrete states, "
+              f"{penalty_learner.num_parameters():,} parameters")
 
     # --- State-Action Frequency Tracking ---
     # We track how many times each action was taken in each (x, y, dir) state per stage.
@@ -957,7 +996,8 @@ def train(args, use_shaping):
     )
     metric_writer = csv.DictWriter(
         metric_file,
-        fieldnames=["global_step", "epsilon", "td_loss", "q_value", "max_q", "stuck_rate", "mean_penalty"],
+        fieldnames=["global_step", "epsilon", "td_loss", "q_value", "max_q", "stuck_rate", "mean_penalty",
+                    "penalty_prob_stuck", "penalty_prob_move", "shaper_objective"],  # last three: learned penalty only
     )
     if file_mode == "w":
         episode_writer.writeheader()
@@ -1024,21 +1064,8 @@ def train(args, use_shaping):
                     action = int(torch.argmax(q_values, dim=1).item())
 
         # Determine current stage monotonically for the episode
-        carrying = getattr(env.unwrapped, 'carrying', None)
-        if carrying is not None and getattr(carrying, 'type', None) == "key":
-            has_picked_key = True
+        has_picked_key, has_opened_door = update_stage_flags(env, has_picked_key, has_opened_door)
         
-        if not has_opened_door:
-            grid = env.unwrapped.grid
-            for wx in range(env.unwrapped.width):
-                for wy in range(env.unwrapped.height):
-                    c = grid.get(wx, wy)
-                    if c is not None and getattr(c, 'type', None) == "door" and getattr(c, 'is_open', False):
-                        has_opened_door = True
-                        break
-                if has_opened_door:
-                    break
-
         if has_opened_door:
             stage_idx = 2
         elif has_picked_key:
@@ -1049,6 +1076,7 @@ def train(args, use_shaping):
         # Track the action taken at the current state per stage
         ax, ay = env.unwrapped.agent_pos
         ad = env.unwrapped.agent_dir
+        s_index = state_space.index(ax, ay, ad, has_picked_key, has_opened_door) if state_space is not None else None
         state_action_counts[ax, ay, ad, action, stage_idx] += 1
         if local_step >= args.total_timesteps * 0.50:
             state_action_counts_last_half[ax, ay, ad, action, stage_idx] += 1
@@ -1066,7 +1094,14 @@ def train(args, use_shaping):
         # Apply a negative penalty if shaping is enabled and the agent did not move.
         # Penalizing all no-change transitions, including exploratory ones, lets the
         # replay buffer teach the Q-network that the action is bad in this state.
-        penalty = args.stuck_penalty if use_shaping and no_change else 0.0
+        if penalty_learner is not None:
+            # The learned rule: the one-layer head looks at the transition s -> s' (never the action) and decides.
+            next_key, next_door = update_stage_flags(env, has_picked_key, has_opened_door)
+            nx, ny = env.unwrapped.agent_pos
+            s_next_index = state_space.index(nx, ny, env.unwrapped.agent_dir, next_key, next_door)
+            penalty = -penalty_learner.decide(s_index, s_next_index, no_change)
+        else:
+            penalty = args.stuck_penalty if use_shaping and no_change else 0.0
         # The reward used for training includes the penalty; the original env_reward is
         # used for tracking performance metrics (so plots show true environment reward)
         reward_for_learning = float(env_reward + penalty)
@@ -1099,6 +1134,9 @@ def train(args, use_shaping):
         if done:
             # In MiniGrid, reaching the goal gives a positive reward (> 0)
             # Not reaching the goal gives 0 reward (the episode times out)
+            if penalty_learner is not None:
+                # One update of the penalty MLP on the TRUE return and the episode length (maximise reward, minimise steps).
+                penalty_learner.end_episode(episode_return, episode_length)
             reached = episode_success(args.env_id, episode_return)
             recent_goals.append(float(reached))
             goal_rate = float(np.mean(recent_goals)) if recent_goals else 0.0
@@ -1204,6 +1242,7 @@ def train(args, use_shaping):
                     "max_q": last_max_q,
                     "stuck_rate": float(np.mean(recent_stuck)) if recent_stuck else 0.0,
                     "mean_penalty": float(np.mean(recent_penalty)) if recent_penalty else 0.0,
+                    **(penalty_learner.stats() if penalty_learner is not None else {}),
                 }
             )
             metric_file.flush()
@@ -1216,6 +1255,8 @@ def train(args, use_shaping):
     # Save the trained Q-Network weights so we can load them later for evaluation
     if args.save_model:
         torch.save(q_net.state_dict(), run_dir / "q_net.pt")
+        if penalty_learner is not None:
+            torch.save(penalty_learner.net.state_dict(), run_dir / "penalty_net.pt")
 
     episode_file.close()
     metric_file.close()

@@ -151,6 +151,7 @@ AGENT_COLORS = {
     "ddqn_baseline":         "#1f77b4",  # Blue
     "ddqn_vqvae_masked":     "#ff7f0e",  # Orange
     "ddqn_reward_shaping":   "#ff7f0e",  # Orange
+    "ddqn_learned_penalty":  "#2ca02c",  # Green
     "dqn_baseline":          "#1f77b4",  # Blue
     "dqn_reward_shaping":    "#ff7f0e",  # Orange
     "dqn_vqvae_masked":      "#ff7f0e",  # Orange
@@ -202,6 +203,8 @@ def format_exp_label(exp_name):
         label = label.replace("dqn_vqvae_masked", "RS-DQN (VQ-VAE Masked)")
     if "ppo_vqvae_masked" in label:
         label = label.replace("ppo_vqvae_masked", "RS-PPO (VQ-VAE Masked)")
+    if "learned_penalty" in label:
+        label = label.replace("ddqn_learned_penalty", "LP-DDQN (learned penalty)")
     if "ppo_baseline" in label:
         label = label.replace("ppo_baseline", "Baseline PPO")
     elif "reward_shaping" in label:

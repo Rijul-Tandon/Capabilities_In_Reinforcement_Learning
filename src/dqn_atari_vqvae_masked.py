@@ -14,6 +14,8 @@ from collections import defaultdict, deque
 from pathlib import Path
 
 import gymnasium as gym
+import ale_py
+gym.register_envs(ale_py)
 import numpy as np
 import torch
 import torch.nn as nn
@@ -106,7 +108,7 @@ def make_env(env_id, seed, full_action_space=True):
     # full_action_space=True exposes all 18 Atari actions, including LEFTFIRE and UPLEFT.
     env = gym.make(env_id, frameskip=1, full_action_space=full_action_space)
     env = gym.wrappers.AtariPreprocessing(env, frame_skip=4, screen_size=84, grayscale_obs=True, scale_obs=False)
-    env = gym.wrappers.FrameStack(env, 4)
+    env = gym.wrappers.FrameStackObservation(env, 4)
     env.reset(seed=seed)
     return env
 

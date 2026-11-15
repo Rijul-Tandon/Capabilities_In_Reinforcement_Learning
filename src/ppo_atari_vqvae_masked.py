@@ -16,6 +16,10 @@ import torch.optim as optim
 from torch.distributions.categorical import Categorical
 from tqdm import tqdm
 
+import ale_py
+import gymnasium as gym
+gym.register_envs(ale_py)
+
 from dqn_atari_vqvae_masked import AtariVQVAE, make_env
 
 
