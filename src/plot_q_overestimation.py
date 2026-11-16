@@ -37,6 +37,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as path_effects
+import gymnasium as gym
 import numpy as np
 import torch
 
@@ -93,18 +94,23 @@ def get_decay_str(model_path):
 
 
 def get_wrapped_obs(env):
-    """Generates raw observation and pushes it through observation wrappers."""
+    """Generates raw observation and pushes it through observation wrappers.
+
+    Only genuine ObservationWrapper instances are applied.  Gymnasium <= 0.29 forwards unknown attribute
+    lookups from every wrapper to the wrapped env, so `hasattr(wrapper, 'observation')` is True for
+    RecordEpisodeStatistics, TimeLimit, etc. as well, and the flattening wrapper would run more than once.
+    """
     obs = env.unwrapped.gen_obs()
     wrapper = env
     obs_wrappers = []
-    while hasattr(wrapper, 'env'):
-        if hasattr(wrapper, 'observation'):
+    while isinstance(wrapper, gym.Wrapper):
+        if isinstance(wrapper, gym.ObservationWrapper):
             obs_wrappers.append(wrapper)
         wrapper = wrapper.env
-        
+
     for w in reversed(obs_wrappers):
         obs = w.observation(obs)
-        
+
     return obs
 
 
