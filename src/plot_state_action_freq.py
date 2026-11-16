@@ -105,10 +105,12 @@ def get_action_arrow_or_symbol(act_name, facing_dir):
 
     if act_name.lower() == "forward":
         return f"{DIR_ARROWS[facing_dir]} {abbr}"
+    # left / right are TURNS on the spot in MiniGrid, not moves: show a rotation glyph so a turning loop
+    # (e.g. 997 x "left" in one cell) is not mistaken for a blocked move in that direction.
     elif act_name.lower() == "left":
-        return f"{DIR_ARROWS[(facing_dir - 1) % 4]} {abbr}"
+        return f"↺ {abbr}"
     elif act_name.lower() == "right":
-        return f"{DIR_ARROWS[(facing_dir + 1) % 4]} {abbr}"
+        return f"↻ {abbr}"
     return abbr
 
 

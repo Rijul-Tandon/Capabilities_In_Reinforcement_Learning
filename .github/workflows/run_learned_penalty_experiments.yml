@@ -1,10 +1,12 @@
 name: Run Learned-Penalty Experiments (MiniGrid, 200k Steps)
 
 # Tests the second layer of the action-masking pipeline on simple MiniGrid environments:
-# a small MLP decides the reward-shaping penalty of every state transition (ddqn_learned_penalty)
-# instead of the hand-written stuck penalty (ddqn_reward_shaping).  The MLP is trained to maximise
-# the true return and minimise the number of steps.  Baseline, manual-penalty and learned-penalty
-# agents run on the same seeds and are plotted together.
+# a one-layer head over the enumerated states scores every state transition and the score is the
+# reward-shaping penalty (ddqn_learned_penalty) instead of the hand-written stuck penalty
+# (ddqn_reward_shaping).  By default the head starts at random, is capped at penalty_scale, and is trained
+# to maximise the TRUE episodic reward by a meta-gradient through the agent's TD step; "hindsight" trains it
+# from loop-erasure labels instead.  Baseline, manual-penalty and learned-penalty agents run on the same
+# seeds and are plotted together.
 
 on:
   workflow_dispatch:  # Trigger manually from GitHub UI or `gh workflow run`
@@ -30,14 +32,18 @@ on:
         description: 'Exploration strategy: epsilon_greedy or softmax'
         required: false
         default: 'epsilon_greedy'
-      penalty_step_cost:
-        description: 'Learned penalty only: cost per step in the MLP objective (G = return - cost * steps)'
+      penalty_learning:
+        description: 'Learned penalty only: how the head is trained'
         required: false
-        default: '0.01'
+        default: 'meta'
+        type: choice
+        options:
+          - meta
+          - hindsight
       penalty_scale:
-        description: 'Learned penalty only: size of the penalty when the MLP decides to penalise'
+        description: 'Learned penalty only: cap of the penalty (penalty = scale * score)'
         required: false
-        default: '1.0'
+        default: '0.02'
       penalty_state:
         description: 'Learned penalty only: state that indexes the head'
         required: false
@@ -118,8 +124,8 @@ jobs:
             END_E=0.01
           fi
           STRATEGY="${{ github.event.inputs.exploration_strategy || 'epsilon_greedy' }}"
-          PENALTY_STEP_COST="${{ github.event.inputs.penalty_step_cost || '0.01' }}"
-          PENALTY_SCALE="${{ github.event.inputs.penalty_scale || '1.0' }}"
+          PENALTY_LEARNING="${{ github.event.inputs.penalty_learning || 'meta' }}"
+          PENALTY_SCALE="${{ github.event.inputs.penalty_scale || '0.02' }}"
           PENALTY_STATE="${{ github.event.inputs.penalty_state || 'position_dir' }}"
 
           # The --penalty-* flags are read by ddqn_learned_penalty.py and ignored by the other two agents.
@@ -132,7 +138,7 @@ jobs:
             --epsilon-schedule ${{ matrix.decay }} \
             --end-e $END_E \
             --exploration-strategy $STRATEGY \
-            --penalty-step-cost $PENALTY_STEP_COST \
+            --penalty-learning $PENALTY_LEARNING \
             --penalty-scale $PENALTY_SCALE \
             --penalty-state $PENALTY_STATE \
             --fixed-layout

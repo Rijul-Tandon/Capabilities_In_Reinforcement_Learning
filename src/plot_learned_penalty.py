@@ -22,6 +22,13 @@ The learned penalty table itself (one figure per learned-penalty run, read from 
                                     the table has no direction, so rows 1 and 2 collapse to one panel each.
   <env>_penalty_table_summary.png   mean probability per transition type, one bar per seed: the head has learned
                                     the stuck rule when "stay" is high and "forward" / "turn" are low.
+  <env>_penalty_transitions_seed<k>.png
+                                    the learned penalties drawn as TRANSITIONS on one grid: a disc in every cell for
+                                    s -> s (staying put) and one arrow per direction for the forward move into the
+                                    neighbouring cell, each coloured by its penalty probability.
+  <env>_penalty_histogram_seed<k>.png
+                                    distribution of the penalty probabilities over all free cells, one histogram per
+                                    transition type, with the mean of each type marked.
 
 Usage:
   python src/plot_learned_penalty.py --env-id MiniGrid-DoorKey-6x6-v0 --plots-dir plots/learned_penalty
@@ -160,7 +167,7 @@ def plot_training_curves(env_id, runs_by_agent, plots_dir, bins):
                 plot_band(ax, centres, per_seed, colour, label)
         ax.set_ylim(-0.02, 1.02)
         ax.legend(loc="best", fontsize=9)
-        style(ax, "Training step", "P(penalise transition)", f"Learned penalty head: what it penalises ({env_id})")
+        style(ax, "Training step", "penalty score (penalty = scale × score)", f"Learned penalty head: what it penalises ({env_id})")
         fig.tight_layout()
         fig.savefig(plots_dir / "learned_penalty_probability.png", dpi=150)
         plt.close(fig)
@@ -267,8 +274,10 @@ def penalty_maps(head, space, walls):
     else:
         s = np.vectorize(lambda x, y: space.index(x, y))(xs, ys)
         maps["stay"] = [prob(s, s, free)]
+        maps["neighbour_by_direction"] = []
         total, count = np.zeros((W, H)), np.zeros((W, H))
-        for dx, dy in DIR_OFFSETS.values():
+        for d in range(4):
+            dx, dy = DIR_OFFSETS[d]
             nx, ny = xs + dx, ys + dy
             inside = (nx >= 0) & (nx < W) & (ny >= 0) & (ny < H)
             valid = free & inside
@@ -276,12 +285,82 @@ def penalty_maps(head, space, walls):
             s_nb = np.zeros_like(s)
             s_nb[valid] = np.vectorize(lambda x, y: space.index(x, y))(nx[valid], ny[valid])
             p = prob(s, s_nb, valid)
+            maps["neighbour_by_direction"].append(p)
             total += np.nan_to_num(p)
             count += valid
         neighbour = np.where(count > 0, total / np.maximum(count, 1), np.nan)
         neighbour[~free] = np.nan
         maps["neighbour"] = [neighbour]
     return maps
+
+
+def draw_layout(ax, walls, marks, W, H):
+    """Walls, S/G/K/D marks and the minor grid, without any data."""
+    for x in range(W):
+        for y in range(H):
+            if walls[x, y]:
+                ax.add_patch(plt.Rectangle((x - 0.5, y - 0.5), 1, 1, color="#333333"))
+    for (x, y), label in marks.items():
+        ax.text(x + 0.33, y - 0.33, label, color="white", fontsize=9, fontweight="bold", ha="center", va="center",
+                path_effects=[path_effects.withStroke(linewidth=2, foreground="black")])
+    ax.set_xlim(-0.5, W - 0.5)
+    ax.set_ylim(H - 0.5, -0.5)
+    ax.set_aspect("equal")
+    ax.set_xticks(np.arange(-0.5, W, 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, H, 1), minor=True)
+    ax.grid(which="minor", color="#888888", linestyle="-", linewidth=0.6)
+    ax.tick_params(which="both", bottom=False, left=False, labelbottom=False, labelleft=False)
+
+
+def plot_transition_map(env_id, seed, space, maps, walls, marks, plots_dir, subtitle):
+    """One grid: a disc per cell for s -> s and one arrow per direction for the forward move, coloured by penalty."""
+    W, H = space.width, space.height
+    cmap = plt.get_cmap("Reds")
+    stay = np.nanmean(np.stack(maps["stay"]), axis=0)
+    arrows = maps["forward"] if space.with_direction else maps["neighbour_by_direction"]
+    fig, ax = plt.subplots(figsize=(0.95 * W + 2.4, 0.95 * H + 1.4))
+    draw_layout(ax, walls, marks, W, H)
+    for x in range(W):
+        for y in range(H):
+            if walls[x, y] or not np.isfinite(stay[x, y]):
+                continue
+            ax.add_patch(plt.Circle((x, y), 0.17, color=cmap(stay[x, y]), ec="#555555", lw=0.5, zorder=3))
+            for d in range(4):
+                p = arrows[d][x, y]
+                if not np.isfinite(p):
+                    continue
+                dx, dy = DIR_OFFSETS[d]
+                ax.annotate("", xy=(x + 0.47 * dx, y + 0.47 * dy), xytext=(x + 0.2 * dx, y + 0.2 * dy),
+                            arrowprops=dict(arrowstyle="-|>", color=cmap(p), lw=1.8, mutation_scale=9, shrinkA=0, shrinkB=0), zorder=4)
+    mappable = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(0, 1))
+    cbar = fig.colorbar(mappable, ax=ax, fraction=0.045, pad=0.03)
+    cbar.set_label("penalty score  (penalty = scale × score)", fontsize=9)
+    ax.set_title(f"{env_id} — learned penalty per transition, seed {seed}\n"
+                 f"disc = stay in place (mean over facing directions);  arrow = move one cell that way\n{subtitle}",
+                 fontsize=9.5, fontweight="bold")
+    fig.text(0.42, 0.01, "S = Start   G = Goal   K = Key   D = Door   dark = wall", ha="center", va="bottom", fontsize=8, color="#444444")
+    fig.savefig(plots_dir / f"{env_id}_penalty_transitions_seed{seed}.png", dpi=170, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_penalty_histogram(env_id, seed, maps, plots_dir):
+    """Distribution of the penalty probabilities over free cells, one histogram per transition type."""
+    kinds = [k for k in ("stay", "forward", "turn", "neighbour") if k in maps]
+    fig, ax = plt.subplots(figsize=(7, 3.8))
+    bins = np.linspace(0, 1, 26)
+    for kind in kinds:
+        values = np.concatenate([m[np.isfinite(m)].ravel() for m in maps[kind]])
+        if not len(values):
+            continue
+        colour = TRANSITION_COLOURS.get(kind, "#7f7f7f")
+        ax.hist(values, bins=bins, color=colour, alpha=0.45, label=f"{kind} (mean {values.mean():.2f}, n={len(values)})")
+        ax.axvline(values.mean(), color=colour, lw=1.5, ls="--")
+    ax.set_xlim(0, 1)
+    ax.legend(fontsize=9, loc="best")
+    style(ax, "penalty score  (penalty = scale × score)", "number of (cell, direction) entries", f"Learned penalty distribution by transition type ({env_id}, seed {seed})")
+    fig.tight_layout()
+    fig.savefig(plots_dir / f"{env_id}_penalty_histogram_seed{seed}.png", dpi=150)
+    plt.close(fig)
 
 
 def draw_grid_panel(ax, values, walls, marks, title):
@@ -320,7 +399,11 @@ def plot_penalty_tables(env_id, learned_runs, plots_dir):
         walls, marks = grid_layout(env)
         env.close()
         maps = penalty_maps(head, space, walls)
-        rows = list(maps.keys())
+        rank = int(config.get("penalty_rank", 0))
+        subtitle = f"state = {space.mode}, {space.size} states, {'full table' if rank == 0 else f'rank {rank}'}"
+        plot_transition_map(env_id, seed, space, maps, walls, marks, plots_dir, subtitle)
+        plot_penalty_histogram(env_id, seed, maps, plots_dir)
+        rows = [k for k in ("stay", "forward", "turn", "neighbour") if k in maps]
         cols = 4 if space.with_direction else 1
         fig, axes = plt.subplots(len(rows), cols, figsize=(3.4 * cols + 1.2, 3.3 * len(rows)), squeeze=False)
         titles = {"stay": "stay in place  s → s", "forward": "move forward one cell", "turn": "turn on the spot",
@@ -332,11 +415,8 @@ def plot_penalty_tables(env_id, learned_runs, plots_dir):
                 image = draw_grid_panel(axes[r, c], maps[kind][c], walls, marks, head_title)
         fig.subplots_adjust(right=0.9, wspace=0.08, hspace=0.3)
         cbar = fig.colorbar(image, cax=fig.add_axes([0.92, 0.2, 0.015, 0.6]))
-        cbar.set_label("P(penalise the transition)", fontsize=9)
-        rank = int(config.get("penalty_rank", 0))
-        fig.suptitle(f"{env_id} — learned penalty table, seed {seed}  "
-                     f"(state = {space.mode}, {space.size} states, {'full table' if rank == 0 else f'rank {rank}'})",
-                     fontsize=11, fontweight="bold", y=0.995)
+        cbar.set_label("penalty score  (penalty = scale × score)", fontsize=9)
+        fig.suptitle(f"{env_id} — learned penalty table, seed {seed}  ({subtitle})", fontsize=11, fontweight="bold", y=0.995)
         fig.text(0.44, 0.005, "S = Start   G = Goal   K = Key   D = Door   dark = wall   NaN = move into a wall (not drawn)",
                  ha="center", va="bottom", fontsize=8, color="#444444")
         fig.savefig(plots_dir / f"{env_id}_penalty_table_seed{seed}.png", dpi=170, bbox_inches="tight")
@@ -357,7 +437,7 @@ def plot_penalty_tables(env_id, learned_runs, plots_dir):
         ax.set_ylim(0, 1)
         ax.axhline(0.5, color="#888888", lw=0.8, ls="--")
         ax.legend(fontsize=9, loc="best")
-        style(ax, "", "mean P(penalise) over free cells", f"Learned penalty by transition type ({env_id})")
+        style(ax, "", "mean penalty score over free cells", f"Learned penalty by transition type ({env_id})")
         fig.tight_layout()
         fig.savefig(plots_dir / f"{env_id}_penalty_table_summary.png", dpi=150)
         plt.close(fig)

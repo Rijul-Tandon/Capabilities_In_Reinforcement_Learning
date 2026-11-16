@@ -522,7 +522,7 @@ class ReplayBuffer:
         self.pos = (self.pos + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
 
-    def sample(self, batch_size):
+    def sample(self, batch_size, return_indices=False):
         """
         Randomly sample a mini-batch of transitions for training.
 
@@ -530,22 +530,28 @@ class ReplayBuffer:
         ----------
         batch_size : int
             Number of transitions to sample (e.g., 128).
+        return_indices : bool
+            Also return the sampled buffer positions (the learned penalty re-applies its
+            current penalty to exactly these transitions).
 
         Returns
         -------
         tuple of torch.Tensors
-            (observations, next_observations, actions, rewards, dones)
+            (observations, next_observations, actions, rewards, dones[, indices])
             Each tensor has batch_size as its first dimension.
         """
         # Uniformly sample random indices from the filled portion of the buffer
         idx = np.random.randint(0, self.size, size=batch_size)
-        return (
+        batch = (
             torch.tensor(self.obs[idx], device=self.device),
             torch.tensor(self.next_obs[idx], device=self.device),
             torch.tensor(self.actions[idx], device=self.device),
             torch.tensor(self.rewards[idx], device=self.device),
             torch.tensor(self.dones[idx], device=self.device),
         )
+        if return_indices:
+            return batch + (torch.as_tensor(idx, device=self.device),)
+        return batch
 
 
 # ============================================================================
@@ -763,9 +769,17 @@ def parse_args(default_exp_name, use_shaping):
                         help="0 = full N x N table over the enumerated states; r > 0 = low-rank table U V^T with N x r factors")
     parser.add_argument("--penalty-lr", type=float, default=5e-3,
                         help="Adam step of the head; each visited table entry moves by about this much per episode")
-    parser.add_argument("--penalty-scale", type=float, default=1.0)
-    parser.add_argument("--penalty-step-cost", type=float, default=0.01)
-    parser.add_argument("--penalty-entropy-coef", type=float, default=0.01)
+    parser.add_argument("--penalty-learning", choices=["meta", "hindsight"], default="meta",
+                        help="meta: the head is trained to maximise the TRUE episodic reward, by a meta-gradient through "
+                             "the agent's TD step; hindsight: cross-entropy on loop-erasure labels of each episode")
+    parser.add_argument("--penalty-scale", type=float, default=0.02,
+                        help="cap of the penalty: penalty = scale * sigmoid(score) never exceeds this value")
+    parser.add_argument("--penalty-init-std", type=float, default=0.1,
+                        help="meta: the table starts at random, N(0, std); the first penalties are about scale / 2")
+    parser.add_argument("--penalty-meta-temperature", type=float, default=0.1,
+                        help="meta: softmax temperature that turns the updated Q-values into the policy whose true value is maximised")
+    parser.add_argument("--penalty-init-logit", type=float, default=-2.0,
+                        help="hindsight: initial logit of the head (-2 -> score 0.12)")
 
     # --- Logging ---
     # --log-interval: How often (in steps) to write training metrics to CSV and TensorBoard
@@ -958,7 +972,11 @@ def train(args, use_shaping, penalty_learner_factory=None):
         state_space = DiscreteStateSpace(env, args.env_id, getattr(args, "penalty_state", "position_dir"))
         penalty_learner = penalty_learner_factory(state_space.size, device)
         print(f"[{args.exp_name}] learned penalty head: state = {state_space.mode}, {state_space.size} discrete states, "
-              f"{penalty_learner.num_parameters():,} parameters")
+              f"{penalty_learner.num_parameters():,} parameters, learning = {getattr(args, 'penalty_learning', 'meta')}")
+        # The meta-gradient head mirrors the replay buffer positions and trains a true-reward critic of the agent's size.
+        penalty_learner.attach(buffer_size=args.buffer_size, obs_dim=obs_dim, num_actions=num_actions, hidden_size=args.hidden_size,
+                               gamma=args.gamma, agent_lr=args.learning_rate,
+                               target_sync_updates=max(1, args.target_network_frequency // max(1, args.train_frequency)))
 
     # --- State-Action Frequency Tracking ---
     # We track how many times each action was taken in each (x, y, dir) state per stage.
@@ -999,7 +1017,7 @@ def train(args, use_shaping, penalty_learner_factory=None):
     metric_writer = csv.DictWriter(
         metric_file,
         fieldnames=["global_step", "epsilon", "td_loss", "q_value", "max_q", "stuck_rate", "mean_penalty",
-                    "penalty_prob_stuck", "penalty_prob_move", "shaper_objective"],  # last three: learned penalty only
+                    "penalty_prob_stuck", "penalty_prob_move", "head_loss", "head_wasted_fraction", "true_q_loss"],  # learned penalty only
     )
     if file_mode == "w":
         episode_writer.writeheader()
@@ -1079,6 +1097,7 @@ def train(args, use_shaping, penalty_learner_factory=None):
         ax, ay = env.unwrapped.agent_pos
         ad = env.unwrapped.agent_dir
         s_index = state_space.index(ax, ay, ad, has_picked_key, has_opened_door) if state_space is not None else None
+        s_key = (int(ax), int(ay), int(ad), bool(has_picked_key), bool(has_opened_door))   # full state, for the loop test
         state_action_counts[ax, ay, ad, action, stage_idx] += 1
         if local_step >= args.total_timesteps * 0.50:
             state_action_counts_last_half[ax, ay, ad, action, stage_idx] += 1
@@ -1100,8 +1119,10 @@ def train(args, use_shaping, penalty_learner_factory=None):
             # The learned rule: the one-layer head looks at the transition s -> s' (never the action) and decides.
             next_key, next_door = update_stage_flags(env, has_picked_key, has_opened_door)
             nx, ny = env.unwrapped.agent_pos
-            s_next_index = state_space.index(nx, ny, env.unwrapped.agent_dir, next_key, next_door)
-            penalty = -penalty_learner.decide(s_index, s_next_index, no_change)
+            nd = env.unwrapped.agent_dir
+            s_next_index = state_space.index(nx, ny, nd, next_key, next_door)
+            s_next_key = (int(nx), int(ny), int(nd), bool(next_key), bool(next_door))
+            penalty = -penalty_learner.decide(s_index, s_next_index, no_change, s_key, s_next_key)
         else:
             penalty = args.stuck_penalty if use_shaping and no_change else 0.0
         # The reward used for training includes the penalty; the original env_reward is
@@ -1126,7 +1147,12 @@ def train(args, use_shaping, penalty_learner_factory=None):
         # If we store `done` (terminated OR truncated) the (1-done_flag) term kills the
         # bootstrap on every timeout, making productive states look valueless.
         # Storing only `terminated` keeps the bootstrap alive for timeout transitions.
-        rb.add(obs, next_obs, action, reward_for_learning, float(terminated))
+        if penalty_learner is not None and penalty_learner.recomputes_penalty:
+            # Meta-gradient head: the buffer keeps the TRUE reward and the current penalty is re-applied at sampling time.
+            rb.add(obs, next_obs, action, float(env_reward), float(terminated))
+            penalty_learner.record(s_index, s_next_index)
+        else:
+            rb.add(obs, next_obs, action, reward_for_learning, float(terminated))
         episode_return += float(env_reward)  # Track ORIGINAL reward (not shaped) for metrics
         episode_length += 1
 
@@ -1136,10 +1162,10 @@ def train(args, use_shaping, penalty_learner_factory=None):
         if done:
             # In MiniGrid, reaching the goal gives a positive reward (> 0)
             # Not reaching the goal gives 0 reward (the episode times out)
-            if penalty_learner is not None:
-                # One update of the penalty MLP on the TRUE return and the episode length (maximise reward, minimise steps).
-                penalty_learner.end_episode(episode_return, episode_length)
             reached = episode_success(args.env_id, episode_return)
+            if penalty_learner is not None:
+                # One update of the head on this episode's transitions and their hindsight labels (see learned_penalty.py).
+                penalty_learner.end_episode(episode_return, episode_length, reached)
             recent_goals.append(float(reached))
             goal_rate = float(np.mean(recent_goals)) if recent_goals else 0.0
             best_goal_rate = max(best_goal_rate, goal_rate)
@@ -1183,7 +1209,15 @@ def train(args, use_shaping, penalty_learner_factory=None):
         # and only train every train_frequency steps (not every single step)
         if global_step > args.learning_starts and global_step % args.train_frequency == 0:
             # Sample a random mini-batch of transitions from the replay buffer
-            b_obs, b_next_obs, b_actions, b_rewards, b_dones = rb.sample(args.batch_size)
+            if penalty_learner is not None and penalty_learner.recomputes_penalty:
+                b_obs, b_next_obs, b_actions, b_rewards, b_dones, b_idx = rb.sample(args.batch_size, return_indices=True)
+                # One meta-gradient step of the head on the TRUE rewards of this batch, then shape the batch with the
+                # head as it is now (see learned_penalty.py, MetaLearnedPenalty).
+                penalty_learner.meta_update(q_net, target_net, b_obs, b_next_obs, b_actions, b_rewards, b_dones, b_idx, args.double_dqn)
+                with torch.no_grad():
+                    b_rewards = b_rewards - penalty_learner.penalties_at(b_idx)
+            else:
+                b_obs, b_next_obs, b_actions, b_rewards, b_dones = rb.sample(args.batch_size)
 
             with torch.no_grad():
                 if args.double_dqn:
