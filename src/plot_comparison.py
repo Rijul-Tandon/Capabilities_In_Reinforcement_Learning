@@ -1,187 +1,129 @@
-"""
-plot_comparison.py - Training Curve & Decay Comparison Plotter
-==============================================================
-Generates multi-panel comparison plots showing how different agents and exploration
-decay strategies perform on MiniGrid environments.
-
-Supported modes:
-  1. Standard Agent Comparison (Random vs Baseline DDQN vs Reward-Shaped DDQN)
-  2. Decay Strategy Comparison (Comparing Epsilon Decay schedules for Baseline and Reward Shaped DDQN)
-
-Usage:
-  python plot_comparison.py --env-id MiniGrid-Empty-Random-6x6-v0
-  python plot_comparison.py --env-id MiniGrid-DoorKey-6x6-v0 --decay-comparison
-"""
-
-# ============================================================================
-# STANDARD LIBRARY IMPORTS
-# ============================================================================
+"""Training curves of all agents on one environment: episodic return, goal-reach rate and TD loss over the training
+steps, per seed and as the mean over seeds.  The other modes (--decay-comparison, --combine-all-runs,
+--mean-reward-only, --per-seed-mean-reward-only) are described in the argument help."""
 
 import argparse
 import csv
 import json
 from pathlib import Path
 
-# ============================================================================
-# THIRD-PARTY IMPORTS
-# ============================================================================
-
 import matplotlib.pyplot as plt
 import numpy as np
 
+plt.rcParams["font.family"] = "sans-serif"
+plt.rcParams["font.sans-serif"] = ["DejaVu Sans", "Arial", "Helvetica"]
 
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
+# Colour of each agent, used when a figure shows at most three experiments
+AGENT_COLORS = {
+    "ddqn_baseline":         "#1f77b4",  # blue
+    "ddqn_vqvae_masked":     "#ff7f0e",  # orange
+    "ddqn_reward_shaping":   "#ff7f0e",  # orange
+    "ddqn_learned_penalty":  "#2ca02c",  # green
+    "dqn_baseline":          "#1f77b4",  # blue
+    "dqn_reward_shaping":    "#ff7f0e",  # orange
+    "dqn_vqvae_masked":      "#ff7f0e",  # orange
+    "dqn_vanilla":           "#2ca02c",  # green
+}
+# Otherwise every experiment gets its own colour, in alphabetical order of the experiment names
+DISTINCT_COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+# Runs of the same experiment in one figure differ by line style
+LINE_STYLES = ["-", "--", ":", "-."]
 
-def rolling(values, window):
+# metric -> (plot title, y-axis label, y-axis limits, ending of the output file name)
+METRICS = {
+    "episodic_return": ("Episodic Return", "Episodic Return", None, "episodic_return"),
+    "goal_reached":    ("Goal Reach Rate", "Goal Success Rate", (-0.05, 1.05), "goal_reach"),
+    "td_loss":         ("TD Loss", "TD Loss", None, "td_loss"),
+}
+
+
+def load_runs(results_dir, env_id, exp_name_contains):
+    """{experiment name: [run, ...]} for one environment, with the latest run of every (experiment, seed).
+
+    A run is a dict of the run's seed and total_timesteps and the logged columns as lists:
+    episode_steps, episodic_return, goal_reached (episodes.csv) and metric_steps, td_loss (metrics.csv).
     """
-    Computes a rolling (moving) average over a list of values.
-    """
-    if len(values) == 0:
-        return values
-    out = []
-    for i in range(len(values)):
-        start = max(0, i - window + 1)
-        out.append(float(np.mean(values[start : i + 1])))
-    return out
+    runs_by_exp_and_seed = {}
+    # An Atari id such as ALE/DemonAttack-v5 is stored with "_" in place of "/" in the run-folder name.
+    for run_dir in sorted(Path(results_dir).glob(f"{env_id.replace('/', '_')}__*")):
+        if not (run_dir / "config.json").exists() or not (run_dir / "episodes.csv").exists():
+            continue
+        with open(run_dir / "config.json", "r", encoding="utf-8") as config_file:
+            config = json.load(config_file)
 
-
-def safe_get_seed(config):
-    seed_val = config.get("seed", 1)
-    if isinstance(seed_val, list):
-        if not seed_val: return 1
-        return int(seed_val[0])
-    try:
-        return int(seed_val)
-    except (ValueError, TypeError):
-        return 1
-
-
-def load_runs(results_dir, env_id, exp_name_contains=None):
-    """
-    Scans the results directory for all experiment runs matching a specific environment,
-    and returns the LATEST run per (experiment type, seed).
-    """
-    runs_by_exp = {}
-
-    # Run directories sanitize Atari IDs such as ALE/DemonAttack-v5 because a
-    # slash cannot be part of a single portable directory name.
-    run_prefix = env_id.replace("/", "_")
-    for run_dir in sorted(Path(results_dir).glob(f"{run_prefix}__*")):
-        config_path = run_dir / "config.json"
-        episode_path = run_dir / "episodes.csv"
-
-        if not config_path.exists() or not episode_path.exists():
+        exp_name = config.get("exp_name", "unknown")
+        if exp_name == "random_agent":
+            continue
+        if exp_name_contains and not any(text in exp_name for text in exp_name_contains):
             continue
 
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
+        seed = config.get("seed", 1)
+        if isinstance(seed, list):      # runs that trained on several seeds are filed under the first one
+            seed = seed[0] if seed else 1
+        try:
+            seed = int(seed)
+        except (ValueError, TypeError):
+            seed = 1
 
-        rows = []
-        with open(episode_path, "r", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                if not row or "global_step" not in row or row["global_step"] is None or row["global_step"] == "":
+        run = {"seed": seed, "total_timesteps": config.get("total_timesteps", 200000),
+               "episode_steps": [], "episodic_return": [], "goal_reached": [], "metric_steps": [], "td_loss": []}
+
+        with open(run_dir / "episodes.csv", "r", encoding="utf-8") as episode_file:
+            for row in csv.DictReader(episode_file):
+                if not row.get("global_step"):
                     continue
                 try:
-                    rows.append(
-                        {
-                            "global_step": int(float(row["global_step"])),
-                            "episodic_return": float(row.get("episodic_return", 0.0)),
-                            "goal_reached": float(row.get("goal_reached", 0.0)),
-                            "epsilon": float(row.get("epsilon", 0.0)),
-                        }
-                    )
-                except (ValueError, KeyError) as e:
+                    step = int(float(row["global_step"]))
+                    episodic_return = float(row.get("episodic_return", 0.0))
+                    goal_reached = float(row.get("goal_reached", 0.0))      # logs without this column count as "not reached"
+                except ValueError:
                     continue
+                run["episode_steps"].append(step)
+                run["episodic_return"].append(episodic_return)
+                run["goal_reached"].append(goal_reached)
+        if not run["episode_steps"]:
+            continue
 
-        metric_path = run_dir / "metrics.csv"
-        metric_rows = []
-        if metric_path.exists():
-            with open(metric_path, "r", encoding="utf-8") as f:
-                for row in csv.DictReader(f):
-                    if not row or "global_step" not in row or row["global_step"] is None or row["global_step"] == "":
+        if (run_dir / "metrics.csv").exists():
+            with open(run_dir / "metrics.csv", "r", encoding="utf-8") as metric_file:
+                for row in csv.DictReader(metric_file):
+                    if not row.get("global_step"):
                         continue
                     try:
-                        loss_val = float(row.get("td_loss", "nan"))
+                        td_loss = float(row.get("td_loss", "nan"))
                     except (ValueError, TypeError):
-                        loss_val = float("nan")
+                        td_loss = float("nan")
                     try:
-                        metric_rows.append(
-                            {
-                                "global_step": int(float(row["global_step"])),
-                                "td_loss": loss_val,
-                            }
-                        )
-                    except (ValueError, KeyError):
+                        step = int(float(row["global_step"]))
+                    except ValueError:
                         continue
+                    run["metric_steps"].append(step)
+                    run["td_loss"].append(td_loss)
 
-        if rows:
-            exp_name = config.get("exp_name", "unknown")
-            if exp_name_contains and not any(token in exp_name for token in exp_name_contains):
-                continue
-            if exp_name == "random_agent":
-                continue
-            seed_val = config.get("seed", 1)
-            if isinstance(seed_val, list):
-                seed = int(seed_val[0])
-            else:
-                try:
-                    seed = int(seed_val)
-                except (ValueError, TypeError):
-                    seed = 1
-            
-            if exp_name not in runs_by_exp:
-                runs_by_exp[exp_name] = {}
-            
-            runs_by_exp[exp_name][seed] = (run_dir.name, config, rows, metric_rows)
+        # run folders are read in sorted order, so a later run of the same experiment and seed replaces the earlier one
+        runs_by_exp_and_seed.setdefault(exp_name, {})[seed] = run
 
-    for exp_name in runs_by_exp:
-        runs_by_exp[exp_name] = list(runs_by_exp[exp_name].values())
-
+    runs_by_exp = {}
+    for exp_name, runs_by_seed in runs_by_exp_and_seed.items():
+        runs_by_exp[exp_name] = list(runs_by_seed.values())
     return runs_by_exp
 
 
-# ============================================================================
-# FIGURE HELPER & COLOR PALETTE
-# ============================================================================
-
-AGENT_COLORS = {
-    "random_agent":          "dimgray",
-    "ddqn_baseline":         "#1f77b4",  # Blue
-    "ddqn_vqvae_masked":     "#ff7f0e",  # Orange
-    "ddqn_reward_shaping":   "#ff7f0e",  # Orange
-    "ddqn_learned_penalty":  "#2ca02c",  # Green
-    "dqn_baseline":          "#1f77b4",  # Blue
-    "dqn_reward_shaping":    "#ff7f0e",  # Orange
-    "dqn_vqvae_masked":      "#ff7f0e",  # Orange
-    "ppo_baseline":          "#2ca02c",  # Green
-    "ppo_vqvae_masked":      "#d627a5",  # Purple
-    "dqn_vanilla":           "#2ca02c",  # Green
-}
-
-DISTINCT_COLORS = [
-    "#1f77b4",  # Blue
-    "#ff7f0e",  # Orange
-    "#2ca02c",  # Green
-    "#d62728",  # Red
-    "#9467bd",  # Purple
-    "#8c564b",  # Brown
-    "#e377c2",  # Pink
-    "#7f7f7f",  # Gray
-    "#bcbd22",  # Yellow-Green
-    "#17becf",  # Cyan
-]
-
-LINE_STYLES = ["-", "--", ":", "-."]
+def select_seed(runs_by_exp, seed):
+    """The same experiments restricted to the runs of one seed; experiments without that seed are left out."""
+    selected = {}
+    for exp_name, runs in runs_by_exp.items():
+        seed_runs = [run for run in runs if run["seed"] == seed]
+        if seed_runs:
+            selected[exp_name] = seed_runs
+    return selected
 
 
-def format_exp_label(exp_name):
-    """
-    Formats raw experiment directory names into clean legend labels.
-    e.g., 'ddqn_baseline_decay_linear' -> 'Baseline DDQN (linear)'
-          'ddqn_reward_shaping_decay_linear' -> 'RS-DDQN (linear)'
-          'dqn_vqvae_masked' -> 'RS-DQN (VQ-VAE Masked)'
+def legend_label(exp_name):
+    """Readable legend label of an experiment name, e.g.
+        ddqn_baseline_decay_linear                  -> Baseline DDQN (linear)
+        ddqn_reward_shaping                         -> RS-DDQN
+        ddqn_baseline_transfer_doorkey_to_empty     -> Baseline DDQN | Transfer Doorkey → Empty
     """
     if "_transfer_" in exp_name:
         agent = "RS-DDQN" if "reward_shaping" in exp_name else "Baseline DDQN"
@@ -191,282 +133,150 @@ def format_exp_label(exp_name):
         agent = "RS-DDQN" if "reward_shaping" in exp_name else "Baseline DDQN"
         context = exp_name.split("_scratch_", 1)[1].replace("_for_", " (for ").replace("_transfer", ")")
         return f"{agent} | Fresh {context.replace('_', ' ').title()}"
-    if "_seed_transfer_seed_" in exp_name:
-        agent = "RS-DDQN" if "reward_shaping" in exp_name else "Baseline DDQN"
-        seed_leg = exp_name.rsplit("_", 1)[1].upper()
-        return f"{agent} | Seed-transfer leg {seed_leg}"
 
     label = exp_name
     if "ddqn_vqvae_masked" in label:
         label = label.replace("ddqn_vqvae_masked", "RS-DDQN (VQ-VAE Masked)")
     elif "dqn_vqvae_masked" in label:
         label = label.replace("dqn_vqvae_masked", "RS-DQN (VQ-VAE Masked)")
-    if "ppo_vqvae_masked" in label:
-        label = label.replace("ppo_vqvae_masked", "RS-PPO (VQ-VAE Masked)")
     if "learned_penalty" in label:
         label = label.replace("ddqn_learned_penalty", "LP-DDQN (learned penalty)")
-    if "ppo_baseline" in label:
-        label = label.replace("ppo_baseline", "Baseline PPO")
-    elif "reward_shaping" in label:
+    if "reward_shaping" in label:
         label = label.replace("ddqn_reward_shaping", "RS-DDQN").replace("dqn_reward_shaping", "RS-DDQN")
     elif "baseline" in label:
         label = label.replace("ddqn_baseline", "Baseline DDQN").replace("dqn_baseline", "Baseline DQN")
-    
+
     if "_decay_" in exp_name:
-        parts = exp_name.split("_decay_")
-        decay_part = parts[1]
+        name_before_decay, decay_schedule = exp_name.split("_decay_")[:2]
         if "RS-DDQN" in label:
-            return f"RS-DDQN ({decay_part})"
-        elif "Baseline DDQN" in label:
-            return f"Baseline DDQN ({decay_part})"
-        elif "Baseline DQN" in label:
-            return f"Baseline DQN ({decay_part})"
+            return f"RS-DDQN ({decay_schedule})"
+        if "Baseline DDQN" in label:
+            return f"Baseline DDQN ({decay_schedule})"
+        if "Baseline DQN" in label:
+            return f"Baseline DQN ({decay_schedule})"
+        return f"{name_before_decay.replace('_', ' ').title()} ({decay_schedule})"
+    if label == exp_name:       # no known agent name in it
+        return label.replace("_", " ").title()
+    return label
+
+
+def rolling(values, window, statistic):
+    """`statistic` (np.mean or np.std) of the last `window` values at every position; fewer values at the start."""
+    return np.array([float(statistic(values[max(0, end - window):end])) for end in range(1, len(values) + 1)])
+
+
+def plot_metric(runs_by_exp, env_id, output_path, rolling_window, metric, title_suffix, mean_over_seeds):
+    """One PNG with the curves of one metric over the training steps.
+
+    mean_over_seeds = False:  one curve per run, the rolling mean, with a band of +- half the rolling standard deviation
+    mean_over_seeds = True:   one curve per experiment, the mean of its runs' rolling means, with a band of +- 1
+                              standard deviation across the runs
+    """
+    title, y_label, y_limits, _ = METRICS[metric]
+    if mean_over_seeds:
+        title = f"Mean {title}"
+    fig, ax = plt.subplots(figsize=(6.5, 4.2), dpi=300)
+    total_timesteps = 200000        # right end of the x-axis; replaced by the value of the runs that are drawn
+
+    for exp_name, runs in runs_by_exp.items():
+        if exp_name in AGENT_COLORS and len(runs_by_exp) <= 3:
+            color = AGENT_COLORS[exp_name]
         else:
-            return f"{parts[0].replace('_', ' ').title()} ({decay_part})"
-    return label.replace("_", " ").title() if label == exp_name else label
+            color = DISTINCT_COLORS[sorted(runs_by_exp).index(exp_name) % len(DISTINCT_COLORS)]
+        label = legend_label(exp_name)
+        num_runs = len(runs)
+
+        if not mean_over_seeds:
+            for run_number, run in enumerate(runs):
+                if metric == "td_loss":
+                    steps, values = run["metric_steps"], run["td_loss"]
+                else:
+                    steps, values = run["episode_steps"], run[metric]
+                if not values:
+                    continue
+                rolling_mean = rolling(values, rolling_window, np.mean)
+                rolling_std = rolling(values, rolling_window, np.std)
+                ax.plot(steps, rolling_mean, label=f"{label} (s={run['seed']})" if num_runs > 1 else label,
+                        color=color, linestyle=LINE_STYLES[run_number % len(LINE_STYLES)], linewidth=2.0)
+                ax.fill_between(steps, rolling_mean - rolling_std * 0.5, rolling_mean + rolling_std * 0.5, color=color, alpha=0.12)
+                total_timesteps = run["total_timesteps"]
+
+        else:
+            run_curves = []         # (steps, rolling mean) of every run that has data
+            last_step = 0
+            for run in runs:
+                total_timesteps = run["total_timesteps"]
+                if metric == "td_loss":
+                    steps = np.array(run["metric_steps"])
+                    values = rolling(run["td_loss"], rolling_window, np.mean)
+                    has_loss = ~np.isnan(values)        # the loss is NaN until the first gradient step
+                    steps, values = steps[has_loss], values[has_loss]
+                else:
+                    steps = np.array(run["episode_steps"])
+                    values = rolling(run[metric], rolling_window, np.mean)
+                if len(steps) > 0:
+                    run_curves.append((steps, values))
+                    last_step = max(last_step, steps[-1])
+            if not run_curves:
+                continue
+            if last_step == 0:
+                last_step = total_timesteps
+
+            # the runs log at different steps, so each curve is interpolated onto the same 500 steps before averaging
+            common_steps = np.linspace(0, last_step, num=500)
+            curves = [np.interp(common_steps, steps, values) for steps, values in run_curves]
+            mean_curve = np.mean(curves, axis=0)
+            ax.plot(common_steps, mean_curve, label=f"{label} (Mean across {num_runs} seeds)" if num_runs > 1 else label,
+                    color=color, linewidth=2.0)
+            if num_runs > 1:
+                std_curve = np.std(curves, axis=0)
+                lower, upper = mean_curve - std_curve, mean_curve + std_curve
+                if metric == "goal_reached":        # a rate stays within [0, 1]
+                    lower, upper = np.clip(lower, 0, 1), np.clip(upper, 0, 1)
+                elif metric == "td_loss":           # a squared error is never negative
+                    lower = np.maximum(0, lower)
+                ax.fill_between(common_steps, lower, upper, color=color, alpha=0.15)
+
+    ax.set_xlim(0, total_timesteps)
+    if y_limits:
+        ax.set_ylim(y_limits)
+    ax.set_title(f"{env_id} — {title}{title_suffix}", fontsize=11, fontweight="bold", pad=10)
+    ax.set_xlabel("Training Steps", fontsize=9.5, fontweight="medium")
+    ax.set_ylabel(y_label, fontsize=9.5, fontweight="medium")
+    ax.grid(True, linestyle="--", alpha=0.35, color="#cccccc")
+    ax.legend(fontsize=8.5, loc="best", frameon=True, facecolor="white", edgecolor="#e0e0e0", framealpha=0.95)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved {'mean ' if mean_over_seeds else ''}publication plot → {output_path}")
 
 
-def get_best_exp(exp_dict):
-    """
-    Given a dict of {exp_name: run_list}, computes the average performance
-    in the FIRST 40% of training steps for each experiment, and returns the exp_name
-    with the highest performance.
-    """
-    best_exp = None
+def plot_all_metrics(runs_by_exp, env_id, output_prefix, rolling_window, title_suffix, mean_over_seeds):
+    """The figures of the three metrics: <output_prefix>_episodic_return.png, _goal_reach.png and _td_loss.png."""
+    for metric in METRICS:
+        file_ending = METRICS[metric][3]
+        plot_metric(runs_by_exp, env_id, Path(f"{output_prefix}_{file_ending}.png"), rolling_window, metric, title_suffix, mean_over_seeds)
+
+
+def best_experiment(runs_by_exp):
+    """The experiment with the best early performance: goal rate + 0.1 * episodic return over the first 40% of the
+    episodes of each run, averaged over its runs."""
+    best_name = None
     best_score = -float("inf")
-    
-    for exp_name, run_list in exp_dict.items():
-        scores = []
-        for _, _, rows, _ in run_list:
-            if not rows:
-                continue
-            num_rows = len(rows)
-            first_portion = rows[:max(1, int(num_rows * 0.4))]
-            if not first_portion:
-                first_portion = rows
-            avg_goal = np.mean([r["goal_reached"] for r in first_portion])
-            avg_ret = np.mean([r["episodic_return"] for r in first_portion])
-            score = avg_goal + 0.1 * avg_ret
-            scores.append(score)
-            
-        if scores:
-            mean_score = float(np.mean(scores))
-            if mean_score > best_score:
-                best_score = mean_score
-                best_exp = exp_name
-                
-    return best_exp
+    for exp_name, runs in runs_by_exp.items():
+        run_scores = []
+        for run in runs:
+            num_early_episodes = max(1, int(len(run["goal_reached"]) * 0.4))
+            mean_goal = np.mean(run["goal_reached"][:num_early_episodes])
+            mean_return = np.mean(run["episodic_return"][:num_early_episodes])
+            run_scores.append(mean_goal + 0.1 * mean_return)
+        score = float(np.mean(run_scores))
+        if score > best_score:
+            best_name, best_score = exp_name, score
+    return best_name
 
-
-def plot_single_metric(runs_by_exp, env_id, output_path, rolling_window, metric_key, metric_title, y_label, y_limits=None, title_suffix=""):
-    """
-    Creates and saves a publication-grade standalone plot for a single metric.
-    Includes rolling standard deviation / variance shading.
-    """
-    plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
-
-    fig, ax = plt.subplots(figsize=(6.5, 4.2), dpi=300)
-    any_dqn_config = None
-
-    exp_colors = {}
-    for idx, exp_name in enumerate(sorted(runs_by_exp.keys())):
-        if exp_name in AGENT_COLORS and len(runs_by_exp) <= 3:
-            exp_colors[exp_name] = AGENT_COLORS[exp_name]
-        else:
-            exp_colors[exp_name] = DISTINCT_COLORS[idx % len(DISTINCT_COLORS)]
-
-    for exp_name, run_list in runs_by_exp.items():
-        base_color = exp_colors[exp_name]
-        clean_label = format_exp_label(exp_name)
-
-        for i, (_, config, rows, metric_rows) in enumerate(run_list):
-            seed = safe_get_seed(config)
-            ls = LINE_STYLES[i % len(LINE_STYLES)]
-
-            if len(run_list) > 1:
-                label = f"{clean_label} (s={seed})"
-            else:
-                label = clean_label
-
-            if metric_key in ["episodic_return", "goal_reached"]:
-                steps = [r["global_step"] for r in rows]
-                vals = [r[metric_key] for r in rows]
-            elif metric_key == "td_loss" and metric_rows:
-                steps = [r["global_step"] for r in metric_rows]
-                vals = [r["td_loss"] for r in metric_rows]
-            else:
-                continue
-
-            if not vals:
-                continue
-
-            smooth_vals = rolling(vals, rolling_window)
-            
-            # Compute rolling std for shaded confidence band
-            std_vals = []
-            for idx_v in range(len(vals)):
-                st = max(0, idx_v - rolling_window + 1)
-                std_vals.append(float(np.std(vals[st : idx_v + 1])))
-
-            smooth_vals = np.array(smooth_vals)
-            std_vals = np.array(std_vals)
-
-            ax.plot(steps, smooth_vals, label=label, color=base_color, linestyle=ls, linewidth=2.0)
-            ax.fill_between(steps, smooth_vals - std_vals * 0.5, smooth_vals + std_vals * 0.5,
-                            color=base_color, alpha=0.12)
-
-            if exp_name != "random_agent":
-                any_dqn_config = config
-
-    max_x = any_dqn_config.get("total_timesteps", 200000) if any_dqn_config else 200000
-    ax.set_xlim(0, max_x)
-    if y_limits:
-        ax.set_ylim(y_limits)
-
-    ax.set_title(f"{env_id} — {metric_title}{title_suffix}", fontsize=11, fontweight="bold", pad=10)
-    ax.set_xlabel("Training Steps", fontsize=9.5, fontweight="medium")
-    ax.set_ylabel(y_label, fontsize=9.5, fontweight="medium")
-    ax.grid(True, linestyle="--", alpha=0.35, color="#cccccc")
-    ax.legend(fontsize=8.5, loc="best", frameon=True, facecolor="white", edgecolor="#e0e0e0", framealpha=0.95)
-
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved publication plot → {output_path}")
-
-
-def plot_figure(runs_by_exp, env_id, output_path, rolling_window, title_suffix=""):
-    """
-    Creates and saves individual publication-grade plots for Return, Goal Reached Rate, and TD Loss.
-    """
-    out_dir = Path(output_path).parent
-    out_name = Path(output_path).stem
-    plot_single_metric(runs_by_exp, env_id, out_dir / f"{out_name}_episodic_return.png",
-                       rolling_window, "episodic_return", "Episodic Return", "Episodic Return", title_suffix=title_suffix)
-    plot_single_metric(runs_by_exp, env_id, out_dir / f"{out_name}_goal_reach.png",
-                       rolling_window, "goal_reached", "Goal Reach Rate", "Goal Success Rate", y_limits=(-0.05, 1.05), title_suffix=title_suffix)
-    plot_single_metric(runs_by_exp, env_id, out_dir / f"{out_name}_td_loss.png",
-                       rolling_window, "td_loss", "TD Loss", "TD Loss", title_suffix=title_suffix)
-
-
-def plot_single_mean_metric(runs_by_exp, env_id, output_path, rolling_window, metric_key, metric_title, y_label, y_limits=None, title_suffix=""):
-    """
-    Creates and saves a standalone plot for the mean of a single metric across all seeds.
-    Includes shaded error bands (±1 std) showing seed variability.
-    """
-    plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
-
-    fig, ax = plt.subplots(figsize=(6.5, 4.2), dpi=300)
-    any_dqn_config = None
-
-    exp_colors = {}
-    for idx, exp_name in enumerate(sorted(runs_by_exp.keys())):
-        if exp_name in AGENT_COLORS and len(runs_by_exp) <= 3:
-            exp_colors[exp_name] = AGENT_COLORS[exp_name]
-        else:
-            exp_colors[exp_name] = DISTINCT_COLORS[idx % len(DISTINCT_COLORS)]
-
-    for exp_name, run_list in runs_by_exp.items():
-        if not run_list:
-            continue
-        base_color = exp_colors[exp_name]
-        clean_label = format_exp_label(exp_name)
-        num_seeds = len(run_list)
-        label = f"{clean_label} (Mean across {num_seeds} seeds)" if num_seeds > 1 else clean_label
-
-        all_seed_vals = []
-        max_timestep = 0
-
-        for _, config, rows, metric_rows in run_list:
-            if exp_name != "random_agent":
-                any_dqn_config = config
-
-            if metric_key in ["episodic_return", "goal_reached"]:
-                if rows:
-                    steps = np.array([r["global_step"] for r in rows])
-                    vals = np.array(rolling([r[metric_key] for r in rows], rolling_window))
-                    all_seed_vals.append((steps, vals))
-                    if steps[-1] > max_timestep:
-                        max_timestep = steps[-1]
-            elif metric_key == "td_loss" and metric_rows:
-                m_steps = np.array([r["global_step"] for r in metric_rows])
-                l_vals = np.array(rolling([r["td_loss"] for r in metric_rows], rolling_window))
-                valid = [(s, l) for s, l in zip(m_steps, l_vals) if not np.isnan(l)]
-                if valid:
-                    vs, vl = zip(*valid)
-                    all_seed_vals.append((np.array(vs), np.array(vl)))
-                    if vs[-1] > max_timestep:
-                        max_timestep = vs[-1]
-
-        if not all_seed_vals:
-            continue
-
-        if max_timestep == 0:
-            max_timestep = any_dqn_config.get("total_timesteps", 200000) if any_dqn_config else 200000
-
-        grid_steps = np.linspace(0, max_timestep, num=500)
-        interp_vals = []
-        for s_arr, v_arr in all_seed_vals:
-            interp_vals.append(np.interp(grid_steps, s_arr, v_arr))
-
-        mean_v = np.mean(interp_vals, axis=0)
-        std_v = np.std(interp_vals, axis=0) if num_seeds > 1 else np.zeros_like(mean_v)
-
-        ax.plot(grid_steps, mean_v, label=label, color=base_color, linewidth=2.0)
-        if num_seeds > 1:
-            if metric_key == "goal_reached":
-                lower = np.clip(mean_v - std_v, 0, 1)
-                upper = np.clip(mean_v + std_v, 0, 1)
-            elif metric_key == "td_loss":
-                lower = np.maximum(0, mean_v - std_v)
-                upper = mean_v + std_v
-            else:
-                lower = mean_v - std_v
-                upper = mean_v + std_v
-            ax.fill_between(grid_steps, lower, upper, color=base_color, alpha=0.15)
-
-    max_x = any_dqn_config.get("total_timesteps", 200000) if any_dqn_config else 200000
-    ax.set_xlim(0, max_x)
-    if y_limits:
-        ax.set_ylim(y_limits)
-
-    ax.set_title(f"{env_id} — {metric_title}{title_suffix}", fontsize=11, fontweight="bold", pad=10)
-    ax.set_xlabel("Training Steps", fontsize=9.5, fontweight="medium")
-    ax.set_ylabel(y_label, fontsize=9.5, fontweight="medium")
-    ax.grid(True, linestyle="--", alpha=0.35, color="#cccccc")
-    ax.legend(fontsize=8.5, loc="best", frameon=True, facecolor="white", edgecolor="#e0e0e0", framealpha=0.95)
-
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved mean publication plot → {output_path}")
-
-
-def plot_mean_figure(runs_by_exp, env_id, output_path, rolling_window, title_suffix=""):
-    """
-    Creates and saves individual aggregated publication plots showing the MEAN performance across ALL seeds.
-    """
-    out_dir = Path(output_path).parent
-    out_name = Path(output_path).stem
-    plot_single_mean_metric(runs_by_exp, env_id, out_dir / f"{out_name}_episodic_return.png",
-                            rolling_window, "episodic_return", "Mean Episodic Return", "Episodic Return", title_suffix=title_suffix)
-    plot_single_mean_metric(runs_by_exp, env_id, out_dir / f"{out_name}_goal_reach.png",
-                            rolling_window, "goal_reached", "Mean Goal Reach Rate", "Goal Success Rate", y_limits=(-0.05, 1.05), title_suffix=title_suffix)
-    plot_single_mean_metric(runs_by_exp, env_id, out_dir / f"{out_name}_td_loss.png",
-                            rolling_window, "td_loss", "Mean TD Loss", "TD Loss", title_suffix=title_suffix)
-
-
-# ============================================================================
-# MAIN PLOTTING FUNCTION
-# ============================================================================
 
 def main():
-    """
-    Entry point: parses arguments, loads all runs, and generates comparison plots.
-    Supports standard agent comparison as well as decay strategy comparison mode.
-    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-id", type=str, required=True)
     parser.add_argument("--results-dir", type=str, default="results")
@@ -484,157 +294,71 @@ def main():
                         help="Generate decay comparison plots for Baseline, Reward Shaped, and Best of Both.")
     args = parser.parse_args()
 
-    # Keep the human-readable Atari ID in chart titles, but never use its
-    # slash in an output filename.
-    safe_env_id = args.env_id.replace("/", "_")
-
     runs_by_exp = load_runs(args.results_dir, args.env_id, args.exp_name_contains)
     if not runs_by_exp:
         raise SystemExit(f"No runs found for {args.env_id} in {args.results_dir}")
 
     plots_dir = Path(args.plots_dir)
     plots_dir.mkdir(parents=True, exist_ok=True)
+    # Every output file starts with the environment id; titles keep the "/" of an Atari id, file names cannot.
+    file_prefix = plots_dir / args.env_id.replace("/", "_")
+
+    seeds = set()
+    for runs in runs_by_exp.values():
+        for run in runs:
+            seeds.add(run["seed"])
+    seeds = sorted(seeds)
 
     if args.mean_reward_only:
-        output_path = plots_dir / f"{safe_env_id}_mean_reward_comparison.png"
-        plot_single_mean_metric(
-            runs_by_exp,
-            args.env_id,
-            output_path,
-            args.rolling_window,
-            "episodic_return",
-            "Mean Episodic Return",
-            "Episodic Return",
-            title_suffix=" | Transfer Performance",
-        )
+        plot_metric(runs_by_exp, args.env_id, Path(f"{file_prefix}_mean_reward_comparison.png"), args.rolling_window,
+                    "episodic_return", " | Transfer Performance", mean_over_seeds=True)
         return
 
     if args.per_seed_mean_reward_only:
-        seeds = sorted({safe_get_seed(config) for run_list in runs_by_exp.values() for _, config, _, _ in run_list})
         for seed in seeds:
-            seed_runs = {
-                exp_name: [run for run in run_list if safe_get_seed(run[1]) == seed]
-                for exp_name, run_list in runs_by_exp.items()
-            }
-            seed_runs = {exp_name: run_list for exp_name, run_list in seed_runs.items() if run_list}
-            output_path = plots_dir / f"{safe_env_id}_seed{seed}_mean_reward_comparison.png"
-            plot_single_mean_metric(
-                seed_runs,
-                args.env_id,
-                output_path,
-                args.rolling_window,
-                "episodic_return",
-                "Mean Episodic Return",
-                "Episodic Return",
-                title_suffix=f" | Seed {seed} Transfer Performance",
-            )
+            plot_metric(select_seed(runs_by_exp, seed), args.env_id, Path(f"{file_prefix}_seed{seed}_mean_reward_comparison.png"),
+                        args.rolling_window, "episodic_return", f" | Seed {seed} Transfer Performance", mean_over_seeds=True)
         return
 
     if args.combine_all_runs:
-        output_path = plots_dir / f"{safe_env_id}_combined_comparison.png"
-        plot_figure(
-            runs_by_exp,
-            args.env_id,
-            output_path,
-            args.rolling_window,
-            title_suffix=" | Combined Transfer Comparison",
-        )
+        plot_all_metrics(runs_by_exp, args.env_id, f"{file_prefix}_combined_comparison", args.rolling_window,
+                         " | Combined Transfer Comparison", mean_over_seeds=False)
         return
 
-    # Auto-detect if decay runs are present
-    is_decay_run = args.decay_comparison or any("_decay_" in exp for exp in runs_by_exp.keys())
-
-    if is_decay_run:
+    if args.decay_comparison or any("_decay_" in exp_name for exp_name in runs_by_exp):
         print(f"=== Generating Per-Seed Epsilon Decay Comparisons for {args.env_id} ===")
+        # "dqn_baseline" also matches "ddqn_baseline", and likewise for reward shaping
+        baseline_runs = {exp_name: runs for exp_name, runs in runs_by_exp.items() if "dqn_baseline" in exp_name}
+        shaped_runs = {exp_name: runs for exp_name, runs in runs_by_exp.items() if "dqn_reward_shaping" in exp_name}
 
-        # Collect all seeds present across decay runs
-        decay_seeds = set()
-        for run_list in runs_by_exp.values():
-            for _, config, _, _ in run_list:
-                decay_seeds.add(int(config.get("seed", 1)))
-        decay_seeds = sorted(decay_seeds)
+        for seed in seeds:
+            seed_baseline_runs = select_seed(baseline_runs, seed)
+            seed_shaped_runs = select_seed(shaped_runs, seed)
+            best_of_both = {}
+            if seed_baseline_runs:
+                plot_all_metrics(seed_baseline_runs, args.env_id, f"{file_prefix}_decay_comparison_baseline_seed{seed}",
+                                 args.rolling_window, f" | Baseline DDQN (Seed {seed})", mean_over_seeds=False)
+                best_baseline = best_experiment(seed_baseline_runs)
+                if best_baseline is not None:
+                    best_of_both[best_baseline] = seed_baseline_runs[best_baseline]
+            if seed_shaped_runs:
+                plot_all_metrics(seed_shaped_runs, args.env_id, f"{file_prefix}_decay_comparison_reward_shaping_seed{seed}",
+                                 args.rolling_window, f" | Reward Shaped DDQN (Seed {seed})", mean_over_seeds=False)
+                best_shaped = best_experiment(seed_shaped_runs)
+                if best_shaped is not None:
+                    best_of_both[best_shaped] = seed_shaped_runs[best_shaped]
+            if best_of_both:
+                plot_all_metrics(best_of_both, args.env_id, f"{file_prefix}_decay_comparison_best_of_both_seed{seed}",
+                                 args.rolling_window, f" | Best Baseline vs Best Shaped (Seed {seed})", mean_over_seeds=False)
+        return
 
-        def filter_by_seed(exp_dict, target_seed):
-            res = {}
-            for exp, r_list in exp_dict.items():
-                s_runs = [r for r in r_list if int(r[1].get("seed", 1)) == target_seed]
-                if s_runs:
-                    res[exp] = s_runs
-            return res
-
-        baseline_runs = {exp: runs for exp, runs in runs_by_exp.items() if "ddqn_baseline" in exp or "dqn_baseline" in exp}
-        shaped_runs = {exp: runs for exp, runs in runs_by_exp.items() if "ddqn_reward_shaping" in exp or "dqn_reward_shaping" in exp}
-
-        for s in decay_seeds:
-            seed_b_runs = filter_by_seed(baseline_runs, s)
-            seed_s_runs = filter_by_seed(shaped_runs, s)
-
-            # 1. Compare all decay strategies for Baseline DDQN on seed `s`
-            if seed_b_runs:
-                out_b_s = plots_dir / f"{safe_env_id}_decay_comparison_baseline_seed{s}.png"
-                plot_figure(seed_b_runs, args.env_id, out_b_s, args.rolling_window,
-                            title_suffix=f" | Baseline DDQN (Seed {s})")
-
-            # 2. Compare all decay strategies for Reward Shaped DDQN on seed `s`
-            if seed_s_runs:
-                out_s_s = plots_dir / f"{safe_env_id}_decay_comparison_reward_shaping_seed{s}.png"
-                plot_figure(seed_s_runs, args.env_id, out_s_s, args.rolling_window,
-                            title_suffix=f" | Reward Shaped DDQN (Seed {s})")
-
-            # 3. Compare Winner Baseline Decay vs Winner Reward Shaped Decay on seed `s`
-            winner_b_s = get_best_exp(seed_b_runs) if seed_b_runs else None
-            winner_s_s = get_best_exp(seed_s_runs) if seed_s_runs else None
-            
-            best_s_dict = {}
-            if winner_b_s and winner_b_s in seed_b_runs:
-                best_s_dict[winner_b_s] = seed_b_runs[winner_b_s]
-            if winner_s_s and winner_s_s in seed_s_runs:
-                best_s_dict[winner_s_s] = seed_s_runs[winner_s_s]
-
-            if best_s_dict:
-                out_best_s = plots_dir / f"{safe_env_id}_decay_comparison_best_of_both_seed{s}.png"
-                plot_figure(best_s_dict, args.env_id, out_best_s, args.rolling_window,
-                            title_suffix=f" | Best Baseline vs Best Shaped (Seed {s})")
-
-    else:
-        # Standard seed-by-seed agent comparison plots
-        all_seeds = set()
-        for exp_name, run_list in runs_by_exp.items():
-            if exp_name == "random_agent":
-                continue
-            for _, config, _, _ in run_list:
-                all_seeds.add(safe_get_seed(config))
-        all_seeds = sorted(all_seeds)
-
-        print(f"Found DQN seeds: {all_seeds} for {args.env_id}")
-
-        # 1. Per-seed comparison plots (kept as requested)
-        first_seed = all_seeds[0] if all_seeds else None
-        for seed in all_seeds:
-            filtered = {}
-            for exp_name, run_list in runs_by_exp.items():
-                if exp_name == "random_agent":
-                    if seed == first_seed:
-                        filtered[exp_name] = run_list[:1]
-                else:
-                    seed_runs = [(d, c, r, m) for d, c, r, m in run_list if safe_get_seed(c) == seed]
-                    if seed_runs:
-                        filtered[exp_name] = seed_runs
-
-            if not filtered:
-                continue
-
-            out = plots_dir / f"{safe_env_id}_comparison_seed{seed}.png"
-            plot_figure(filtered, args.env_id, out, args.rolling_window,
-                        title_suffix=f" | Seed {seed}")
-
-        # 2. Mean comparison plot across ALL executed seeds
-        if all_seeds:
-            num_seeds = len(all_seeds)
-            print(f"Generating mean aggregated comparison plots across all {num_seeds} seeds for {args.env_id} ...")
-            out_mean = plots_dir / f"{safe_env_id}_mean.png"
-            plot_mean_figure(runs_by_exp, args.env_id, out_mean, args.rolling_window,
-                             title_suffix=f" | Mean Across {num_seeds} Seeds")
+    print(f"Found DQN seeds: {seeds} for {args.env_id}")
+    for seed in seeds:
+        plot_all_metrics(select_seed(runs_by_exp, seed), args.env_id, f"{file_prefix}_comparison_seed{seed}",
+                         args.rolling_window, f" | Seed {seed}", mean_over_seeds=False)
+    print(f"Generating mean aggregated comparison plots across all {len(seeds)} seeds for {args.env_id} ...")
+    plot_all_metrics(runs_by_exp, args.env_id, f"{file_prefix}_mean", args.rolling_window,
+                     f" | Mean Across {len(seeds)} Seeds", mean_over_seeds=True)
 
 
 if __name__ == "__main__":

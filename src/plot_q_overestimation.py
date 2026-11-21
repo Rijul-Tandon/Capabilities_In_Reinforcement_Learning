@@ -1,781 +1,442 @@
-"""
-plot_q_overestimation.py - Q-Value Overestimation Comparison
-=============================================================
-Visualises how much standard (vanilla) DQN overestimates Q-values compared
-to Double DQN (DDQN) across multiple MiniGrid environments.
-
-For every reachable (non-wall) cell in the grid, and for all 4 agent
-directions (North, East, South, West), the script:
-  1. Constructs the wrapped observation by setting agent_pos / agent_dir
-     on the unwrapped environment and running it through the wrapper pipeline.
-  2. Passes the observation through the trained Q-network and records Q(s, a).
-  3. Displays a 4×3 grid of heatmaps for each facing direction (Rows = North, East,
-     South, West; Columns = Agent A Max-Q, Agent B Max-Q, Difference A − B).
-
-Usage:
-  python plot_q_overestimation.py
-  python plot_q_overestimation.py --results-dir results --action-set task
-  python plot_q_overestimation.py --hidden-size 256
-
-Output:
-  plots/<env_id>_q_overestimation_seed<seed>.png   (one per env × seed)
-  plots/q_overestimation_comparison.png             (summary bar chart)
-"""
-
-# ============================================================================
-# STANDARD LIBRARY IMPORTS
-# ============================================================================
+"""Compares the Q-values of two trained agents: for every free cell and facing direction it draws max_a Q(s, a) of
+both agents as heat maps (one figure per task stage) and a bar chart of the mean maximum Q-value."""
 
 import argparse
 import json
 import warnings
 from pathlib import Path
 
-# ============================================================================
-# THIRD-PARTY IMPORTS
-# ============================================================================
-
-import matplotlib.pyplot as plt
-import matplotlib.patheffects as path_effects
 import gymnasium as gym
+import matplotlib.patheffects as path_effects
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-# ============================================================================
-# LOCAL IMPORTS
-# ============================================================================
+from dqn_common import QNetwork, action_names, make_env
 
-from dqn_common import QNetwork, make_env, action_names
+DEFAULT_ENV_IDS = ["MiniGrid-Empty-Random-6x6-v0", "MiniGrid-DoorKey-6x6-v0"]      # used when --env-id is not given
+# Tried in this order when the requested --compare pair has no seed with a trained model for both agents
+FALLBACK_PAIRS = [("ddqn_baseline", "ddqn_reward_shaping"), ("dqn_baseline", "dqn_reward_shaping"), ("dqn_vanilla", "dqn_baseline")]
+
+DIRECTION_ROWS = [(3, "North"), (0, "East"), (1, "South"), (2, "West")]             # (MiniGrid direction, name), in drawing order
+DIRECTION_ARROWS = {0: "→", 1: "↓", 2: "←", 3: "↑"}
+ACTION_ABBREVIATIONS = {"left": "L", "right": "R", "forward": "F", "pickup": "P", "drop": "Dp", "toggle": "T", "done": "Dn"}
+
+FIGURE_DPI = 300
+WALL_COLOR = "#f0f0f0"
+GRID_COLOR = "#b0b0b0"
+BLUE, ORANGE = "#1f77b4", "#ff7f0e"         # the agent colours of plot_comparison.py
+HEATMAP_CMAP = plt.get_cmap("Blues").copy()
+HEATMAP_CMAP.set_bad(color="white")
+
+plt.rcParams["font.family"] = "sans-serif"
+plt.rcParams["font.sans-serif"] = ["DejaVu Sans", "Arial", "Helvetica"]
+plt.rcParams["axes.linewidth"] = 0.8
+plt.rcParams["xtick.major.width"] = 0.6
+plt.rcParams["ytick.major.width"] = 0.6
 
 
-# ============================================================================
-# CONSTANTS & HELPERS
-# ============================================================================
-
-ENV_IDS = [
-    "MiniGrid-Empty-Random-6x6-v0",
-    "MiniGrid-DoorKey-6x6-v0",
-]
-
-NUM_DIRECTIONS = 4
-
-
-def get_models_by_seed(results_dir, env_id, exp_name):
-    """Finds all trained model files for a given experiment, grouped by seed."""
+def find_models_by_seed(results_dir, env_id, exp_name):
+    """{seed: path of q_net.pt} of one experiment; the seed is read from the run-folder name
+    <env_id>__<exp_name>__<seed>__<timestamp>.  When a seed was run more than once, the newest run is used."""
     models = {}
     for run_dir in sorted(Path(results_dir).glob(f"{env_id}__{exp_name}__*")):
-        model_path = run_dir / "q_net.pt"
-        if not model_path.exists():
+        if not (run_dir / "q_net.pt").exists():
             continue
-        parts = run_dir.name.split("__")
         try:
-            seed = int(parts[2])
+            seed = int(run_dir.name.split("__")[2])
         except (IndexError, ValueError):
             continue
-        models[seed] = model_path
+        models[seed] = run_dir / "q_net.pt"
     return models
 
 
-def get_decay_str(model_path):
-    """Reads config.json from model parent directory to get epsilon_schedule."""
-    if not model_path:
+def epsilon_schedule_suffix(model_path):
+    """' (<epsilon schedule>)' of the run that produced this model, for the panel titles; '' when it is not recorded."""
+    config_path = model_path.parent / "config.json"
+    if not config_path.exists():
         return ""
-    cfg_path = model_path.parent / "config.json"
-    if cfg_path.exists():
-        try:
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                c = json.load(f)
-            sched = c.get("epsilon_schedule", "")
-            if sched:
-                return f" ({sched})"
-        except Exception:
-            pass
-    return ""
+    with open(config_path, "r", encoding="utf-8") as config_file:
+        epsilon_schedule = json.load(config_file).get("epsilon_schedule", "")
+    return f" ({epsilon_schedule})" if epsilon_schedule else ""
 
 
-def get_wrapped_obs(env):
-    """Generates raw observation and pushes it through observation wrappers.
+def wrapped_observation(env):
+    """The observation of the environment's CURRENT state, passed through the observation wrappers.
 
-    Only genuine ObservationWrapper instances are applied.  Gymnasium <= 0.29 forwards unknown attribute
-    lookups from every wrapper to the wrapped env, so `hasattr(wrapper, 'observation')` is True for
-    RecordEpisodeStatistics, TimeLimit, etc. as well, and the flattening wrapper would run more than once.
+    Only genuine ObservationWrapper instances are applied.  Gymnasium <= 0.29 forwards unknown attribute lookups
+    from every wrapper to the wrapped env, so `hasattr(wrapper, 'observation')` is True for RecordEpisodeStatistics,
+    TimeLimit, etc. as well, and the flattening wrapper would run more than once.
     """
-    obs = env.unwrapped.gen_obs()
+    observation_wrappers = []       # outermost first
     wrapper = env
-    obs_wrappers = []
     while isinstance(wrapper, gym.Wrapper):
         if isinstance(wrapper, gym.ObservationWrapper):
-            obs_wrappers.append(wrapper)
+            observation_wrappers.append(wrapper)
         wrapper = wrapper.env
+    observation = env.unwrapped.gen_obs()
+    for observation_wrapper in reversed(observation_wrappers):
+        observation = observation_wrapper.observation(observation)
+    return observation
 
-    for w in reversed(obs_wrappers):
-        obs = w.observation(obs)
 
-    return obs
+def compute_q_values(env, q_net, seed, device, stage):
+    """Q(s, a) for every free cell and facing direction, in one task stage of the layout of this seed.
 
+    stage 1: initial (key on the ground, door closed);  2: the agent carries the key;  3: the door is open.
 
-def compute_q_values_grid_for_stage(env, q_net, seed, device, stage=1):
-    """
-    Computes Q(s, a) for reachable cells across all 4 facing directions for a specific environment stage.
-    Stage 1: Initial (Key on ground, Door locked/closed)
-    Stage 2: Key Carrying (Key picked up, Door locked/closed)
-    Stage 3: Door Opened (Door open, Key used/dropped)
+    Returns
+      q_values       (width, height, 4 directions, num_actions), NaN on wall cells
+      wall_mask      (width, height), True on wall cells
+      annotations    {(x, y): "S" | "G" | "K" | "D"} for start, goal, key and door
     """
     env.reset(seed=seed)
-    width = env.unwrapped.width
-    height = env.unwrapped.height
-    num_actions = env.action_space.n
+    grid = env.unwrapped.grid
+    width, height = env.unwrapped.width, env.unwrapped.height
 
-    # Locate key and door positions
-    key_pos = None
-    door_pos = None
-    key_cell = None
-    door_cell = None
-
+    # ---- put the map into the requested stage ----
+    key_position, key, door = None, None, None
     for x in range(width):
         for y in range(height):
-            c = env.unwrapped.grid.get(x, y)
-            if c is not None:
-                if c.type == "key":
-                    key_pos = (x, y)
-                    key_cell = c
-                elif c.type == "door":
-                    door_pos = (x, y)
-                    door_cell = c
+            cell = grid.get(x, y)
+            if cell is not None and cell.type == "key":
+                key_position, key = (x, y), cell
+            elif cell is not None and cell.type == "door":
+                door = cell
+    if stage >= 2 and key is not None:
+        grid.set(key_position[0], key_position[1], None)
+        env.unwrapped.carrying = key if stage == 2 else None        # stage 3: the key has been used
+    if stage == 3 and door is not None:
+        door.is_open = True
+        door.is_locked = False
 
-    # Modify map state according to requested stage
-    if stage == 2 and key_pos is not None:
-        # Key picked up (remove key from ground)
-        env.unwrapped.grid.set(key_pos[0], key_pos[1], None)
-        env.unwrapped.carrying = key_cell
-    elif stage == 3:
-        if key_pos is not None:
-            env.unwrapped.grid.set(key_pos[0], key_pos[1], None)
-            env.unwrapped.carrying = None
-        if door_cell is not None:
-            door_cell.is_open = True
-            door_cell.is_locked = False
-
-    q_grid = np.full((width, height, 4, num_actions), np.nan, dtype=np.float32)
+    # ---- place the agent on every free cell, facing every direction ----
+    q_values = np.full((width, height, 4, env.action_space.n), np.nan, dtype=np.float32)
     wall_mask = np.zeros((width, height), dtype=bool)
-    annotations = {}
-
-    start_pos = tuple(env.unwrapped.agent_pos)
-    annotations[start_pos] = "S"
-
-    for x in range(width):
-        for y in range(height):
-            cell = env.unwrapped.grid.get(x, y)
-            if cell is not None:
-                if cell.type == "wall":
-                    wall_mask[x, y] = True
-                elif cell.type == "goal":
-                    annotations[(x, y)] = "G"
-                elif cell.type == "key" and stage == 1:
-                    annotations[(x, y)] = "K"
-                elif cell.type == "door":
-                    annotations[(x, y)] = "D"
-
+    annotations = {tuple(env.unwrapped.agent_pos): "S"}
     with torch.no_grad():
         for x in range(width):
             for y in range(height):
-                if wall_mask[x, y]:
+                cell = grid.get(x, y)
+                if cell is not None and cell.type == "wall":
+                    wall_mask[x, y] = True
                     continue
+                if cell is not None and cell.type == "goal":
+                    annotations[(x, y)] = "G"
+                elif cell is not None and cell.type == "key":
+                    annotations[(x, y)] = "K"
+                elif cell is not None and cell.type == "door":
+                    annotations[(x, y)] = "D"
 
-                for d in range(NUM_DIRECTIONS):
+                for direction in range(4):
                     env.unwrapped.agent_pos = np.array([x, y])
-                    env.unwrapped.agent_dir = d
-
-                    obs = get_wrapped_obs(env)
-                    obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-                    q_values = q_net(obs_t).squeeze(0)
-                    q_grid[x, y, d, :] = q_values.cpu().numpy()
-
-    return q_grid, wall_mask, annotations
+                    env.unwrapped.agent_dir = direction
+                    observation = torch.tensor(wrapped_observation(env), dtype=torch.float32, device=device).unsqueeze(0)
+                    q_values[x, y, direction, :] = q_net(observation).squeeze(0).cpu().numpy()
+    return q_values, wall_mask, annotations
 
 
-def compute_q_values_grid(env, q_net, seed, device):
-    """Wrapper to compute stage 1 Q-values for backwards compatibility."""
-    return compute_q_values_grid_for_stage(env, q_net, seed, device, stage=1)
+def action_symbol(action_name, facing_direction):
+    """Text drawn for an action: its abbreviation, preceded for forward / left / right by an arrow that points
+    where the agent moves or faces afterwards."""
+    abbreviation = ACTION_ABBREVIATIONS[action_name]
+    if action_name == "forward":
+        return f"{DIRECTION_ARROWS[facing_direction]} {abbreviation}"
+    if action_name == "left":
+        return f"{DIRECTION_ARROWS[(facing_direction - 1) % 4]} {abbreviation}"
+    if action_name == "right":
+        return f"{DIRECTION_ARROWS[(facing_direction + 1) % 4]} {abbreviation}"
+    return abbreviation
 
 
-# ============================================================================
-# PUBLICATION STYLE SETUP
-# ============================================================================
+def draw_max_q_panel(axis, q_values, wall_mask, annotations, facing_direction, action_labels, vmin_q, vmax_q, cell_font_size):
+    """One heatmap of max_a Q(s, a) for one agent and one facing direction.  Returns the image, for the colour bar.
 
-BLUES_CMAP = "Blues"          # sequential blue colormap for all heatmaps
-HEATMAP_WALL_COLOR = "#f0f0f0"
-HEATMAP_GRID_COLOR = "#b0b0b0"
-HEATMAP_DPI = 300
-
-DIR_INFO = [
-    (3, "North"),
-    (0, "East"),
-    (1, "South"),
-    (2, "West"),
-]
-
-DIR_ARROWS = {0: "→", 1: "↓", 2: "←", 3: "↑"}
-DIR_NAME_TO_IDX = {"East": 0, "South": 1, "West": 2, "North": 3}
-
-def get_action_arrow_or_symbol(act_name, facing_dir):
+    q_values: (width, height, num_actions) for this facing direction.  Every free cell shows the action(s) with
+    the highest Q-value and that value; walls are grey; S / G / K / D mark start, goal, key and door.
     """
-    Given an action name and agent's facing direction (0=E, 1=S, 2=W, 3=N),
-    returns the resulting movement direction arrow along with the action abbreviation.
-    """
-    abbr_map = {
-        "left": "L", "right": "R", "forward": "F",
-        "pickup": "P", "drop": "Dp", "toggle": "T", "done": "Dn"
-    }
-    abbr = abbr_map.get(act_name.lower(), act_name[:1].upper())
-
-    if act_name.lower() == "forward":
-        return f"{DIR_ARROWS[facing_dir]} {abbr}"
-    elif act_name.lower() == "left":
-        return f"{DIR_ARROWS[(facing_dir - 1) % 4]} {abbr}"
-    elif act_name.lower() == "right":
-        return f"{DIR_ARROWS[(facing_dir + 1) % 4]} {abbr}"
-    return abbr
-
-
-def _setup_pub_style():
-    """Apply publication-grade matplotlib rcParams."""
-    plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
-    plt.rcParams['axes.linewidth'] = 0.8
-    plt.rcParams['xtick.major.width'] = 0.6
-    plt.rcParams['ytick.major.width'] = 0.6
-
-
-def _style_heatmap_ax(ax, width, height):
-    """Apply consistent grid, ticks, and spine styling to a heatmap axis."""
-    ax.set_xticks(np.arange(-0.5, width, 1), minor=True)
-    ax.set_yticks(np.arange(-0.5, height, 1), minor=True)
-    ax.grid(which="minor", color=HEATMAP_GRID_COLOR, linestyle="-", linewidth=0.5)
-    ax.tick_params(which="both", bottom=False, left=False,
-                   labelbottom=False, labelleft=False)
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-
-
-def _build_output_dir(plots_dir, env_id, seed):
-    env_clean = "DoorKey" if "DoorKey" in env_id else ("Empty" if "Empty" in env_id else env_id)
-    output_dir = Path(plots_dir) / "overestimation" / env_clean / f"seed_{seed}"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir
-
-
-# ============================================================================
-# PER-DIRECTION STANDALONE HEATMAP PLOT (for paper figures)
-# ============================================================================
-
-def _render_single_direction_plot(env_id, grid_a_d, grid_b_d,
-                                  wall_mask, annotations, d_name,
-                                  label_a, label_b, vmin_q, vmax_q,
-                                  output_path, labels):
-    """
-    Renders a standalone 1×2 heatmap figure for a SINGLE facing direction.
-    Designed for direct inclusion in a research paper.
-    """
-    _setup_pub_style()
     width, height = wall_mask.shape
-
-    # Dynamic scaling based on grid dimensions (e.g. 6x6 vs 8x8 vs 10x10)
-    fig_w = max(10.0, width * 1.6)
-    fig_h = max(5.0, height * 0.8)
     if width >= 10:
-        font_sz = 2.6
-        star_sz = ""
-        line_spacing = 0.82
-        annot_sz = 6
+        annotation_font_size = 6
     elif width >= 8:
-        font_sz = 3.6
-        star_sz = "*"
-        line_spacing = 0.90
-        annot_sz = 7
+        annotation_font_size = 7
     else:
-        font_sz = 5.0
-        star_sz = "*"
-        line_spacing = 1.0
-        annot_sz = 9
-
-    fig, axes = plt.subplots(1, 2, figsize=(fig_w, fig_h), dpi=HEATMAP_DPI)
-    fig.patch.set_facecolor("white")
-
-    cmap = plt.get_cmap(BLUES_CMAP).copy()
-    cmap.set_bad(color="white")
-
+        annotation_font_size = 9
     q_range = (vmax_q - vmin_q) if (vmax_q - vmin_q) != 0 else 1.0
-    abbr_map = {"left": "L", "right": "R", "forward": "F", "pickup": "P", "drop": "Dp", "toggle": "T", "done": "Dn"}
-
-    for col, (grid_d, agent_label) in enumerate([
-        (grid_a_d, label_a),
-        (grid_b_d, label_b),
-    ]):
-        ax = axes[col]
-        ax.set_facecolor("white")
-        display_max = np.nanmax(grid_d, axis=2)
-        display = display_max.T.copy()
-        im = ax.imshow(display, origin="upper", cmap=cmap, vmin=vmin_q, vmax=vmax_q)
-
-        ax.set_title(f"{agent_label}", fontsize=10, fontweight="bold", pad=6)
-
-        for x in range(width):
-            for y in range(height):
-                val_max = display_max[x, y]
-                norm_v = (val_max - vmin_q) / q_range if not np.isnan(val_max) else 0
-                if wall_mask[x, y]:
-                    ax.add_patch(plt.Rectangle(
-                        (x - 0.5, y - 0.5), 1, 1,
-                        facecolor=HEATMAP_WALL_COLOR, edgecolor="none",
-                    ))
-                    continue
-                lbl = annotations.get((x, y))
-                if lbl:
-                    ax.text(x + 0.32, y - 0.32, lbl,
-                            ha='center', va='center', color='white',
-                            fontsize=annot_sz, fontweight='bold',
-                            path_effects=[path_effects.withStroke(linewidth=2.5, foreground='black')])
-                if not np.isnan(val_max):
-                    txt_c = 'white' if norm_v > 0.6 else 'black'
-                    cell_q_vals = grid_d[x, y]
-                    if not np.isnan(cell_q_vals).all():
-                        max_q = float(np.nanmax(cell_q_vals))
-                        facing_idx = DIR_NAME_TO_IDX.get(d_name, 0)
-                        max_act_indices = [i for i, q in enumerate(cell_q_vals) if np.isclose(q, max_q, atol=1e-5)]
-                        arrows = []
-                        for act_idx in max_act_indices:
-                            if act_idx < len(labels):
-                                sym = get_action_arrow_or_symbol(labels[act_idx], facing_idx)
-                                if sym not in arrows:
-                                    arrows.append(sym)
-                        arrow_str = " ".join(arrows)
-                        cell_text = f"{arrow_str}\n{max_q:.2f}"
-                        ax.text(x, y, cell_text,
-                                ha='center', va='center', color=txt_c,
-                                fontsize=font_sz * 1.3, fontweight='bold', linespacing=1.1)
-
-        _style_heatmap_ax(ax, width, height)
-
-    # Shared colourbar
-    fig.subplots_adjust(right=0.88, wspace=0.08)
-    cbar_ax = fig.add_axes([0.90, 0.18, 0.02, 0.64])
-    cb = fig.colorbar(im, cax=cbar_ax)
-    cb.ax.tick_params(labelsize=8)
-    cb.set_label("Max Q(s, a)", fontsize=9, fontweight="medium")
-
-    env_short = env_id.replace("MiniGrid-", "")
-    fig.suptitle(f"{env_short} — Facing {d_name}",
-                 fontsize=11, fontweight="bold", y=1.02)
-
-    fig.savefig(output_path, dpi=HEATMAP_DPI, bbox_inches="tight")
-    plt.close(fig)
-    print(f"    Per-direction plot saved → {output_path}")
-
-
-# ============================================================================
-# PER-ENVIRONMENT HEATMAP PLOT (combined + per-direction)
-# ============================================================================
-
-def plot_heatmap_for_env(env_id, grid_a, grid_b, wall_mask, annotations, seed, labels,
-                        label_a="Agent A", label_b="Agent B", comparison_tag="", stage_name="", plots_dir="plots"):
-    """
-    Generates:
-      1. Combined 4×2 overview figure (all directions, both agents)
-      2. Individual per-direction 1×2 figures for paper inclusion
-    """
-    _setup_pub_style()
-    width, height, num_dirs, num_actions = grid_a.shape
-
-    # Dynamic scaling based on grid dimensions (e.g. 6x6 vs 8x8 vs 10x10)
-    fig_w = max(11.0, width * 1.8)
-    fig_h = max(18.0, height * 2.5)
-    if width >= 10:
-        font_sz = 2.4
-        star_sz = ""
-        line_spacing = 0.80
-        annot_sz = 6
-    elif width >= 8:
-        font_sz = 3.2
-        star_sz = "*"
-        line_spacing = 0.88
-        annot_sz = 7
-    else:
-        font_sz = 4.5
-        star_sz = "*"
-        line_spacing = 1.0
-        annot_sz = 9
 
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)
-        grid_a_max = np.nanmax(grid_a, axis=3)  # (W, H, 4)
-        grid_b_max = np.nanmax(grid_b, axis=3)  # (W, H, 4)
+        warnings.simplefilter("ignore", category=RuntimeWarning)        # wall cells are all-NaN
+        max_q_values = np.nanmax(q_values, axis=2)                      # (width, height)
+    axis.set_facecolor("white")
+    image = axis.imshow(max_q_values.T, origin="upper", cmap=HEATMAP_CMAP, vmin=vmin_q, vmax=vmax_q)
 
-    vmin_q = float(np.nanmin([grid_a_max, grid_b_max]))
-    vmax_q = float(np.nanmax([grid_a_max, grid_b_max]))
-    q_range = (vmax_q - vmin_q) if (vmax_q - vmin_q) != 0 else 1.0
+    for x in range(width):
+        for y in range(height):
+            if wall_mask[x, y]:
+                axis.add_patch(plt.Rectangle((x - 0.5, y - 0.5), 1, 1, facecolor=WALL_COLOR, edgecolor="none"))
+                continue
+            if (x, y) in annotations:
+                axis.text(x + 0.32, y - 0.32, annotations[(x, y)], ha="center", va="center", color="white",
+                          fontsize=annotation_font_size, fontweight="bold",
+                          path_effects=[path_effects.withStroke(linewidth=2.5, foreground="black")])
+            if np.isnan(max_q_values[x, y]):
+                continue
+            max_q = float(max_q_values[x, y])
+            best_action_symbols = []        # every action whose Q-value ties with the maximum
+            for action_index, q_value in enumerate(q_values[x, y]):
+                if np.isclose(q_value, max_q, atol=1e-5):
+                    symbol = action_symbol(action_labels[action_index], facing_direction)
+                    if symbol not in best_action_symbols:
+                        best_action_symbols.append(symbol)
+            # white text on the dark cells of the upper part of the colour scale
+            text_color = "white" if (max_q_values[x, y] - vmin_q) / q_range > 0.6 else "black"
+            axis.text(x, y, " ".join(best_action_symbols) + f"\n{max_q:.2f}", ha="center", va="center", color=text_color,
+                      fontsize=cell_font_size, fontweight="bold", linespacing=1.1)
 
-    output_dir = _build_output_dir(plots_dir, env_id, seed)
-    
-    # Extract grid size (e.g., 6x6, 8x8, 10x10) and env name
-    grid_size_str = f"{width}x{height}"
-    env_base = "doorkey" if "doorkey" in env_id.lower() else ("empty" if "empty" in env_id.lower() else env_id.lower().replace("minigrid-", "").replace("-v0", ""))
-    env_tag = f"{env_base}_{grid_size_str}"
-    stage_suffix = f"_{stage_name.lower().replace(' ', '_')}" if stage_name else ""
+    axis.set_xticks(np.arange(-0.5, width, 1), minor=True)
+    axis.set_yticks(np.arange(-0.5, height, 1), minor=True)
+    axis.grid(which="minor", color=GRID_COLOR, linestyle="-", linewidth=0.5)
+    axis.tick_params(which="both", bottom=False, left=False, labelbottom=False, labelleft=False)
+    for spine in axis.spines.values():
+        spine.set_visible(False)
+    return image
 
-    # ------------------------------------------------------------------
-    # 1) Combined 4×2 overview figure
-    # ------------------------------------------------------------------
-    fig, axes = plt.subplots(4, 2, figsize=(fig_w, fig_h), dpi=HEATMAP_DPI)
-    fig.patch.set_facecolor("white")
 
-    title_suffix = f" [{stage_name}]" if stage_name else ""
+def plot_stage_heatmaps(env_id, seed, stage_name, agents, wall_mask, annotations, action_labels, plots_dir):
+    """Writes the combined 4 x 2 figure and the four per-direction figures of one seed and task stage.
+
+    agents: [(label, q_values), (label, q_values)], q_values of shape (width, height, 4 directions, num_actions).
+    """
+    width, height = wall_mask.shape
+    if width >= 10:
+        combined_font_size, direction_font_size = 2.4 * 1.3, 2.6 * 1.3
+    elif width >= 8:
+        combined_font_size, direction_font_size = 3.2 * 1.3, 3.6 * 1.3
+    else:
+        combined_font_size, direction_font_size = 4.5 * 1.3, 5.0 * 1.3
+
+    # one colour scale for both agents and all facing directions
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)        # wall cells are all-NaN
+        max_q_a = np.nanmax(agents[0][1], axis=3)                       # (width, height, 4)
+        max_q_b = np.nanmax(agents[1][1], axis=3)
+    vmin_q = float(np.nanmin([max_q_a, max_q_b]))
+    vmax_q = float(np.nanmax([max_q_a, max_q_b]))
+
+    if "DoorKey" in env_id:
+        env_folder, env_tag = "DoorKey", "doorkey"
+    elif "Empty" in env_id:
+        env_folder, env_tag = "Empty", "empty"
+    else:
+        env_folder, env_tag = env_id, env_id.lower().replace("minigrid-", "").replace("-v0", "")
+    output_dir = Path(plots_dir) / "overestimation" / env_folder / f"seed_{seed}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    file_prefix = f"q_overestimation_{env_tag}_{width}x{height}"
+    stage_suffix = f"_{stage_name}" if stage_name else ""
     env_short = env_id.replace("MiniGrid-", "")
-    fig.suptitle(
-        f"{env_short}{title_suffix}  —  Max Q-Value Comparison  (seed {seed})",
-        fontsize=13, fontweight="bold", y=0.995,
-    )
 
-    cmap = plt.get_cmap(BLUES_CMAP).copy()
-    cmap.set_bad(color="white")
-
-    col_titles = [
-        f"{label_a}",
-        f"{label_b}",
-    ]
-
-    abbr_map = {"left": "L", "right": "R", "forward": "F", "pickup": "P", "drop": "Dp", "toggle": "T", "done": "Dn"}
-    for row, (d_idx, d_name) in enumerate(DIR_INFO):
-        for col, grid_all in enumerate([grid_a, grid_b]):
-            ax = axes[row, col]
-            ax.set_facecolor("white")
-            grid_d = grid_all[:, :, d_idx, :]
-            display_max = np.nanmax(grid_d, axis=2)
-            display = display_max.T.copy()
-
-            im = ax.imshow(display, origin="upper", cmap=cmap, vmin=vmin_q, vmax=vmax_q)
-
+    # ---- combined figure: one row per facing direction, one column per agent ----
+    figure, axes = plt.subplots(4, 2, figsize=(max(11.0, width * 1.8), max(18.0, height * 2.5)), dpi=FIGURE_DPI)
+    figure.patch.set_facecolor("white")
+    stage_title = f" [{stage_name}]" if stage_name else ""
+    figure.suptitle(f"{env_short}{stage_title}  —  Max Q-Value Comparison  (seed {seed})", fontsize=13, fontweight="bold", y=0.995)
+    for row, (direction, direction_name) in enumerate(DIRECTION_ROWS):
+        for column, (agent_label, q_values) in enumerate(agents):
+            axis = axes[row, column]
+            image = draw_max_q_panel(axis, q_values[:, :, direction, :], wall_mask, annotations, direction, action_labels,
+                                     vmin_q, vmax_q, combined_font_size)
             if row == 0:
-                ax.set_title(col_titles[col], fontsize=11, fontweight="bold", pad=6)
-            if col == 0:
-                ax.set_ylabel(f"Facing {d_name}", fontsize=10.5, fontweight="bold")
-
-            for x in range(width):
-                for y in range(height):
-                    val_max = display_max[x, y]
-                    norm_v = (val_max - vmin_q) / q_range if not np.isnan(val_max) else 0
-                    if wall_mask[x, y]:
-                        ax.add_patch(plt.Rectangle(
-                            (x - 0.5, y - 0.5), 1, 1,
-                            facecolor=HEATMAP_WALL_COLOR, edgecolor="none",
-                        ))
-                        continue
-                    lbl = annotations.get((x, y))
-                    if lbl:
-                        ax.text(x + 0.32, y - 0.32, lbl,
-                                ha='center', va='center', color='white',
-                                fontsize=annot_sz, fontweight='bold',
-                                path_effects=[path_effects.withStroke(linewidth=2.5, foreground='black')])
-                    if not np.isnan(val_max):
-                        txt_c = 'white' if norm_v > 0.6 else 'black'
-                        cell_q_vals = grid_d[x, y]
-                        if not np.isnan(cell_q_vals).all():
-                            max_q = float(np.nanmax(cell_q_vals))
-                            max_act_indices = [i for i, q in enumerate(cell_q_vals) if np.isclose(q, max_q, atol=1e-5)]
-                            arrows = []
-                            for act_idx in max_act_indices:
-                                if act_idx < len(labels):
-                                    sym = get_action_arrow_or_symbol(labels[act_idx], d_idx)
-                                    if sym not in arrows:
-                                        arrows.append(sym)
-                            arrow_str = " ".join(arrows)
-                            cell_text = f"{arrow_str}\n{max_q:.2f}"
-                            ax.text(x, y, cell_text,
-                                    ha='center', va='center', color=txt_c,
-                                    fontsize=font_sz * 1.3, fontweight='bold', linespacing=1.1)
-
-            _style_heatmap_ax(ax, width, height)
-
-    # Shared colourbar for combined figure
-    fig.subplots_adjust(right=0.88, hspace=0.20, wspace=0.08)
-    cbar_ax = fig.add_axes([0.90, 0.08, 0.02, 0.85])
-    cb = fig.colorbar(im, cax=cbar_ax)
-    cb.ax.tick_params(labelsize=8)
-    cb.set_label("Max Q(s, a)", fontsize=9.5, fontweight="medium")
-
-    # Footer annotation key
-    fig.text(
-        0.44, 0.005,
-        "S = Start   G = Goal   K = Key   D = Door",
-        ha="center", va="bottom", fontsize=9, fontweight="medium",
-        bbox=dict(boxstyle="round,pad=0.35", facecolor="white",
-                  edgecolor="#cccccc", alpha=0.95),
-    )
-
-    combined_path = output_dir / f"q_overestimation_{env_tag}_combined{stage_suffix}.png"
-    fig.savefig(combined_path, dpi=HEATMAP_DPI, bbox_inches="tight")
-    plt.close(fig)
+                axis.set_title(agent_label, fontsize=11, fontweight="bold", pad=6)
+            if column == 0:
+                axis.set_ylabel(f"Facing {direction_name}", fontsize=10.5, fontweight="bold")
+    figure.subplots_adjust(right=0.88, hspace=0.20, wspace=0.08)
+    color_bar = figure.colorbar(image, cax=figure.add_axes([0.90, 0.08, 0.02, 0.85]))
+    color_bar.ax.tick_params(labelsize=8)
+    color_bar.set_label("Max Q(s, a)", fontsize=9.5, fontweight="medium")
+    figure.text(0.44, 0.005, "S = Start   G = Goal   K = Key   D = Door", ha="center", va="bottom", fontsize=9, fontweight="medium",
+                bbox=dict(boxstyle="round,pad=0.35", facecolor="white", edgecolor="#cccccc", alpha=0.95))
+    combined_path = output_dir / f"{file_prefix}_combined{stage_suffix}.png"
+    figure.savefig(combined_path, dpi=FIGURE_DPI, bbox_inches="tight")
+    plt.close(figure)
     print(f"  Combined heatmap saved → {combined_path}")
 
-    # ------------------------------------------------------------------
-    # 2) Individual per-direction standalone figures
-    # ------------------------------------------------------------------
-    for d_idx, d_name in DIR_INFO:
-        per_dir_path = output_dir / f"q_overestimation_{env_tag}_{d_name.lower()}{stage_suffix}.png"
-        _render_single_direction_plot(
-            env_id,
-            grid_a[:, :, d_idx, :],
-            grid_b[:, :, d_idx, :],
-            wall_mask, annotations, d_name,
-            label_a, label_b,
-            vmin_q, vmax_q,
-            per_dir_path,
-            labels
-        )
+    # ---- one standalone figure per facing direction, for the paper ----
+    for direction, direction_name in DIRECTION_ROWS:
+        figure, axes = plt.subplots(1, 2, figsize=(max(10.0, width * 1.6), max(5.0, height * 0.8)), dpi=FIGURE_DPI)
+        figure.patch.set_facecolor("white")
+        for column, (agent_label, q_values) in enumerate(agents):
+            image = draw_max_q_panel(axes[column], q_values[:, :, direction, :], wall_mask, annotations, direction, action_labels,
+                                     vmin_q, vmax_q, direction_font_size)
+            axes[column].set_title(agent_label, fontsize=10, fontweight="bold", pad=6)
+        figure.subplots_adjust(right=0.88, wspace=0.08)
+        color_bar = figure.colorbar(image, cax=figure.add_axes([0.90, 0.18, 0.02, 0.64]))
+        color_bar.ax.tick_params(labelsize=8)
+        color_bar.set_label("Max Q(s, a)", fontsize=9, fontweight="medium")
+        figure.suptitle(f"{env_short} — Facing {direction_name}", fontsize=11, fontweight="bold", y=1.02)
+        direction_path = output_dir / f"{file_prefix}_{direction_name.lower()}{stage_suffix}.png"
+        figure.savefig(direction_path, dpi=FIGURE_DPI, bbox_inches="tight")
+        plt.close(figure)
+        print(f"    Per-direction plot saved → {direction_path}")
 
 
-# ============================================================================
-# CONSISTENT AGENT COLOURS (matches plot_comparison.py)
-# ============================================================================
-
-AGENT_BAR_COLORS = {
-    "baseline":        "#1f77b4",  # Blue  (same as plot_comparison AGENT_COLORS)
-    "reward_shaping":  "#ff7f0e",  # Orange
-    "default_a":       "#1f77b4",
-    "default_b":       "#ff7f0e",
-}
-
-
-# ============================================================================
-# SUMMARY BAR CHART
-# ============================================================================
-
-def plot_bar_chart(summary, label_a="Agent A", label_b="Agent B", comparison_tag="", plots_dir="plots"):
-    """Publication-grade bar chart with colours matching the training-curve pipeline."""
+def plot_bar_chart(summary, label_a, label_b, plots_dir):
+    """Mean max-Q of both agents for every environment.  summary: one dict per environment with env_id and the
+    mean / standard deviation (over seeds and stages) of each agent."""
     if not summary:
         print("No data for summary bar chart — skipping.")
         return
 
-    _setup_pub_style()
+    # baseline agents are blue and reward-shaped ones orange, as in the training curves
+    bar_colors = []
+    for label, default_color in ((label_a, BLUE), (label_b, ORANGE)):
+        if "baseline" in label.lower():
+            bar_colors.append(BLUE)
+        elif "reward" in label.lower() or "rs" in label.lower():
+            bar_colors.append(ORANGE)
+        else:
+            bar_colors.append(default_color)
 
-    env_labels = [s["env_id"].replace("MiniGrid-", "") for s in summary]
-    a_means = [s["a_mean"] for s in summary]
-    b_means = [s["b_mean"] for s in summary]
-    a_stds  = [s.get("a_std", 0) for s in summary]
-    b_stds  = [s.get("b_std", 0) for s in summary]
-
-    # Determine colours from label hints
-    color_a = AGENT_BAR_COLORS["default_a"]
-    color_b = AGENT_BAR_COLORS["default_b"]
-    if "reward" in label_a.lower() or "rs" in label_a.lower():
-        color_a = AGENT_BAR_COLORS["reward_shaping"]
-    if "reward" in label_b.lower() or "rs" in label_b.lower():
-        color_b = AGENT_BAR_COLORS["reward_shaping"]
-    if "baseline" in label_a.lower():
-        color_a = AGENT_BAR_COLORS["baseline"]
-    if "baseline" in label_b.lower():
-        color_b = AGENT_BAR_COLORS["baseline"]
-
-    x = np.arange(len(env_labels))
+    env_positions = np.arange(len(summary))
     bar_width = 0.32
+    figure, axis = plt.subplots(figsize=(6.5, 4.2), dpi=300)
+    figure.patch.set_facecolor("white")
+    bars_a = axis.bar(env_positions - bar_width / 2, [entry["a_mean"] for entry in summary], bar_width,
+                      yerr=[entry["a_std"] for entry in summary], capsize=4, error_kw=dict(lw=1.0, capthick=1.0),
+                      label=label_a, color=bar_colors[0], edgecolor="white", linewidth=0.6)
+    bars_b = axis.bar(env_positions + bar_width / 2, [entry["b_mean"] for entry in summary], bar_width,
+                      yerr=[entry["b_std"] for entry in summary], capsize=4, error_kw=dict(lw=1.0, capthick=1.0),
+                      label=label_b, color=bar_colors[1], edgecolor="white", linewidth=0.6)
 
-    fig, ax = plt.subplots(figsize=(6.5, 4.2), dpi=300)
-    fig.patch.set_facecolor("white")
+    axis.set_ylabel("Mean Maximum Q-Value", fontsize=10, fontweight="medium")
+    axis.set_title("Q-Value Overestimation Comparison", fontsize=11, fontweight="bold", pad=10)
+    axis.set_xticks(env_positions)
+    axis.set_xticklabels([entry["env_id"].replace("MiniGrid-", "") for entry in summary], fontsize=9.5, fontweight="medium")
+    axis.tick_params(axis="y", labelsize=9)
 
-    bars_a = ax.bar(
-        x - bar_width / 2, a_means, bar_width,
-        yerr=a_stds, capsize=4, error_kw=dict(lw=1.0, capthick=1.0),
-        label=label_a, color=color_a, edgecolor="white", linewidth=0.6,
-    )
-    bars_b = ax.bar(
-        x + bar_width / 2, b_means, bar_width,
-        yerr=b_stds, capsize=4, error_kw=dict(lw=1.0, capthick=1.0),
-        label=label_b, color=color_b, edgecolor="white", linewidth=0.6,
-    )
+    for bar in list(bars_a) + list(bars_b):
+        bar_height = bar.get_height()
+        if bar_height > 0:
+            axis.annotate(f"{bar_height:.2f}", xy=(bar.get_x() + bar.get_width() / 2, bar_height), xytext=(0, 4),
+                          textcoords="offset points", ha="center", va="bottom", fontsize=8, fontweight="medium")
 
-    ax.set_ylabel("Mean Maximum Q-Value", fontsize=10, fontweight="medium")
-    ax.set_title("Q-Value Overestimation Comparison", fontsize=11, fontweight="bold", pad=10)
-    ax.set_xticks(x)
-    ax.set_xticklabels(env_labels, fontsize=9.5, fontweight="medium")
-    ax.tick_params(axis='y', labelsize=9)
+    axis.grid(True, axis="y", linestyle="--", alpha=0.35, color="#cccccc")
+    axis.spines["top"].set_visible(False)
+    axis.spines["right"].set_visible(False)
+    axis.legend(fontsize=9, loc="best", frameon=True, facecolor="white", edgecolor="#e0e0e0", framealpha=0.95)
 
-    # Value annotations on bars
-    for bars in [bars_a, bars_b]:
-        for bar in bars:
-            h = bar.get_height()
-            if h > 0:
-                ax.annotate(
-                    f"{h:.2f}",
-                    xy=(bar.get_x() + bar.get_width() / 2, h),
-                    xytext=(0, 4), textcoords="offset points",
-                    ha="center", va="bottom", fontsize=8, fontweight="medium",
-                )
-
-    # Grid & spine cleanup
-    ax.grid(True, axis='y', linestyle="--", alpha=0.35, color="#cccccc")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.legend(fontsize=9, loc="best", frameon=True, facecolor="white",
-              edgecolor="#e0e0e0", framealpha=0.95)
-
-    fig.tight_layout()
+    figure.tight_layout()
     output_dir = Path(plots_dir) / "overestimation"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "q_overestimation_comparison.png"
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    figure.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(figure)
     print(f"  Summary bar chart saved → {output_path}")
 
 
-# ============================================================================
-# MAIN
-# ============================================================================
-
 def main():
-    parser = argparse.ArgumentParser(
-        description="Compare Q-value overestimation between two trained agents."
-    )
-    parser.add_argument("--env-id", type=str, default=None, help="Specific environment ID to plot (default: run all in ENV_IDS)")
+    parser = argparse.ArgumentParser(description="Compare Q-value overestimation between two trained agents.")
+    parser.add_argument("--env-id", type=str, default=None, help="Specific environment ID to plot (default: run all in DEFAULT_ENV_IDS)")
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--plots-dir", type=str, default="plots")
-    parser.add_argument("--action-set", choices=["task", "full"], default="task")
-    parser.add_argument("--hidden-size", type=int, default=256)
-    parser.add_argument("--compare", nargs=2, metavar=("EXP_A", "EXP_B"),
-                        default=["dqn_vanilla", "ddqn_baseline"])
+    parser.add_argument("--compare", nargs=2, metavar=("EXP_A", "EXP_B"), default=["dqn_vanilla", "ddqn_baseline"])
     parser.add_argument("--label-a", type=str, default=None)
     parser.add_argument("--label-b", type=str, default=None)
-
+    parser.add_argument("--action-set", choices=["task", "full"], default="task")      # must match the trained agents
+    parser.add_argument("--hidden-size", type=int, default=256)                         # must match the trained agents
     args = parser.parse_args()
 
     exp_a, exp_b = args.compare
     label_a = args.label_a or exp_a
     label_b = args.label_b or exp_b
-    comparison_tag = f"{exp_a}_vs_{exp_b}"
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     print(f"Results directory: {args.results_dir}")
     print(f"Comparing: {label_a}  vs  {label_b}")
     print()
 
-    bar_chart_summary = []
-    target_envs = [args.env_id] if args.env_id else ENV_IDS
-
-    for env_id in target_envs:
+    summary = []        # one entry per environment, for the bar chart
+    for env_id in ([args.env_id] if args.env_id else DEFAULT_ENV_IDS):
         print(f"{'=' * 60}")
         print(f"Environment: {env_id}")
         print(f"{'=' * 60}")
 
-        models_a = get_models_by_seed(args.results_dir, env_id, exp_a)
-        models_b = get_models_by_seed(args.results_dir, env_id, exp_b)
-
-        common_seeds = sorted(set(models_a.keys()) & set(models_b.keys()))
-        current_exp_a, current_exp_b = exp_a, exp_b
-        current_label_a, current_label_b = label_a, label_b
-
+        # ---- seeds for which both agents have a trained model ----
+        models_a = find_models_by_seed(args.results_dir, env_id, exp_a)
+        models_b = find_models_by_seed(args.results_dir, env_id, exp_b)
+        common_seeds = sorted(set(models_a) & set(models_b))
+        heatmap_label_a, heatmap_label_b = label_a, label_b
         if not common_seeds:
-            possible_pairs = [
-                ("ddqn_baseline", "ddqn_reward_shaping"),
-                ("dqn_baseline", "dqn_reward_shaping"),
-                ("dqn_vanilla", "dqn_baseline"),
-            ]
-            for pa, pb in possible_pairs:
-                ma = get_models_by_seed(args.results_dir, env_id, pa)
-                mb = get_models_by_seed(args.results_dir, env_id, pb)
-                cs = sorted(set(ma.keys()) & set(mb.keys()))
-                if cs:
-                    models_a, models_b = ma, mb
-                    common_seeds = cs
-                    current_exp_a, current_exp_b = pa, pb
-                    current_label_a = pa.replace("ddqn_reward_shaping", "RS-DDQN").replace("dqn_reward_shaping", "RS-DDQN").replace("ddqn_baseline", "Baseline DDQN").replace("_", " ").title()
-                    current_label_b = pb.replace("ddqn_reward_shaping", "RS-DDQN").replace("dqn_reward_shaping", "RS-DDQN").replace("ddqn_baseline", "Baseline DDQN").replace("_", " ").title()
-                    print(f"  Auto-selected available experiment pair: {pa} vs {pb}")
+            for fallback_a, fallback_b in FALLBACK_PAIRS:
+                fallback_models_a = find_models_by_seed(args.results_dir, env_id, fallback_a)
+                fallback_models_b = find_models_by_seed(args.results_dir, env_id, fallback_b)
+                fallback_seeds = sorted(set(fallback_models_a) & set(fallback_models_b))
+                if fallback_seeds:
+                    models_a, models_b, common_seeds = fallback_models_a, fallback_models_b, fallback_seeds
+                    fallback_labels = []
+                    for exp_name in (fallback_a, fallback_b):
+                        fallback_labels.append(exp_name.replace("ddqn_reward_shaping", "RS-DDQN").replace("dqn_reward_shaping", "RS-DDQN")
+                                               .replace("ddqn_baseline", "Baseline DDQN").replace("_", " ").title())
+                    heatmap_label_a, heatmap_label_b = fallback_labels
+                    print(f"  Auto-selected available experiment pair: {fallback_a} vs {fallback_b}")
                     break
-
         if not common_seeds:
             print(f"  ⚠  No matching seed pair found for {env_id} — skipping.\n")
             continue
-
         print(f"  Common seeds: {common_seeds}")
 
-        env = make_env(env_id, common_seeds[0], args.action_set)
-        obs_dim     = int(np.prod(env.observation_space.shape))
-        num_actions = env.action_space.n
+        if "DoorKey" in env_id:
+            stages = [(1, "initial"), (2, "key_picked"), (3, "door_opened")]
+        else:
+            stages = [(1, "")]
 
-        seed_a_avgs = []
-        seed_b_avgs = []
-
+        mean_max_q_a = []       # mean over cells and directions of max_a Q(s, a); one value per seed and stage
+        mean_max_q_b = []
         for seed in common_seeds:
             print(f"\n  Seed {seed}:")
+            env = make_env(env_id, seed, args.action_set)
+            observation_dim = int(np.prod(env.observation_space.shape))
+            num_actions = env.action_space.n
+            action_labels = action_names(env_id, args.action_set, num_actions)
 
-            q_net_a = QNetwork(obs_dim, num_actions, args.hidden_size).to(device)
-            q_net_a.load_state_dict(
-                torch.load(models_a[seed], map_location=device, weights_only=True)
-            )
+            q_net_a = QNetwork(observation_dim, num_actions, args.hidden_size).to(device)
+            q_net_a.load_state_dict(torch.load(models_a[seed], map_location=device, weights_only=True))
             q_net_a.eval()
-
-            q_net_b = QNetwork(obs_dim, num_actions, args.hidden_size).to(device)
-            q_net_b.load_state_dict(
-                torch.load(models_b[seed], map_location=device, weights_only=True)
-            )
+            q_net_b = QNetwork(observation_dim, num_actions, args.hidden_size).to(device)
+            q_net_b.load_state_dict(torch.load(models_b[seed], map_location=device, weights_only=True))
             q_net_b.eval()
+            seed_label_a = f"{heatmap_label_a}{epsilon_schedule_suffix(models_a[seed])}"
+            seed_label_b = f"{heatmap_label_b}{epsilon_schedule_suffix(models_b[seed])}"
 
-            env_seed = make_env(env_id, seed, args.action_set)
-
-            stages_to_run = [
-                (1, "initial"),
-                (2, "key_picked"),
-                (3, "door_opened"),
-            ] if "DoorKey" in env_id else [(1, "")]
-
-            for stage_num, stage_name in stages_to_run:
+            for stage, stage_name in stages:
                 print(f"    Computing {label_a} Q-values for {stage_name or 'Stage 1'} …")
-                grid_a, wall_mask, annotations = compute_q_values_grid_for_stage(
-                    env_seed, q_net_a, seed, device, stage=stage_num
-                )
-
+                q_values_a, wall_mask, annotations = compute_q_values(env, q_net_a, seed, device, stage)
                 print(f"    Computing {label_b} Q-values for {stage_name or 'Stage 1'} …")
-                grid_b, _, _ = compute_q_values_grid_for_stage(
-                    env_seed, q_net_b, seed, device, stage=stage_num
-                )
+                q_values_b, _, _ = compute_q_values(env, q_net_b, seed, device, stage)
 
                 with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", category=RuntimeWarning)
-                    grid_a_max = np.nanmax(grid_a, axis=3)
-                    grid_b_max = np.nanmax(grid_b, axis=3)
+                    warnings.simplefilter("ignore", category=RuntimeWarning)        # wall cells are all-NaN
+                    stage_mean_a = np.nanmean(np.nanmax(q_values_a, axis=3))
+                    stage_mean_b = np.nanmean(np.nanmax(q_values_b, axis=3))
+                mean_max_q_a.append(stage_mean_a)
+                mean_max_q_b.append(stage_mean_b)
 
-                seed_a_avgs.append(np.nanmean(grid_a_max))
-                seed_b_avgs.append(np.nanmean(grid_b_max))
+                print(f"    Generating the directional heatmaps ({stage_name}) …")
+                plot_stage_heatmaps(env_id, seed, stage_name, [(seed_label_a, q_values_a), (seed_label_b, q_values_b)],
+                                    wall_mask, annotations, action_labels, args.plots_dir)
+                print(f"    {seed_label_a} avg max Q : {stage_mean_a:.4f}")
+                print(f"    {seed_label_b} avg max Q : {stage_mean_b:.4f}")
+                print(f"    Difference                : {stage_mean_a - stage_mean_b:+.4f}")
+            env.close()
 
-                seed_label_a = f"{current_label_a}{get_decay_str(models_a[seed])}"
-                seed_label_b = f"{current_label_b}{get_decay_str(models_b[seed])}"
-
-                labels = action_names(env_id, args.action_set, num_actions)
-                print(f"    Generating 4×3 directional heatmap plot ({stage_name}) …")
-                plot_heatmap_for_env(
-                    env_id, grid_a, grid_b, wall_mask, annotations, seed, labels,
-                    label_a=seed_label_a, label_b=seed_label_b, comparison_tag=comparison_tag,
-                    stage_name=stage_name, plots_dir=args.plots_dir,
-                )
-                
-                diff_avg = np.nanmean(grid_a_max) - np.nanmean(grid_b_max)
-                print(f"    {seed_label_a} avg max Q : {np.nanmean(grid_a_max):.4f}")
-                print(f"    {seed_label_b} avg max Q : {np.nanmean(grid_b_max):.4f}")
-                print(f"    Difference                : {diff_avg:+.4f}")
-
-        env.close()
-
-        bar_chart_summary.append({
-            "env_id":  env_id,
-            "a_mean":  float(np.mean(seed_a_avgs)),
-            "b_mean":  float(np.mean(seed_b_avgs)),
-            "a_std":   float(np.std(seed_a_avgs))  if len(seed_a_avgs) > 1 else 0.0,
-            "b_std":   float(np.std(seed_b_avgs))   if len(seed_b_avgs) > 1 else 0.0,
+        summary.append({
+            "env_id": env_id,
+            "a_mean": float(np.mean(mean_max_q_a)),
+            "b_mean": float(np.mean(mean_max_q_b)),
+            "a_std": float(np.std(mean_max_q_a)) if len(mean_max_q_a) > 1 else 0.0,
+            "b_std": float(np.std(mean_max_q_b)) if len(mean_max_q_b) > 1 else 0.0,
         })
 
-    plot_bar_chart(bar_chart_summary, label_a=label_a, label_b=label_b,
-                   comparison_tag=comparison_tag, plots_dir=args.plots_dir)
-
+    plot_bar_chart(summary, label_a, label_b, args.plots_dir)
     print("\nAll done.")
 
 

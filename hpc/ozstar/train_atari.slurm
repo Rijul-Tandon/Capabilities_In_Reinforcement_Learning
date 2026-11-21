@@ -53,30 +53,9 @@ case "$AGENT" in
       --embedding-dim 8 \
       --results-dir "$RESULTS_DIR"
     ;;
-  ppo_baseline|ppo_vqvae_masked)
-    srun python "$SCRIPT_DIR/ppo_atari_vqvae_masked.py" \
-      --env-id "$ENV_ID" \
-      --full-action-space \
-      --agent "$AGENT" \
-      --seed "$SEED" \
-      --total-timesteps "$TIMESTEPS" \
-      --mask-penalty 1.0 \
-      --vqvae-epochs 10 \
-      --num-embeddings 256 \
-      --embedding-dim 8 \
-      --results-dir "$RESULTS_DIR"
-    ;;
-  # ── Standard baselines (minimal action space, no VQ-VAE) ──
+  # ── Standard baseline (minimal action space, no VQ-VAE) ──
   dqn_baseline_standard)
     srun python "$SCRIPT_DIR/dqn_atari_baseline.py" \
-      --env-id "$ENV_ID" \
-      --agent "$AGENT" \
-      --seed "$SEED" \
-      --total-timesteps "$TIMESTEPS" \
-      --results-dir "$RESULTS_DIR"
-    ;;
-  ppo_baseline_standard)
-    srun python "$SCRIPT_DIR/ppo_atari_baseline.py" \
       --env-id "$ENV_ID" \
       --agent "$AGENT" \
       --seed "$SEED" \

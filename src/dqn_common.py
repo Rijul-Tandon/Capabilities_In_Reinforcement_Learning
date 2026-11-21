@@ -1,455 +1,230 @@
-"""
-dqn_common.py - Shared DQN Infrastructure
-==========================================
-This is the core module for all our DQN experiments. It contains everything needed
-to train a Deep Q-Network agent on MiniGrid environments:
+"""The DQN / Double DQN trainer shared by all MiniGrid agents: configuration, environment, Q-network, replay buffer,
+exploration schedule and training loop.  The entry scripts (dqn_vanilla.py, ddqn_*.py) choose the TD target and
+the penalty type and call train()."""
 
-  - Environment setup with observation/action wrappers
-  - The Q-Network (neural network) architecture
-  - The Replay Buffer for experience storage
-  - The epsilon-greedy exploration schedule
-  - The main training loop
-  - Argument parsing for hyperparameter configuration
-
-Both dqn_baseline.py and dqn_reward_shaping.py import from this file.
-The only difference between them is whether reward shaping (stuck penalty) is enabled.
-"""
-
-# ============================================================================
-# STANDARD LIBRARY IMPORTS
-# ============================================================================
-
-# argparse: Parses command-line arguments (e.g., --env-id, --total-timesteps).
-#   Lets us configure experiments from the terminal without editing code.
 import argparse
-
-# csv: Reads and writes CSV (Comma Separated Values) files.
-#   We use it to log episode-level and step-level metrics to disk.
 import csv
-
-# json: Reads and writes JSON files.
-#   We save the full experiment configuration (all hyperparameters) as config.json.
 import json
-
-# random: Python's built-in random number generator.
-#   Used for epsilon-greedy action selection (random.random() < epsilon).
 import random
-
-# time: Provides time-related functions.
-#   We use time.time() to generate unique timestamps for run directory names.
 import time
-
-# deque (double-ended queue): A list-like container from the collections module
-#   with fast appends and pops from both ends. When maxlen is set, it automatically
-#   discards the oldest items when new ones are added. We use it to track the
-#   most recent 100 goal-reach outcomes for computing a rolling success rate.
 from collections import deque
-
-# Path: Object-oriented filesystem paths from the pathlib module.
-#   Makes it easy to create directories, join paths, and check if files exist
-#   without string concatenation (e.g., Path("results") / "run_name" / "config.json").
 from pathlib import Path
 
-
-# ============================================================================
-# THIRD-PARTY IMPORTS
-# ============================================================================
-
-# gymnasium (gym): The standard API for Reinforcement Learning environments.
-#   Formerly known as OpenAI Gym. It defines the interface that all RL environments
-#   follow: env.reset() returns an observation, env.step(action) returns
-#   (next_obs, reward, terminated, truncated, info). It also provides "wrappers"
-#   which are decorators that modify environment behavior without changing the
-#   underlying environment code.
 import gymnasium as gym
-
-# minigrid: A collection of lightweight grid-world environments for RL research.
-#   Simply importing this module registers all MiniGrid environments with gymnasium,
-#   so that gym.make("MiniGrid-Empty-Random-8x8-v0") works. Without this import,
-#   gymnasium would not know these environments exist.
-#   noqa: F401 tells the linter to ignore the "imported but unused" warning.
-import minigrid  # noqa: F401 - registers MiniGrid envs
-
-# Dynamically register custom randomized empty environments that are missing natively
-if "MiniGrid-Empty-Random-8x8-v0" not in gym.envs.registry.keys():
-    gym.register(
-        id="MiniGrid-Empty-Random-8x8-v0",
-        entry_point="minigrid.envs.empty:EmptyEnv",
-        kwargs={"size": 8, "agent_start_pos": None},
-    )
-
-if "MiniGrid-Empty-Random-10x10-v0" not in gym.envs.registry.keys():
-    gym.register(
-        id="MiniGrid-Empty-Random-10x10-v0",
-        entry_point="minigrid.envs.empty:EmptyEnv",
-        kwargs={"size": 10, "agent_start_pos": None},
-    )
-
-if "MiniGrid-DoorKey-10x10-v0" not in gym.envs.registry.keys():
-    gym.register(
-        id="MiniGrid-DoorKey-10x10-v0",
-        entry_point="minigrid.envs.doorkey:DoorKeyEnv",
-        kwargs={"size": 10},
-    )
-
-#   We use it for array operations (observations are numpy arrays), random sampling
-#   in the replay buffer, and computing statistics like mean stuck rate.
+import minigrid  # noqa: F401  (importing it registers the MiniGrid environments with gymnasium)
 import numpy as np
-
-# torch: PyTorch, the deep learning framework.
-#   We use it to build, train, and run the neural network (Q-Network).
 import torch
-
-# torch.nn: Contains neural network building blocks (layers, activation functions).
-#   nn.Module is the base class for all neural networks in PyTorch.
-#   nn.Linear is a fully-connected (dense) layer: output = input @ weights + bias.
-#   nn.ReLU is the Rectified Linear Unit activation function: max(0, x).
-#   nn.Sequential chains layers together so data flows through them in order.
 import torch.nn as nn
-
-# torch.nn.functional (F): Provides functions (as opposed to nn's module-based approach)
-#   for operations like loss computation. We use F.mse_loss() to compute
-#   Mean Squared Error between predicted Q-values and target Q-values.
 import torch.nn.functional as F
-
-# torch.optim: Contains optimization algorithms that update neural network weights.
-#   optim.Adam is an adaptive learning rate optimizer that works well in practice.
-#   It adjusts the learning rate for each weight individually based on past gradients.
-import torch.optim as optim
-
-# ImgObsWrapper (from minigrid.wrappers):
-#   By default, MiniGrid returns observations as a Python dictionary containing:
-#     - "image": a 3D numpy array of shape (width, height, 3) where each cell has
-#       3 values: [object_type, color, state]. For example, a wall tile might be [2, 5, 0].
-#     - "direction": an integer (0-3) for the agent's facing direction.
-#     - "mission": a text string like "reach the goal".
-#   Neural networks cannot process dictionaries or text easily. ImgObsWrapper extracts
-#   ONLY the "image" array and drops the text description completely.
-#
-# FullyObsWrapper (from minigrid.wrappers):
-#   By default, MiniGrid gives the agent a PARTIAL observation: a 7x7 grid of tiles
-#   directly in front of the agent (like a flashlight cone). The agent cannot see
-#   what is behind it or far away. This makes it a POMDP (Partially Observable
-#   Markov Decision Process), which is much harder to solve.
-#   FullyObsWrapper overrides this and gives the agent the ENTIRE map as its
-#   observation. This converts the problem into a standard MDP, making it much
-#   easier for a memoryless MLP to solve.
-from minigrid.wrappers import ImgObsWrapper, FullyObsWrapper
-
-# tqdm: Displays a progress bar in the terminal during long loops.
-#   Wrapping range() with tqdm() shows elapsed time, iterations per second,
-#   and a visual progress indicator. We also use pbar.set_postfix() to display
-#   live training statistics (return, goal rate, epsilon) next to the progress bar.
+from minigrid.wrappers import FullyObsWrapper, ImgObsWrapper
+from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-# SummaryWriter (from torch.utils.tensorboard):
-#   TensorBoard is a visualization tool originally built for TensorFlow but also
-#   works with PyTorch. SummaryWriter logs scalar values (loss, reward, epsilon)
-#   to disk. You can then run `tensorboard --logdir runs/` in your terminal to
-#   view interactive, real-time training charts in your browser.
-from torch.utils.tensorboard import SummaryWriter
+from learned_penalty import DiscreteStateSpace, HindsightPenaltyTrainer, MetaGradientPenaltyTrainer, TransitionPenaltyHead
 
 
 # ============================================================================
-# CONSTANTS
+# CONFIGURATION
 # ============================================================================
 
-# The 7 standard actions available in any MiniGrid environment, indexed 0-6.
-# Not all environments need all actions. For example, "Empty" only needs
-# left (0), right (1), and forward (2). "DoorKey" also needs pickup (3)
-# and toggle (5) to interact with keys and doors.
-MINIGRID_ACTION_NAMES = ["left", "right", "forward", "pickup", "drop", "toggle", "done"]
+def parse_args(default_exp_name):
+    """Every hyperparameter of a run.  Each one can be overridden from the command line, e.g. --gamma 0.99."""
+    parser = argparse.ArgumentParser()
+
+    # Experiment
+    parser.add_argument("--exp-name", type=str, default=default_exp_name)   # agent label in run-folder names and plot legends
+    parser.add_argument("--env-id", type=str, default="MiniGrid-Empty-Random-6x6-v0")
+    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--total-timesteps", type=int, default=200000)
+    parser.add_argument("--results-dir", type=str, default="results")
+    parser.add_argument("--load-model", type=str, default="")   # path of a q_net.pt to start from (transfer); empty = train from scratch
+
+    # Environment
+    parser.add_argument("--fixed-layout", action="store_true")   # reset with the same seed every episode, so the map never changes
+    parser.add_argument("--max-steps", type=int, default=-1)     # step limit of an episode; -1 keeps MiniGrid's own limit
+    parser.add_argument("--action-set", choices=["task", "full"], default="task")   # task: only the actions the task needs; full: all 7
+
+    # Q-learning
+    parser.add_argument("--learning-rate", type=float, default=0.00171)
+    parser.add_argument("--gamma", type=float, default=0.95)                    # discount factor
+    parser.add_argument("--hidden-size", type=int, default=256)                 # units in each of the two hidden layers
+    parser.add_argument("--buffer-size", type=int, default=30000)               # replay buffer capacity, in transitions
+    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--learning-starts", type=int, default=2000)            # steps collected before the first update
+    parser.add_argument("--train-frequency", type=int, default=10)              # one gradient step every this many env steps
+    parser.add_argument("--target-network-frequency", type=int, default=264)    # copy q_net -> target_net every this many env steps
+
+    # Exploration: epsilon decays from start to end over the first exploration_fraction of training
+    parser.add_argument("--exploration-strategy", choices=["epsilon_greedy", "softmax"], default="epsilon_greedy")
+    parser.add_argument("--epsilon-schedule", choices=["linear", "polynomial", "hardcoded", "cosine", "exponential", "cyclic"],
+                        default="polynomial")
+    parser.add_argument("--start-e", dest="start_epsilon", type=float, default=1.0)
+    parser.add_argument("--end-e", dest="end_epsilon", type=float, default=0.01)
+    parser.add_argument("--exploration-fraction", type=float, default=0.75)
+
+    # Fixed penalty (ddqn_reward_shaping.py): added to the reward when the observation does not change
+    parser.add_argument("--stuck-penalty", type=float, default=-1.0)
+
+    # Learned penalty (ddqn_learned_penalty.py); the method is explained in learned_penalty.py
+    parser.add_argument("--penalty-learning", choices=["meta", "hindsight"], default="meta")   # how the head is trained
+    parser.add_argument("--penalty-state", choices=["position_dir", "position", "full"], default="position_dir")   # state that indexes the head
+    parser.add_argument("--penalty-rank", type=int, default=0)                     # 0: full N x N table; r > 0: low-rank table U V^T
+    parser.add_argument("--penalty-scale", type=float, default=0.02)               # cap: penalty = scale * sigmoid(logit)
+    parser.add_argument("--penalty-lr", type=float, default=5e-3)                  # Adam learning rate of the head
+    parser.add_argument("--penalty-init-std", type=float, default=0.1)             # meta: the table starts at N(0, std)
+    parser.add_argument("--penalty-meta-temperature", type=float, default=0.1)     # meta: softmax temperature of the policy in J
+    parser.add_argument("--penalty-init-logit", type=float, default=-2.0)          # hindsight: initial bias (-2 -> score 0.12)
+
+    return parser.parse_args()
 
 
-def episode_success(env_id, episode_return):
-    """Maps an episode return to a simple success flag."""
-    return float(episode_return) > 0.0
-
-
-def observation_unchanged(obs, next_obs, tolerance):
-    """
-    Detects whether a transition produced a meaningful observation change.
-    For categorical MiniGrid observations we require exact equality.
-    """
-    obs_arr = np.asarray(obs, dtype=np.float32)
-    next_obs_arr = np.asarray(next_obs, dtype=np.float32)
-    if tolerance <= 0.0:
-        return bool(np.array_equal(obs_arr, next_obs_arr))
-    return bool(np.linalg.norm(next_obs_arr - obs_arr) <= tolerance)
+LOG_INTERVAL = 1000            # steps between two rows of metrics.csv
+MAX_GRADIENT_NORM = 10.0       # gradients are clipped to this norm before every optimizer step
+MINIGRID_ACTION_NAMES = ["left", "right", "forward", "pickup", "drop", "toggle", "done"]   # MiniGrid action indices 0..6
 
 
 # ============================================================================
-# ENVIRONMENT SETUP
+# ENVIRONMENT
 # ============================================================================
+
+# Grid sizes that MiniGrid does not register itself
+if "MiniGrid-Empty-Random-8x8-v0" not in gym.envs.registry.keys():
+    gym.register(id="MiniGrid-Empty-Random-8x8-v0", entry_point="minigrid.envs.empty:EmptyEnv",
+                 kwargs={"size": 8, "agent_start_pos": None})
+if "MiniGrid-Empty-Random-10x10-v0" not in gym.envs.registry.keys():
+    gym.register(id="MiniGrid-Empty-Random-10x10-v0", entry_point="minigrid.envs.empty:EmptyEnv",
+                 kwargs={"size": 10, "agent_start_pos": None})
+if "MiniGrid-DoorKey-10x10-v0" not in gym.envs.registry.keys():
+    gym.register(id="MiniGrid-DoorKey-10x10-v0", entry_point="minigrid.envs.doorkey:DoorKeyEnv", kwargs={"size": 10})
+
 
 def minigrid_action_map(env_id, action_set):
-    """
-    Determines which subset of actions are useful for a given MiniGrid environment.
-    Removing irrelevant actions speeds up learning because the agent doesn't waste
-    time exploring useless actions like "drop" when there is nothing to drop.
+    """MiniGrid action indices the agent may use, or None for all 7.
 
-    Parameters
-    ----------
-    env_id : str
-        The gymnasium environment ID (e.g., "MiniGrid-Empty-Random-8x8-v0").
-        We check if the name contains "Empty", "DoorKey", etc. to decide which actions to keep.
-    action_set : str
-        Either "task" (use only task-relevant actions) or "full" (use all 7 actions).
-
-    Returns
-    -------
-    list[int] or None
-        A list of MiniGrid action indices to keep, or None if all actions should be used.
+    action_set "task" keeps only the actions the environment needs, so the agent does not spend exploration on
+    useless ones (e.g. "drop" when there is nothing to drop); "full" keeps all 7.
     """
     if action_set == "full":
-        # Use all 7 actions, no filtering needed
         return None
-    if action_set != "task":
-        raise ValueError(f"Unknown action set {action_set!r}; use 'task' or 'full'.")
-
-    # Navigation-only environments: the agent just needs to move around.
-    # FourRooms has open doorways (no lockable doors), just navigation.
     if "Empty" in env_id or "FourRooms" in env_id:
-        return [0, 1, 2]  # left, right, forward
-
-    # MultiRoom: rooms are separated by DOORS that must be toggled open.
-    # No keys or objects to pick up — toggle is the only interaction needed.
+        return [0, 1, 2]                # left, right, forward
     if "MultiRoom" in env_id:
-        return [0, 1, 2, 5]  # left, right, forward, toggle
-
-    # DoorKey: The agent picks up the key, toggles the door, and walks to the goal (can hold key).
+        return [0, 1, 2, 5]             # + toggle (doors)
     if "DoorKey" in env_id:
-        return [0, 1, 2, 3, 5]  # left, right, forward, pickup, toggle
-
-    # UnlockPickup: The agent MUST drop the key after unlocking the door to pick up the box.
+        return [0, 1, 2, 3, 5]          # + pickup (key) and toggle (door)
     if "UnlockPickup" in env_id:
-        return [0, 1, 2, 3, 4, 5]  # left, right, forward, pickup, drop, toggle
-
-    # Unknown environment: use all actions as a safe default
+        return [0, 1, 2, 3, 4, 5]       # + drop (the key must be dropped before the box can be picked up)
     return None
 
 
+def action_names(env_id, action_set, num_actions):
+    """Names of the agent's actions, in the order of the Q-network outputs."""
+    action_map = minigrid_action_map(env_id, action_set)
+    if action_map is None:
+        return MINIGRID_ACTION_NAMES[:num_actions]
+    return [MINIGRID_ACTION_NAMES[minigrid_action] for minigrid_action in action_map]
+
+
 class MiniGridActionSubsetWrapper(gym.ActionWrapper):
-    """
-    A custom Gymnasium wrapper that restricts the environment's action space.
+    """Restricts the action space: agent action i is executed as MiniGrid action allowed_actions[i]."""
 
-    Why this is needed:
-      MiniGrid always exposes 7 actions (Discrete(7)), but most environments
-      only need 3-5 of them. If we let the neural network output 7 Q-values,
-      it wastes capacity learning about useless actions. This wrapper makes
-      the neural network only output Q-values for the actions we actually need.
-
-    How it works:
-      The wrapper maintains a mapping list, e.g., [0, 1, 2] for Empty environments.
-      When the neural network outputs action index 0, this wrapper translates it
-      to MiniGrid action 0 (left). When it outputs action index 2, it translates
-      to MiniGrid action 2 (forward). The neural network never sees the raw
-      MiniGrid action indices; it only sees indices 0..len(actions)-1.
-
-    Inherits from gym.ActionWrapper, which is a Gymnasium base class specifically
-    designed for wrappers that only modify the action space (not the observations).
-
-    Parameters
-    ----------
-    env : gym.Env
-        The environment to wrap.
-    actions : list[int]
-        The list of MiniGrid action indices to keep (e.g., [0, 1, 2] for left/right/forward).
-    """
-    def __init__(self, env, actions):
+    def __init__(self, env, allowed_actions):
         super().__init__(env)
-        self.actions = list(actions)
-        # Override the action space so the neural network only has len(actions) outputs
-        # Discrete(n) means the action space is {0, 1, 2, ..., n-1}
-        self.action_space = gym.spaces.Discrete(len(self.actions))
+        self.allowed_actions = list(allowed_actions)
+        self.action_space = gym.spaces.Discrete(len(self.allowed_actions))
 
     def action(self, action):
-        """
-        Called automatically by Gymnasium when env.step(action) is called.
-        Translates the wrapper's action index back to the real MiniGrid action index.
-
-        Parameters
-        ----------
-        action : int
-            The action index from the neural network (0 to len(self.actions)-1).
-
-        Returns
-        -------
-        int
-            The corresponding MiniGrid action index.
-        """
-        return self.actions[int(action)]
+        return self.allowed_actions[int(action)]
 
 
 class MarkovianStepPenaltyWrapper(gym.RewardWrapper):
+    """Reward +1 for reaching the goal and -0.01 for every other step.
+
+    MiniGrid's own goal reward shrinks with the number of steps taken; this one depends only on (s, a, s').
     """
-    Fixed step penalty per action + fixed goal reward.
-    Strictly Markovian: reward depends ONLY on (s, a, s').
-    """
-    def __init__(self, env, step_penalty=0.01, goal_reward=1.0):
-        super().__init__(env)
-        self.step_penalty = step_penalty
-        self.goal_reward = goal_reward
 
     def reward(self, reward):
-        if reward > 0:  # Goal reached
-            return self.goal_reward
-        return -self.step_penalty  # Step penalty
+        if reward > 0:
+            return 1.0
+        return -0.01
 
 
 class FlatImageAndDirectionWrapper(gym.ObservationWrapper):
+    """Turns the (width, height, 3) grid image into one flat vector in [0, 1] and appends the agent's direction.
+
+    The three channels of a cell are (object type, colour, state); each is divided by its largest value.
+    The direction (0..3) is appended as a one-hot vector of length 4.
     """
-    A custom wrapper that takes the 3D image output from ImgObsWrapper,
-    applies component-wise min-max normalization ([0, 1]) to each channel
-    (object_type / 10.0, color / 5.0, state / 3.0), flattens it into a 1D array,
-    and appends a 4-element one-hot encoded vector representing the agent's facing direction.
-    """
+
     def __init__(self, env):
         super().__init__(env)
-        image_shape = env.observation_space.shape
-        flat_size = int(np.prod(image_shape))
-        
-        # Observation space bounds: normalized flattened image + 4-dim one-hot direction vector
-        self.observation_space = gym.spaces.Box(
-            low=0.0,
-            high=1.0,
-            shape=(flat_size + 4,),
-            dtype=np.float32
-        )
+        flat_image_size = int(np.prod(env.observation_space.shape))
+        self.observation_space = gym.spaces.Box(low=0.0, high=1.0, shape=(flat_image_size + 4,), dtype=np.float32)
 
-    def observation(self, obs):
-        # 'obs' is the 3D image array from ImgObsWrapper of shape (width, height, 3)
-        img = obs.astype(np.float32)
-        
-        # Component-wise min-max scaling to [0, 1]
-        img[:, :, 0] /= 10.0  # Object type (max 10)
-        img[:, :, 1] /= 5.0   # Color (max 5)
-        img[:, :, 2] /= 3.0   # State (max 3)
-        
-        flat_image = img.flatten()
-        
-        # One-hot encode agent direction (0..3) as a 4-element vector
+    def observation(self, observation):
+        image = observation.astype(np.float32)
+        image[:, :, 0] /= 10.0      # object type
+        image[:, :, 1] /= 5.0       # colour
+        image[:, :, 2] /= 3.0       # state (door open / closed / locked)
         direction_one_hot = np.zeros(4, dtype=np.float32)
         direction_one_hot[self.env.unwrapped.agent_dir] = 1.0
-        
-        return np.concatenate([flat_image, direction_one_hot])
+        return np.concatenate([image.flatten(), direction_one_hot])
 
 
-def make_env(env_id, seed, action_set, capture_video=False, run_name="", max_steps=None):
-    """
-    Creates a MiniGrid environment and applies the wrappers needed by our DQN pipeline.
-
-    Parameters
-    ----------
-    max_steps : int or None
-        Override MiniGrid's built-in episode step limit. MiniGrid's default is
-        4 * width * height (e.g. 100 for 5x5, 256 for 8x8). Pass a larger value
-        (e.g. 500) to give the agent more time per episode in harder environments.
-        If None, the environment's own default is used.
-    """
-    make_kwargs = {}
+def make_env(env_id, seed, action_set, max_steps=-1):
+    """The MiniGrid environment with all wrappers.  max_steps <= 0 keeps MiniGrid's own episode step limit."""
     if max_steps is not None and max_steps > 0:
-        make_kwargs["max_steps"] = max_steps
-
-    if capture_video:
-        env = gym.make(env_id, render_mode="rgb_array", **make_kwargs)
-        env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
+        env = gym.make(env_id, max_steps=max_steps)
     else:
-        env = gym.make(env_id, **make_kwargs)
-
+        env = gym.make(env_id)
     env = MarkovianStepPenaltyWrapper(env)
-
     action_map = minigrid_action_map(env_id, action_set)
     if action_map is not None:
         env = MiniGridActionSubsetWrapper(env, action_map)
-
-    env = FullyObsWrapper(env)
-    env = ImgObsWrapper(env)
+    env = FullyObsWrapper(env)      # the whole grid instead of the agent's 7x7 view, so the problem is an MDP
+    env = ImgObsWrapper(env)        # keep only the grid image of the observation dictionary
     env = FlatImageAndDirectionWrapper(env)
-
     env = gym.wrappers.RecordEpisodeStatistics(env)
     env.action_space.seed(seed)
     return env
 
 
-def action_names(env_id, action_set, action_space_n):
-    """Returns human-readable action names for logging and debug prints."""
-    action_map = minigrid_action_map(env_id, action_set)
-    if action_map is None:
-        return MINIGRID_ACTION_NAMES[:action_space_n]
-    return [MINIGRID_ACTION_NAMES[action] for action in action_map]
+def update_key_door_flags(env, has_picked_key, has_opened_door):
+    """(has_picked_key, has_opened_door) for the environment's current state.
+
+    Both flags are sticky within an episode: once the key has been carried or the door has been open, they stay True.
+    """
+    carried_object = env.unwrapped.carrying
+    if carried_object is not None and carried_object.type == "key":
+        has_picked_key = True
+    if not has_opened_door:
+        for x in range(env.unwrapped.width):
+            for y in range(env.unwrapped.height):
+                cell = env.unwrapped.grid.get(x, y)
+                if cell is not None and cell.type == "door" and cell.is_open:
+                    has_opened_door = True
+    return has_picked_key, has_opened_door
 
 
 # ============================================================================
-# NEURAL NETWORK
+# Q-NETWORK
 # ============================================================================
 
 class QNetwork(nn.Module):
-    """
-    The Deep Q-Network (DQN) - a Multi-Layer Perceptron (MLP).
+    """MLP that maps an observation to one Q-value per action: (batch, observation_dim) -> (batch, num_actions)."""
 
-    Architecture:
-      Input (obs_dim) -> Linear(hidden_size) -> ReLU -> Linear(hidden_size) -> ReLU -> Linear(num_actions)
-
-    The network takes a flattened observation vector as input and outputs one
-    Q-value for each possible action. The Q-value Q(s, a) represents the
-    expected cumulative discounted reward the agent will receive if it takes
-    action 'a' in state 's' and then follows the optimal policy afterwards.
-
-    During action selection, the agent picks the action with the highest Q-value:
-      action = argmax_a Q(s, a)
-
-    Inherits from nn.Module, which is PyTorch's base class for all neural networks.
-    It provides automatic gradient tracking, parameter management, and GPU support.
-
-    Parameters
-    ----------
-    obs_dim : int
-        The size of the flattened observation vector (e.g., 192 for an 8x8 fully observable grid).
-    num_actions : int
-        The number of possible actions (e.g., 3 for Empty, 5 for DoorKey).
-    hidden_size : int
-        The number of neurons in each hidden layer (default: 256).
-    """
-    def __init__(self, obs_dim, num_actions, hidden_size):
+    def __init__(self, observation_dim, num_actions, hidden_size):
         super().__init__()
-        # nn.Sequential chains layers together: data flows through them in order
         self.network = nn.Sequential(
-            # First hidden layer: maps observation vector to hidden representation
-            nn.Linear(obs_dim, hidden_size),
-            # ReLU activation: max(0, x). Introduces non-linearity so the network
-            # can learn complex patterns (without it, stacking linear layers is
-            # mathematically equivalent to a single linear layer)
+            nn.Linear(observation_dim, hidden_size),
             nn.ReLU(),
-            # Second hidden layer: further processes the hidden representation
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
-            # Output layer: produces one Q-value per action (no activation function
-            # because Q-values can be any real number, positive or negative)
             nn.Linear(hidden_size, num_actions),
         )
 
-    def forward(self, x):
-        """
-        Forward pass: computes Q-values for all actions given an observation.
-
-        NOTE: We cast to float but do NOT divide by 255. MiniGrid observations
-        are categorical integers (object_type, color, state) ranging from 0 to ~10,
-        NOT RGB pixel values (0-255). Dividing by 255 would squash these values
-        close to zero, making it nearly impossible for the network to distinguish
-        between different objects.
-
-        Parameters
-        ----------
-        x : torch.Tensor
-            A batch of observations, shape (batch_size, obs_dim).
-
-        Returns
-        -------
-        torch.Tensor
-            Q-values for each action, shape (batch_size, num_actions).
-        """
-        return self.network(x.float())
+    def forward(self, observations):
+        return self.network(observations.float())
 
 
 # ============================================================================
@@ -457,863 +232,369 @@ class QNetwork(nn.Module):
 # ============================================================================
 
 class ReplayBuffer:
-    """
-    Experience Replay Buffer - stores past (s, a, r, s', done) transitions.
+    """Circular buffer of transitions (s, a, r, s', terminated), sampled uniformly at random."""
 
-    Why we need this:
-      In supervised learning, we assume training samples are independent and
-      identically distributed (i.i.d.). But in RL, consecutive transitions are
-      highly correlated (step 100 is very similar to step 101). Training a neural
-      network on correlated data causes instability and poor convergence.
-
-      The replay buffer solves this by storing thousands of past transitions and
-      sampling random mini-batches for training. This breaks the temporal correlation
-      and makes the training data approximately i.i.d.
-
-    Implementation:
-      Uses pre-allocated numpy arrays (not Python lists) for memory efficiency.
-      Operates as a circular buffer: when full, new transitions overwrite the oldest ones.
-
-    Parameters
-    ----------
-    capacity : int
-        Maximum number of transitions to store (e.g., 100,000).
-    obs_shape : tuple
-        Shape of a single observation (e.g., (192,) for a flattened 8x8 grid).
-    device : torch.device
-        The device (CPU or GPU) to move sampled tensors to.
-    """
-    def __init__(self, capacity, obs_shape, device):
+    def __init__(self, capacity, observation_shape, device):
         self.capacity = capacity
         self.device = device
-        self.pos = 0     # Current write position in the circular buffer
-        self.size = 0    # Number of transitions currently stored (up to capacity)
+        self.position = 0       # where the next transition is written
+        self.size = 0           # number of transitions stored so far (at most capacity)
+        self.observations = np.zeros((capacity, *observation_shape), dtype=np.float32)
+        self.actions = np.zeros(capacity, dtype=np.int64)
+        self.rewards = np.zeros(capacity, dtype=np.float32)
+        self.next_observations = np.zeros((capacity, *observation_shape), dtype=np.float32)
+        self.terminated = np.zeros(capacity, dtype=np.float32)
 
-        # Pre-allocate numpy arrays for each component of a transition
-        self.obs = np.zeros((capacity, *obs_shape), dtype=np.float32)       # Current observation s
-        self.next_obs = np.zeros((capacity, *obs_shape), dtype=np.float32)  # Next observation s'
-        self.actions = np.zeros(capacity, dtype=np.int64)                    # Action taken a
-        self.rewards = np.zeros(capacity, dtype=np.float32)                  # Reward received r
-        self.dones = np.zeros(capacity, dtype=np.float32)                    # Episode done flag (0 or 1)
-
-    def add(self, obs, next_obs, action, reward, done):
-        """
-        Store a single transition (s, s', a, r, done) in the buffer.
-
-        Parameters
-        ----------
-        obs : np.ndarray
-            The current observation (state) before taking the action.
-        next_obs : np.ndarray
-            The observation (state) after taking the action.
-        action : int
-            The action that was taken.
-        reward : float
-            The reward received (may include shaping penalties).
-        done : float
-            1.0 if the episode ended after this step, 0.0 otherwise.
-        """
-        self.obs[self.pos] = obs
-        self.next_obs[self.pos] = next_obs
-        self.actions[self.pos] = action
-        self.rewards[self.pos] = reward
-        self.dones[self.pos] = done
-        # Circular buffer: wrap around to the beginning when we reach capacity
-        self.pos = (self.pos + 1) % self.capacity
+    def add(self, observation, action, reward, next_observation, terminated):
+        self.observations[self.position] = observation
+        self.actions[self.position] = action
+        self.rewards[self.position] = reward
+        self.next_observations[self.position] = next_observation
+        self.terminated[self.position] = terminated
+        self.position = (self.position + 1) % self.capacity      # wrap around: the oldest transition is overwritten
         self.size = min(self.size + 1, self.capacity)
 
-    def sample(self, batch_size, return_indices=False):
-        """
-        Randomly sample a mini-batch of transitions for training.
-
-        Parameters
-        ----------
-        batch_size : int
-            Number of transitions to sample (e.g., 128).
-        return_indices : bool
-            Also return the sampled buffer positions (the learned penalty re-applies its
-            current penalty to exactly these transitions).
-
-        Returns
-        -------
-        tuple of torch.Tensors
-            (observations, next_observations, actions, rewards, dones[, indices])
-            Each tensor has batch_size as its first dimension.
-        """
-        # Uniformly sample random indices from the filled portion of the buffer
-        idx = np.random.randint(0, self.size, size=batch_size)
-        batch = (
-            torch.tensor(self.obs[idx], device=self.device),
-            torch.tensor(self.next_obs[idx], device=self.device),
-            torch.tensor(self.actions[idx], device=self.device),
-            torch.tensor(self.rewards[idx], device=self.device),
-            torch.tensor(self.dones[idx], device=self.device),
+    def sample(self, batch_size):
+        """A random batch as tensors, each with batch_size as first dimension, plus the sampled buffer positions."""
+        buffer_indices = np.random.randint(0, self.size, size=batch_size)
+        return (
+            torch.tensor(self.observations[buffer_indices], device=self.device),
+            torch.tensor(self.actions[buffer_indices], device=self.device),
+            torch.tensor(self.rewards[buffer_indices], device=self.device),
+            torch.tensor(self.next_observations[buffer_indices], device=self.device),
+            torch.tensor(self.terminated[buffer_indices], device=self.device),
+            buffer_indices,
         )
-        if return_indices:
-            return batch + (torch.as_tensor(idx, device=self.device),)
-        return batch
 
 
 # ============================================================================
 # EXPLORATION SCHEDULE
 # ============================================================================
 
-def linear_schedule(start_e, end_e, duration, step, start_delay=0):
-    """
-    Computes the current epsilon value for epsilon-greedy exploration using a linear decay.
-    Supports an optional start_delay (steps before linear decay begins).
-    """
-    if step < start_delay:
-        return start_e
-    adjusted_step = step - start_delay
-    slope = (end_e - start_e) / duration
-    return max(slope * adjusted_step + start_e, end_e)
+def epsilon_at_step(args, step):
+    """Probability of a random action at this step, for the chosen --epsilon-schedule."""
+    start, end = args.start_epsilon, args.end_epsilon
+    decay_steps = args.exploration_fraction * args.total_timesteps
+    progress = min(step / decay_steps, 1.0)          # 0 at the start, 1 once the decay is over
 
-def polynomial_schedule(start_e, end_e, duration, step, power=4.0):
-    """
-    Computes the current epsilon value for epsilon-greedy exploration using a polynomial decay.
-    
-    Decays epsilon slowly at first, then increasingly fast as t approaches `duration`.
-    power=1.0 reduces to your existing linear_schedule.
-    power=2-4 gives a pronounced slow-start/fast-finish curve.
-    """
-    frac = min(step / duration, 1.0)
-    decay = (1.0 - frac) ** power
-    return end_e + (start_e - end_e) * decay
-
-
-def hardcoded_schedule(total_timesteps, step):
-    """
-    Hardcoded piecewise decay:
-      - 1.0 for 0-10% of total steps
-      - 0.7 for 10%-50% of total steps
-      - 0.1 for 50%+ steps
-    """
-    frac = step / total_timesteps
-    if frac < 0.10:
+    if args.epsilon_schedule == "linear":
+        return max((end - start) / decay_steps * step + start, end)
+    if args.epsilon_schedule == "polynomial":        # slow at first, then faster
+        return end + (start - end) * (1.0 - progress) ** 3.0
+    if args.epsilon_schedule == "cosine":
+        return end + (start - end) * (0.5 * (1.0 + np.cos(np.pi * progress)))
+    if args.epsilon_schedule == "exponential":
+        return start * ((end / start) ** progress)
+    if args.epsilon_schedule == "cyclic":            # three cosine decays in a row; each restart boosts exploration again
+        cycle_length = args.total_timesteps / 3
+        cycle_progress = (step % cycle_length) / cycle_length
+        return end + (start - end) * (0.5 * (1.0 + np.cos(np.pi * cycle_progress)))
+    # "hardcoded": three fixed levels, independent of start, end and exploration_fraction
+    training_progress = step / args.total_timesteps
+    if training_progress < 0.10:
         return 1.0
-    elif frac < 0.50:
+    if training_progress < 0.50:
         return 0.7
-    else:
-        return 0.1
-
-
-def cosine_schedule(start_e, end_e, duration, step):
-    """
-    Cosine annealing decay from start_e to end_e over `duration` steps.
-    """
-    frac = min(step / duration, 1.0)
-    decay = 0.5 * (1.0 + np.cos(np.pi * frac))
-    return end_e + (start_e - end_e) * decay
-
-
-def exponential_schedule(start_e, end_e, duration, step):
-    """
-    Exponential decay from start_e to end_e over `duration` steps.
-    """
-    frac = min(step / duration, 1.0)
-    return start_e * ((end_e / start_e) ** frac)
-
-
-def cyclic_schedule(start_e, end_e, total_timesteps, step, num_cycles=3):
-    """
-    Cyclic / Warm-restart decay:
-    Repeatedly decays epsilon using cosine annealing over `num_cycles` periods,
-    periodically boosting exploration back up to escape local minima.
-    """
-    cycle_length = total_timesteps / num_cycles
-    cycle_step = step % cycle_length
-    frac = cycle_step / cycle_length
-    decay = 0.5 * (1.0 + np.cos(np.pi * frac))
-    return end_e + (start_e - end_e) * decay
-
-
-def softmax_tau_schedule(total_timesteps, step):
-    """
-    Computes the current temperature (tau) for softmax exploration using a simple linear decay.
-    tau = max(1.0 * (1 - step / (total_timesteps * 0.75)), 0.1)
-    At the start tau=1.0 (high randomness); decays linearly to a minimum of 0.1.
-    """
-    return max(1.0 * (1.0 - step / (total_timesteps * 0.75)), 0.1)
-
-def softmax_action(q_values_tensor, tau):
-    """
-    Selects an action by sampling from a softmax distribution over Q-values.
-    Lower tau -> distribution closer to greedy; higher tau -> more uniform (more exploration).
-    """
-    probs = torch.softmax(q_values_tensor / tau, dim=1)
-    return int(torch.multinomial(probs, num_samples=1).item())
+    return 0.1
 
 
 # ============================================================================
-# ARGUMENT PARSING
+# TRAINING
 # ============================================================================
 
-def parse_args(default_exp_name, use_shaping):
+def train(args, double_dqn, penalty_type):
     """
-    Parses command-line arguments for configuring a DQN training run.
+    Trains one agent and writes config.json, episodes.csv, metrics.csv, the state-action counts and q_net.pt to
+    <results_dir>/<env_id>__<exp_name>__<seed>__<timestamp>/.
 
-    All hyperparameters can be overridden from the terminal. For example:
-      python dqn_baseline.py --env-id MiniGrid-DoorKey-8x8-v0 --total-timesteps 50000
-
-    Parameters
-    ----------
-    default_exp_name : str
-        Name for this experiment type (e.g., "dqn_baseline" or "dqn_reward_shaping").
-        Used in directory names and plot labels to distinguish between runs.
-    use_shaping : bool
-        Whether this experiment uses reward shaping. Stored in args for reference.
-
-    Returns
-    -------
-    argparse.Namespace
-        An object containing all hyperparameters as attributes (e.g., args.env_id).
+    double_dqn      True:   y = r + gamma * Q_target(s', argmax_a Q_online(s', a))     (Double DQN)
+                    False:  y = r + gamma * max_a Q_target(s', a)                       (DQN)
+    penalty_type    "none":     the agent learns from the environment reward r
+                    "stuck":    r + args.stuck_penalty whenever the observation does not change
+                    "learned":  r - penalty(s, s'), where the penalty comes from a learned head (learned_penalty.py)
     """
-    parser = argparse.ArgumentParser()
-
-    # --- Experiment Identity ---
-    # --exp-name: A label for this experiment, used in directory names and plot legends
-    parser.add_argument("--exp-name", type=str, default=default_exp_name)
-    # --env-id: Which MiniGrid environment to train on
-    parser.add_argument("--env-id", type=str, default="MiniGrid-Empty-Random-6x6-v0")
-    # --seed: Random seed for reproducibility (same seed = same results)
-    parser.add_argument("--seed", type=int, default=1)
-
-    # --- Training Duration ---
-    # --total-timesteps: How many environment steps to train for
-    parser.add_argument("--total-timesteps", type=int, default=200000)
-
-    # --- DQN Hyperparameters ---
-    # --learning-rate: How fast the neural network adjusts its weights.
-    #   Too high = unstable training. Too low = slow learning. 2.5e-4 is a good default.
-    parser.add_argument("--learning-rate", type=float, default=0.00171)
-    # --buffer-size: Maximum number of transitions to store in the replay buffer.
-    parser.add_argument("--buffer-size", type=int, default=30000)
-    # --gamma: Discount factor for future rewards (0 = greedy, 1 = far-sighted).
-    parser.add_argument("--gamma", type=float, default=0.95)
-
-    # --fixed-layout: If set, the environment uses the same seed on every single reset.
-    #   This forces the procedural generation to create the exact same map layout every episode,
-    #   allowing the agent to overfit to a single map (great for debugging if learning works at all).
-    parser.add_argument("--fixed-layout", action="store_true")
-
-    # --double-dqn: If set, uses Double DQN for the TD target computation.
-    #   Standard DQN: target = r + γ * max_a Q_target(s', a)  (target net selects AND evaluates)
-    #   Double DQN:   target = r + γ * Q_target(s', argmax_a Q_online(s', a))  (online selects, target evaluates)
-    #   Double DQN reduces the overestimation bias inherent in standard DQN.
-    parser.add_argument("--double-dqn", action="store_true")
-
-    # --- Target Network Parameters ---quency: How often (in steps) to copy q_net weights to target_net.
-    #   The target network provides stable Q-value targets during training.
-    parser.add_argument("--target-network-frequency", type=int, default=264)
-    # --batch-size: Number of transitions sampled from the replay buffer per training step
-    parser.add_argument("--batch-size", type=int, default=128)
-    # --learning-starts: Number of random steps before training begins.
-    #   This seeds the replay buffer with diverse experiences before the network starts learning.
-    parser.add_argument("--learning-starts", type=int, default=2000)
-    # --train-frequency: Train the network every N environment steps (not every single step).
-    #   CleanRL uses 10 here. Training every single step (=1) causes correlated updates
-    #   because consecutive steps come from very similar states, destabilising learning.
-    parser.add_argument("--train-frequency", type=int, default=10)
-    # --max-steps: Maximum steps per episode. Overrides MiniGrid's built-in limit.
-    #   MiniGrid defaults: 4*width*height (100 for 5x5, 256 for 8x8, 400 for FourRooms).
-    #   Increasing this gives the agent more time to find the goal in harder environments
-    #   (e.g. DoorKey, FourRooms) where the default limit may truncate too aggressively.
-    #   Set to -1 to use each environment's own built-in default.
-    parser.add_argument("--max-steps", type=int, default=-1)
-
-    # --- Exploration Schedule ---
-    # --start-e: Initial epsilon (exploration rate). 1.0 = 100% random actions at the start.
-    parser.add_argument("--start-e", type=float, default=1.0)
-    # --end-e: Minimum epsilon. 0.0 = completely greedy at the end.
-    #   This prevents the agent from getting stuck in local optima, especially in
-    #   environments with randomized layouts (DoorKey, FourRooms) where the agent
-    #   needs to keep exploring to handle new configurations.
-    parser.add_argument("--end-e", type=float, default=0.01)
-    # --exploration-fraction: What fraction of training to decay epsilon over
-    parser.add_argument("--exploration-fraction", type=float, default=0.75)
-    
-    # --epsilon-schedule: Which decay schedule to use for epsilon
-    parser.add_argument("--epsilon-schedule", choices=["linear", "polynomial", "hardcoded", "cosine", "exponential", "cyclic"], default="polynomial")
-
-    # --exploration-strategy: Whether to use epsilon-greedy or softmax exploration.
-    #   epsilon_greedy: standard random action with probability epsilon.
-    #   softmax: samples action from softmax(Q/tau) where tau decays linearly.
-    parser.add_argument("--exploration-strategy", choices=["epsilon_greedy", "softmax"], default="epsilon_greedy")
-
-    # --- Hyperparameters ---
-    # --hidden-size: Number of neurons in each hidden layer of the Q-Network
-    parser.add_argument("--hidden-size", type=int, default=256)
-
-    # --- Action Space ---
-    # --action-set: "task" uses only environment-relevant actions, "full" uses all 7
-    parser.add_argument("--action-set", choices=["task", "full"], default="task")
-
-    # --- Hardware ---
-    # --cuda: Whether to use GPU acceleration (if available)
-    parser.add_argument("--cuda", type=lambda x: str(x).lower() == "true", default=True)
-
-    # --- Model Saving & Loading ---
-    # --save-model: Whether to save the trained Q-Network weights to disk as q_net.pt
-    parser.add_argument("--save-model", type=lambda x: str(x).lower() == "true", default=True)
-    # --load-model: Path to a pre-trained q_net.pt to load before training
-    parser.add_argument("--load-model", type=str, default="")
-    # --- Reward Shaping ---
-    # --stuck-penalty: Negative reward applied when the agent's observation doesn't change
-    parser.add_argument("--stuck-penalty", type=float, default=-1)
-    # Learned penalty (ddqn_learned_penalty.py only): a small MLP decides the penalty of every transition
-    #   instead of the fixed --stuck-penalty rule.  See learned_penalty.py for the meaning of each value.
-    parser.add_argument("--penalty-state", choices=["position_dir", "position", "full"], default="position_dir",
-                        help="state used to index the head: (x, y, direction) [default], (x, y) only, or with key/door flags")
-    parser.add_argument("--penalty-rank", type=int, default=0,
-                        help="0 = full N x N table over the enumerated states; r > 0 = low-rank table U V^T with N x r factors")
-    parser.add_argument("--penalty-lr", type=float, default=5e-3,
-                        help="Adam step of the head; each visited table entry moves by about this much per episode")
-    parser.add_argument("--penalty-learning", choices=["meta", "hindsight"], default="meta",
-                        help="meta: the head is trained to maximise the TRUE episodic reward, by a meta-gradient through "
-                             "the agent's TD step; hindsight: cross-entropy on loop-erasure labels of each episode")
-    parser.add_argument("--penalty-scale", type=float, default=0.02,
-                        help="cap of the penalty: penalty = scale * sigmoid(score) never exceeds this value")
-    parser.add_argument("--penalty-init-std", type=float, default=0.1,
-                        help="meta: the table starts at random, N(0, std); the first penalties are about scale / 2")
-    parser.add_argument("--penalty-meta-temperature", type=float, default=0.1,
-                        help="meta: softmax temperature that turns the updated Q-values into the policy whose true value is maximised")
-    parser.add_argument("--penalty-init-logit", type=float, default=-2.0,
-                        help="hindsight: initial logit of the head (-2 -> score 0.12)")
-
-    # --- Logging ---
-    # --log-interval: How often (in steps) to write training metrics to CSV and TensorBoard
-    parser.add_argument("--log-interval", type=int, default=1000)
-    # --results-dir: Parent directory where run folders are created
-    parser.add_argument("--results-dir", type=str, default="results")
-    # --run-dir: Explicit directory to save/append to
-    parser.add_argument("--run-dir", type=str, default="")
-    # --global-step-offset: Starting step number
-    parser.add_argument("--global-step-offset", type=int, default=0)
-
-    # --- Optional: Weights & Biases Integration ---
-    # --track: Enable Weights & Biases (wandb) logging for cloud-based experiment tracking
-    parser.add_argument("--track", type=lambda x: str(x).lower() == "true", default=False)
-    parser.add_argument("--wandb-project-name", type=str, default="cleanRL")
-    parser.add_argument("--wandb-entity", type=str, default=None)
-
-    # --- Optional: Video Recording ---
-    parser.add_argument("--capture-video", type=lambda x: str(x).lower() == "true", default=False)
-    parser.add_argument("--no-change-tolerance", type=float, default=None)
-
-    args = parser.parse_args()
-    if args.no_change_tolerance is None:
-        args.no_change_tolerance = 0.0
-    
-        
-    # Store the shaping flag so it can be accessed alongside other args
-    args.use_shaping = use_shaping
-    return args
-
-
-# ============================================================================
-# MAIN TRAINING LOOP
-# ============================================================================
-
-def update_stage_flags(env, has_picked_key, has_opened_door):
-    """
-    Returns the (has_picked_key, has_opened_door) flags for the environment's CURRENT state.
-    Both flags are sticky within an episode: once the key is carried or the door has been opened, they stay True.
-    """
-    carrying = getattr(env.unwrapped, 'carrying', None)
-    if carrying is not None and getattr(carrying, 'type', None) == "key":
-        has_picked_key = True
-    if not has_opened_door:
-        grid = env.unwrapped.grid
-        for wx in range(env.unwrapped.width):
-            for wy in range(env.unwrapped.height):
-                c = grid.get(wx, wy)
-                if c is not None and getattr(c, 'type', None) == "door" and getattr(c, 'is_open', False):
-                    has_opened_door = True
-                    break
-            if has_opened_door:
-                break
-    return has_picked_key, has_opened_door
-
-
-def train(args, use_shaping, penalty_learner_factory=None):
-    """
-    The main DQN training loop. This function:
-      1. Creates the environment and neural networks
-      2. Collects experience using epsilon-greedy exploration
-      3. Stores transitions in a replay buffer
-      4. Periodically samples mini-batches and trains the Q-Network
-      5. Logs metrics to CSV files and TensorBoard
-      6. Saves the trained model to disk
-
-    The DQN Algorithm (Mnih et al., 2015):
-      For each step:
-        - With probability epsilon, take a random action (explore)
-        - Otherwise, take action = argmax_a Q(s, a) (exploit)
-        - Store transition (s, a, r, s', done) in replay buffer
-        - Sample a random mini-batch from the buffer
-        - Compute target: y = r + gamma * max_a' Q_target(s', a') * (1 - done)
-        - Update Q-Network to minimize: loss = (Q(s, a) - y)^2
-        - Periodically copy Q-Network weights to Target Network
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        All hyperparameters and configuration (from parse_args).
-    use_shaping : bool
-        If True, applies a stuck penalty when the agent's observation doesn't change.
-        This discourages the agent from wasting steps bumping into walls.
-    """
-    # --- Reproducibility ---
-    # Setting seeds for all random number generators ensures that running the same
-    # experiment with the same seed produces identical results.
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    # Makes CUDA operations deterministic (slightly slower but reproducible)
     torch.backends.cudnn.deterministic = True
-    # Use GPU if available and requested, otherwise fall back to CPU
-    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # --- Run Directory Setup ---
-    # Create a unique directory name using: environment__experiment__seed__timestamp
-    if args.run_dir:
-        run_dir = Path(args.run_dir)
-        run_name = run_dir.name
-    else:
-        run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
-        run_dir = Path(args.results_dir) / run_name
-        
+    # ---- run folder and loggers ----
+    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    run_dir = Path(args.results_dir) / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
-    # Save the full configuration as JSON for later reference and reproducibility
-    with open(run_dir / "config.json", "w", encoding="utf-8") as f:
-        json.dump(vars(args), f, indent=2)
+    config = dict(vars(args), double_dqn=double_dqn, penalty_type=penalty_type)
+    with open(run_dir / "config.json", "w", encoding="utf-8") as config_file:
+        json.dump(config, config_file, indent=2)
 
-    # --- Optional: Weights & Biases ---
-    if args.track:
-        import wandb
-        wandb.init(
-            project=args.wandb_project_name,
-            entity=args.wandb_entity,
-            sync_tensorboard=True,
-            config=vars(args),
-            name=run_name,
-            monitor_gym=True,
-            save_code=True,
-        )
+    tensorboard = SummaryWriter(f"runs/{run_name}")
+    tensorboard.add_text("hyperparameters", "|param|value|\n|-|-|\n" + "\n".join(f"|{key}|{value}|" for key, value in config.items()))
 
-    # --- TensorBoard Writer ---
-    # Creates a TensorBoard log directory under runs/. View with: tensorboard --logdir runs/
-    writer = SummaryWriter(f"runs/{run_name}")
-    # Log all hyperparameters as a markdown table in TensorBoard
-    writer.add_text(
-        "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-    )
+    episode_file = open(run_dir / "episodes.csv", "w", newline="", encoding="utf-8")
+    metric_file = open(run_dir / "metrics.csv", "w", newline="", encoding="utf-8")
+    episode_writer = csv.DictWriter(episode_file, fieldnames=["global_step", "episodic_return", "episodic_length", "goal_reached", "epsilon"])
+    metric_writer = csv.DictWriter(metric_file, fieldnames=[
+        "global_step", "epsilon", "td_loss", "q_value", "max_q", "stuck_rate", "mean_penalty",
+        "penalty_prob_stuck", "penalty_prob_move", "head_loss", "head_wasted_fraction", "true_q_loss",   # learned penalty only
+    ])
+    episode_writer.writeheader()
+    metric_writer.writeheader()
 
-    # --- Environment Setup ---
-    # Pass max_steps only if the user explicitly set it (i.e. not the sentinel -1).
-    max_steps_override = args.max_steps if args.max_steps > 0 else None
-    env = make_env(
-        args.env_id, 
-        args.seed, 
-        args.action_set, 
-        args.capture_video, 
-        run_name, 
-        max_steps_override,
-    )
-    obs, _ = env.reset(seed=args.seed)
-
-    # Get observation and action space dimensions from the wrapped environment
-    obs_shape = env.observation_space.shape   # e.g., (192,) for 8x8 fully observable
-    obs_dim = int(np.prod(obs_shape))         # Total number of input features
-    num_actions = env.action_space.n          # Number of available actions
-    names = action_names(args.env_id, args.action_set, num_actions)
-
+    # ---- environment ----
+    env = make_env(args.env_id, args.seed, args.action_set, args.max_steps)
+    observation, _ = env.reset(seed=args.seed)
+    observation_shape = env.observation_space.shape
+    observation_dim = int(np.prod(observation_shape))
+    num_actions = env.action_space.n
     print(f"[{args.exp_name}] env={args.env_id}")
-    print(f"[{args.exp_name}] State Space Size: {obs_dim} features")
-    print(f"[{args.exp_name}] Action Space Size: {num_actions} actions {names}")
+    print(f"[{args.exp_name}] State Space Size: {observation_dim} features")
+    print(f"[{args.exp_name}] Action Space Size: {num_actions} actions {action_names(args.env_id, args.action_set, num_actions)}")
     print(f"[{args.exp_name}] device={device}")
 
-    # --- Neural Networks ---
-    # DQN uses TWO copies of the same network:
-    #   q_net (online network): The network being actively trained. Used for action selection.
-    #   target_net (target network): A frozen copy used to compute stable Q-value targets.
-    #     Without this, training is unstable because the target Q-values shift every update.
-    #     The target network is periodically updated by copying weights from q_net.
-    q_net = QNetwork(obs_dim, num_actions, args.hidden_size).to(device)
-    target_net = QNetwork(obs_dim, num_actions, args.hidden_size).to(device)
-    
-    # If loading a pre-trained model (e.g. for curriculum learning across stages)
+    # ---- networks ----
+    # q_net is trained and chooses the actions; target_net is a periodically refreshed copy that provides the TD targets.
+    q_net = QNetwork(observation_dim, num_actions, args.hidden_size).to(device)
+    target_net = QNetwork(observation_dim, num_actions, args.hidden_size).to(device)
     if args.load_model:
+        # Continue from a trained network: no random warm-up, and exploration restarts at 0.3 instead of 1.0
+        # so that the agent explores the new task without discarding what it already knows.
         print(f"[{args.exp_name}] Loading pre-trained model from {args.load_model}")
         q_net.load_state_dict(torch.load(args.load_model, map_location=device))
-        
-        # When continuing from a previous stage, we shouldn't spend thousands of steps
-        # doing purely random actions, because the network is already trained.
         args.learning_starts = 0
-        
-        # We also shouldn't start epsilon at 1.0. A small bump (e.g., 0.3) helps it 
-        # explore the new difficulty without forgetting its old knowledge.
-        args.start_e = 0.3
+        args.start_epsilon = 0.3
+    target_net.load_state_dict(q_net.state_dict())
+    optimizer = torch.optim.Adam(q_net.parameters(), lr=args.learning_rate)
+    replay_buffer = ReplayBuffer(args.buffer_size, observation_shape, device)
 
-    target_net.load_state_dict(q_net.state_dict())  # Initialize target_net with same weights
+    # ---- learned penalty: a head over the enumerated states, and the rule that trains it ----
+    if penalty_type == "learned":
+        state_space = DiscreteStateSpace(env, args.env_id, args.penalty_state)
+        penalty_head = TransitionPenaltyHead(state_space.size, args.penalty_rank).to(device)
+        if args.penalty_learning == "meta":
+            penalty_trainer = MetaGradientPenaltyTrainer(penalty_head, observation_dim, num_actions, device, args)
+        else:
+            penalty_trainer = HindsightPenaltyTrainer(penalty_head, device, args)
+        num_head_parameters = sum(parameter.numel() for parameter in penalty_head.parameters())
+        print(f"[{args.exp_name}] learned penalty head: state = {args.penalty_state}, {state_space.size} discrete states, "
+              f"{num_head_parameters:,} parameters, learning = {args.penalty_learning}")
+        recent_score_stuck = deque(maxlen=1000)     # head scores on transitions where the observation did not change
+        recent_score_moved = deque(maxlen=1000)     # head scores on all other transitions
 
-    # Adam optimizer: adjusts q_net's weights to minimize the TD loss
-    optimizer = optim.Adam(q_net.parameters(), lr=args.learning_rate)
+    # ---- counters ----
+    # How often each action was taken in each (x, y, direction), split by task stage:
+    # 0 = start, 1 = key picked up, 2 = door opened.  Environments without a key stay in stage 0.
+    counts_shape = (env.unwrapped.width, env.unwrapped.height, 4, num_actions, 3)
+    state_action_counts = np.zeros(counts_shape, dtype=np.int64)
+    state_action_counts_last_half = np.zeros(counts_shape, dtype=np.int64)
+    state_action_counts_last_quarter = np.zeros(counts_shape, dtype=np.int64)
 
-    # Create the replay buffer to store past experience
-    rb = ReplayBuffer(args.buffer_size, obs_shape, device)
-    # Optional learned penalty (see learned_penalty.py): built here because it needs obs_dim and the device.
-    # When present it replaces the fixed stuck-penalty rule below.
-    penalty_learner, state_space = None, None
-    if penalty_learner_factory is not None:
-        from learned_penalty import DiscreteStateSpace
-        state_space = DiscreteStateSpace(env, args.env_id, getattr(args, "penalty_state", "position_dir"))
-        penalty_learner = penalty_learner_factory(state_space.size, device)
-        print(f"[{args.exp_name}] learned penalty head: state = {state_space.mode}, {state_space.size} discrete states, "
-              f"{penalty_learner.num_parameters():,} parameters, learning = {getattr(args, 'penalty_learning', 'meta')}")
-        # The meta-gradient head mirrors the replay buffer positions and trains a true-reward critic of the agent's size.
-        penalty_learner.attach(buffer_size=args.buffer_size, obs_dim=obs_dim, num_actions=num_actions, hidden_size=args.hidden_size,
-                               gamma=args.gamma, agent_lr=args.learning_rate,
-                               target_sync_updates=max(1, args.target_network_frequency // max(1, args.train_frequency)))
-
-    # --- State-Action Frequency Tracking ---
-    # We track how many times each action was taken in each (x, y, dir) state per stage.
-    num_stages = 3
-    counts_file = run_dir / "state_action_counts.npy"
-    if args.run_dir and counts_file.exists():
-        state_action_counts = np.load(counts_file)
-        state_action_counts_last_quarter = np.load(run_dir / "state_action_counts_last_quarter.npy")
-        state_action_counts_last_half = np.load(run_dir / "state_action_counts_last_half.npy")
-        if state_action_counts.ndim == 4:
-            state_action_counts = np.expand_dims(state_action_counts, axis=-1)
-            state_action_counts_last_quarter = np.expand_dims(state_action_counts_last_quarter, axis=-1)
-            state_action_counts_last_half = np.expand_dims(state_action_counts_last_half, axis=-1)
-    else:
-        state_action_counts = np.zeros(
-            (env.unwrapped.width, env.unwrapped.height, 4, num_actions, num_stages), 
-            dtype=np.int64
-        )
-        state_action_counts_last_quarter = np.zeros(
-            (env.unwrapped.width, env.unwrapped.height, 4, num_actions, num_stages), 
-            dtype=np.int64
-        )
-        state_action_counts_last_half = np.zeros(
-            (env.unwrapped.width, env.unwrapped.height, 4, num_actions, num_stages), 
-            dtype=np.int64
-        )
-
-    # --- CSV Logging Setup ---
-    # episodes.csv: One row per completed episode (return, length, goal reached, epsilon)
-    # metrics.csv: One row per log_interval steps (loss, Q-values, stuck rate)
-    file_mode = "a" if args.run_dir and (run_dir / "episodes.csv").exists() else "w"
-    episode_file = open(run_dir / "episodes.csv", file_mode, newline="", encoding="utf-8")
-    metric_file = open(run_dir / "metrics.csv", file_mode, newline="", encoding="utf-8")
-    episode_writer = csv.DictWriter(
-        episode_file,
-        fieldnames=["global_step", "episodic_return", "episodic_length", "goal_reached", "epsilon"],
-    )
-    metric_writer = csv.DictWriter(
-        metric_file,
-        fieldnames=["global_step", "epsilon", "td_loss", "q_value", "max_q", "stuck_rate", "mean_penalty",
-                    "penalty_prob_stuck", "penalty_prob_move", "head_loss", "head_wasted_fraction", "true_q_loss"],  # learned penalty only
-    )
-    if file_mode == "w":
-        episode_writer.writeheader()
-        metric_writer.writeheader()
-
-    # --- Rolling Statistics ---
-    # deque with maxlen automatically discards old values, giving us a sliding window
-    recent_goals = deque(maxlen=100)    # Track last 100 episodes' goal success (0 or 1)
-    recent_stuck = deque(maxlen=1000)   # Track last 1000 steps' stuck status (0 or 1)
-    recent_penalty = deque(maxlen=1000) # Track last 1000 steps' penalty values
-    episode_return = 0.0   # Cumulative reward for the current episode
-    episode_length = 0     # Number of steps in the current episode
-    last_loss = np.nan     # Most recent TD loss value (for logging)
-    last_q = 0.0           # Most recent mean Q-value (for logging)
-    last_max_q = 0.0       # Most recent max Q-value in batch (for overestimation tracking)
-    best_goal_rate = 0.0   # Highest goal rate achieved so far
-
+    recent_goals = deque(maxlen=100)        # 1 / 0 per episode: goal reached
+    recent_stuck = deque(maxlen=1000)       # 1 / 0 per step: observation unchanged
+    recent_penalty = deque(maxlen=1000)     # penalty of each step
+    best_goal_rate = 0.0
+    episode_return = 0.0
+    episode_length = 0
     has_picked_key = False
     has_opened_door = False
+    last_td_loss = np.nan
+    last_mean_q = 0.0
+    last_max_q = 0.0
 
-    # --- Main Loop ---
-    pbar = tqdm(range(args.total_timesteps), desc=args.exp_name)
-    for local_step in pbar:
-        global_step = local_step + args.global_step_offset
-        
-        # ---- ACTION SELECTION ----
-        # Either epsilon-greedy or softmax, depending on --exploration-strategy.
-        was_random = False
+    progress_bar = tqdm(range(args.total_timesteps), desc=args.exp_name)
+    for global_step in progress_bar:
+
+        # ---- choose an action ----
         if args.exploration_strategy == "softmax":
-            # Softmax exploration: sample from softmax(Q/tau)
-            tau = softmax_tau_schedule(args.total_timesteps, local_step)
-            epsilon = tau  # log tau as "epsilon" for CSV/TensorBoard continuity
+            # Sample a ~ softmax(Q(s, .) / temperature); the temperature falls linearly from 1.0 to 0.1 over 75% of training.
+            temperature = max(1.0 * (1.0 - global_step / (args.total_timesteps * 0.75)), 0.1)
+            epsilon = temperature       # written to the epsilon column of the logs
             with torch.no_grad():
-                obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-                q_values = q_net(obs_tensor)
-                action = softmax_action(q_values, tau)
+                q_values = q_net(torch.tensor(observation, dtype=torch.float32, device=device).unsqueeze(0))    # (1, num_actions)
+                action_probabilities = torch.softmax(q_values / temperature, dim=1)
+                action = int(torch.multinomial(action_probabilities, num_samples=1).item())
         else:
-            # Epsilon-greedy: calculate current exploration rate
-            duration = args.exploration_fraction * args.total_timesteps
-            if args.epsilon_schedule == "linear":
-                epsilon = linear_schedule(args.start_e, args.end_e, duration, local_step)
-            elif args.epsilon_schedule == "polynomial":
-                epsilon = polynomial_schedule(args.start_e, args.end_e, duration, local_step, power=3.0)
-            elif args.epsilon_schedule == "hardcoded":
-                epsilon = hardcoded_schedule(args.total_timesteps, local_step)
-            elif args.epsilon_schedule == "cosine":
-                epsilon = cosine_schedule(args.start_e, args.end_e, duration, local_step)
-            elif args.epsilon_schedule == "exponential":
-                epsilon = exponential_schedule(args.start_e, args.end_e, duration, local_step)
-            elif args.epsilon_schedule == "cyclic":
-                epsilon = cyclic_schedule(args.start_e, args.end_e, args.total_timesteps, local_step)
-            else:
-                epsilon = linear_schedule(args.start_e, args.end_e, duration, local_step)
-
+            epsilon = epsilon_at_step(args, global_step)
             if random.random() < epsilon:
-                # Explore: pick a random action
                 action = env.action_space.sample()
-                was_random = True
             else:
-                # Exploit: pure greedy action choice (argmax Q-value)
                 with torch.no_grad():
-                    obs_tensor = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-                    q_values = q_net(obs_tensor)
+                    q_values = q_net(torch.tensor(observation, dtype=torch.float32, device=device).unsqueeze(0))    # (1, num_actions)
                     action = int(torch.argmax(q_values, dim=1).item())
 
-        # Determine current stage monotonically for the episode
-        has_picked_key, has_opened_door = update_stage_flags(env, has_picked_key, has_opened_door)
-        
+        # ---- count the (state, action) pair ----
+        has_picked_key, has_opened_door = update_key_door_flags(env, has_picked_key, has_opened_door)
         if has_opened_door:
-            stage_idx = 2
+            stage = 2
         elif has_picked_key:
-            stage_idx = 1
+            stage = 1
         else:
-            stage_idx = 0
+            stage = 0
+        agent_x, agent_y = env.unwrapped.agent_pos
+        agent_direction = env.unwrapped.agent_dir
+        state_action_counts[agent_x, agent_y, agent_direction, action, stage] += 1
+        if global_step >= args.total_timesteps * 0.50:
+            state_action_counts_last_half[agent_x, agent_y, agent_direction, action, stage] += 1
+        if global_step >= args.total_timesteps * 0.75:
+            state_action_counts_last_quarter[agent_x, agent_y, agent_direction, action, stage] += 1
+        if penalty_type == "learned":
+            state_index = state_space.index(agent_x, agent_y, agent_direction, has_picked_key, has_opened_door)
+            full_state = (int(agent_x), int(agent_y), int(agent_direction), bool(has_picked_key), bool(has_opened_door))
 
-        # Track the action taken at the current state per stage
-        ax, ay = env.unwrapped.agent_pos
-        ad = env.unwrapped.agent_dir
-        s_index = state_space.index(ax, ay, ad, has_picked_key, has_opened_door) if state_space is not None else None
-        s_key = (int(ax), int(ay), int(ad), bool(has_picked_key), bool(has_opened_door))   # full state, for the loop test
-        state_action_counts[ax, ay, ad, action, stage_idx] += 1
-        if local_step >= args.total_timesteps * 0.50:
-            state_action_counts_last_half[ax, ay, ad, action, stage_idx] += 1
-        if local_step >= args.total_timesteps * 0.75:
-            state_action_counts_last_quarter[ax, ay, ad, action, stage_idx] += 1
+        # ---- act ----
+        next_observation, env_reward, terminated, truncated, _ = env.step(action)
+        observation_unchanged = bool(np.array_equal(observation, next_observation))     # e.g. the agent walked into a wall
 
-        # Execute the chosen action in the environment
-        next_obs, env_reward, terminated, truncated, info = env.step(action)
-        done = terminated or truncated
-
-        # ---- REWARD SHAPING ----
-        # Compare the current and next observations to detect if the agent is "stuck"
-        # (e.g., walking into a wall, where the observation doesn't change)
-        no_change = observation_unchanged(obs, next_obs, args.no_change_tolerance)
-        # Apply a negative penalty if shaping is enabled and the agent did not move.
-        # Penalizing all no-change transitions, including exploratory ones, lets the
-        # replay buffer teach the Q-network that the action is bad in this state.
-        if penalty_learner is not None:
-            # The learned rule: the one-layer head looks at the transition s -> s' (never the action) and decides.
-            next_key, next_door = update_stage_flags(env, has_picked_key, has_opened_door)
-            nx, ny = env.unwrapped.agent_pos
-            nd = env.unwrapped.agent_dir
-            s_next_index = state_space.index(nx, ny, nd, next_key, next_door)
-            s_next_key = (int(nx), int(ny), int(nd), bool(next_key), bool(next_door))
-            penalty = -penalty_learner.decide(s_index, s_next_index, no_change, s_key, s_next_key)
+        # ---- penalty of this transition (zero or negative) ----
+        if penalty_type == "learned":
+            # The head sees only the transition s -> s', never the action.
+            next_has_key, next_door_open = update_key_door_flags(env, has_picked_key, has_opened_door)
+            next_x, next_y = env.unwrapped.agent_pos
+            next_direction = env.unwrapped.agent_dir
+            next_state_index = state_space.index(next_x, next_y, next_direction, next_has_key, next_door_open)
+            next_full_state = (int(next_x), int(next_y), int(next_direction), bool(next_has_key), bool(next_door_open))
+            with torch.no_grad():
+                penalty_score = float(torch.sigmoid(penalty_head.logits(state_index, next_state_index)).item())   # in (0, 1)
+            penalty = -(args.penalty_scale * penalty_score)
+            if observation_unchanged:
+                recent_score_stuck.append(penalty_score)
+            else:
+                recent_score_moved.append(penalty_score)
+            if args.penalty_learning == "hindsight":
+                penalty_trainer.remember_transition(state_index, next_state_index, full_state, next_full_state)
+        elif penalty_type == "stuck" and observation_unchanged:
+            penalty = args.stuck_penalty
         else:
-            penalty = args.stuck_penalty if use_shaping and no_change else 0.0
-        # The reward used for training includes the penalty; the original env_reward is
-        # used for tracking performance metrics (so plots show true environment reward)
-        reward_for_learning = float(env_reward + penalty)
-
-        recent_stuck.append(float(no_change))
+            penalty = 0.0
+        recent_stuck.append(float(observation_unchanged))
         recent_penalty.append(float(penalty))
 
-        # ---- STORE TRANSITION ----
-        # Save the experience (s, s', a, r, s'_terminal) to the replay buffer.
-        #
-        # IMPORTANT: we store `terminated`, NOT `done` (= terminated OR truncated).
-        #
-        # Why this matters (truncation vs. termination):
-        #   - terminated=True  → the agent reached a genuine end-state (e.g. goal tile).
-        #                        s' has no future value → TD target = r  (no bootstrap).
-        #   - truncated=True   → the episode hit the step-limit; s' is a normal state.
-        #                        The agent *could* keep going → TD target = r + γ·max Q(s').
-        #
-        # The TD-target formula is:  r + γ · max Q(s') · (1 - done_flag)
-        # If we store `done` (terminated OR truncated) the (1-done_flag) term kills the
-        # bootstrap on every timeout, making productive states look valueless.
-        # Storing only `terminated` keeps the bootstrap alive for timeout transitions.
-        if penalty_learner is not None and penalty_learner.recomputes_penalty:
-            # Meta-gradient head: the buffer keeps the TRUE reward and the current penalty is re-applied at sampling time.
-            rb.add(obs, next_obs, action, float(env_reward), float(terminated))
-            penalty_learner.record(s_index, s_next_index)
+        # ---- store the transition ----
+        # `terminated` is stored, not `terminated or truncated`: when an episode is cut by the step limit, s' is an
+        # ordinary state, so the TD target must still bootstrap from it.
+        if penalty_type == "learned" and args.penalty_learning == "meta":
+            # The buffer keeps the TRUE reward; the head's current penalty is subtracted when the batch is sampled.
+            penalty_trainer.record_transition(replay_buffer.position, state_index, next_state_index)
+            replay_buffer.add(observation, action, float(env_reward), next_observation, float(terminated))
         else:
-            rb.add(obs, next_obs, action, reward_for_learning, float(terminated))
-        episode_return += float(env_reward)  # Track ORIGINAL reward (not shaped) for metrics
+            replay_buffer.add(observation, action, float(env_reward + penalty), next_observation, float(terminated))
+        episode_return += float(env_reward)     # the logs always report the environment reward, never the shaped one
         episode_length += 1
+        observation = next_observation
 
-        obs = next_obs
-
-        # ---- END OF EPISODE ----
-        if done:
-            # In MiniGrid, reaching the goal gives a positive reward (> 0)
-            # Not reaching the goal gives 0 reward (the episode times out)
-            reached = episode_success(args.env_id, episode_return)
-            if penalty_learner is not None:
-                # One update of the head on this episode's transitions and their hindsight labels (see learned_penalty.py).
-                penalty_learner.end_episode(episode_return, episode_length, reached)
-            recent_goals.append(float(reached))
-            goal_rate = float(np.mean(recent_goals)) if recent_goals else 0.0
+        # ---- end of episode ----
+        if terminated or truncated:
+            # The reward is positive only on the step that reaches the goal.  (The episode return cannot be used:
+            # with -0.01 per step it is negative for a goal reached after more than 100 steps.)
+            reached_goal = env_reward > 0
+            if penalty_type == "learned" and args.penalty_learning == "hindsight":
+                penalty_trainer.end_episode(reached_goal)
+            recent_goals.append(float(reached_goal))
+            goal_rate = float(np.mean(recent_goals))
             best_goal_rate = max(best_goal_rate, goal_rate)
 
-            # Log episode metrics to CSV
-            episode_writer.writerow(
-                {
-                    "global_step": global_step,
-                    "episodic_return": episode_return,
-                    "episodic_length": episode_length,
-                    "goal_reached": int(reached),
-                    "epsilon": epsilon,
-                }
-            )
-            # Log to TensorBoard
-            writer.add_scalar("charts/episodic_return", episode_return, global_step)
-            writer.add_scalar("charts/episodic_length", episode_length, global_step)
-            writer.add_scalar("charts/goal_rate", goal_rate, global_step)
-            episode_file.flush()  # Force write to disk so data is available even if crashed
+            episode_writer.writerow({
+                "global_step": global_step,
+                "episodic_return": episode_return,
+                "episodic_length": episode_length,
+                "goal_reached": int(reached_goal),
+                "epsilon": epsilon,
+            })
+            episode_file.flush()
+            tensorboard.add_scalar("charts/episodic_return", episode_return, global_step)
+            tensorboard.add_scalar("charts/episodic_length", episode_length, global_step)
+            tensorboard.add_scalar("charts/goal_rate", goal_rate, global_step)
+            progress_bar.set_postfix({
+                "return": f"{episode_return:.2f}",
+                "goal%": f"{goal_rate:.0%}",
+                "best%": f"{best_goal_rate:.0%}",
+                "eps": f"{epsilon:.2f}",
+            })
 
-            # Update the progress bar with live statistics
-            pbar.set_postfix(
-                {
-                    "return": f"{episode_return:.2f}",
-                    "goal%": f"{goal_rate:.0%}",
-                    "best%": f"{best_goal_rate:.0%}",
-                    "eps": f"{epsilon:.2f}",
-                }
-            )
-            # Reset for the next episode
-            # If fixed-layout is enabled, we pass the same seed again so the layout doesn't change.
-            reset_kwargs = {"seed": args.seed} if args.fixed_layout else {}
-            obs, _ = env.reset(**reset_kwargs)
+            if args.fixed_layout:
+                observation, _ = env.reset(seed=args.seed)
+            else:
+                observation, _ = env.reset()
             has_picked_key = False
             has_opened_door = False
             episode_return = 0.0
             episode_length = 0
 
-        # ---- NEURAL NETWORK TRAINING ----
-        # Only start training after the buffer has enough random experiences,
-        # and only train every train_frequency steps (not every single step)
+        # ---- one gradient step on a replay batch ----
         if global_step > args.learning_starts and global_step % args.train_frequency == 0:
-            # Sample a random mini-batch of transitions from the replay buffer
-            if penalty_learner is not None and penalty_learner.recomputes_penalty:
-                b_obs, b_next_obs, b_actions, b_rewards, b_dones, b_idx = rb.sample(args.batch_size, return_indices=True)
-                # One meta-gradient step of the head on the TRUE rewards of this batch, then shape the batch with the
-                # head as it is now (see learned_penalty.py, MetaLearnedPenalty).
-                penalty_learner.meta_update(q_net, target_net, b_obs, b_next_obs, b_actions, b_rewards, b_dones, b_idx, args.double_dqn)
+            (batch_observations, batch_actions, batch_rewards, batch_next_observations, batch_terminated,
+             buffer_indices) = replay_buffer.sample(args.batch_size)
+
+            if penalty_type == "learned" and args.penalty_learning == "meta":
+                # First one meta-gradient step of the head on the true rewards of this batch,
+                # then the batch is shaped with the head as it is now.
+                penalty_trainer.update(q_net, target_net, batch_observations, batch_actions, batch_rewards,
+                                       batch_next_observations, batch_terminated, buffer_indices, double_dqn)
                 with torch.no_grad():
-                    b_rewards = b_rewards - penalty_learner.penalties_at(b_idx)
-            else:
-                b_obs, b_next_obs, b_actions, b_rewards, b_dones = rb.sample(args.batch_size)
+                    batch_rewards = batch_rewards - penalty_trainer.penalties(buffer_indices)
 
+            # TD target y = r + gamma * Q(s', a*) * (1 - terminated); no gradient flows through the target
             with torch.no_grad():
-                if args.double_dqn:
-                    # --- Double DQN: Decoupled Selection & Evaluation ---
-                    # The ONLINE network selects the best action for the next state,
-                    # but the TARGET network evaluates its value.
-                    # This prevents the overestimation bias present in standard DQN.
-                    best_next_actions = q_net(b_next_obs).argmax(dim=1, keepdim=True)
-                    target_max = target_net(b_next_obs).gather(1, best_next_actions).squeeze(1)
+                if double_dqn:
+                    # the online network selects a*, the target network evaluates it
+                    best_next_actions = q_net(batch_next_observations).argmax(dim=1, keepdim=True)                  # (batch, 1)
+                    next_q_values = target_net(batch_next_observations).gather(1, best_next_actions).squeeze(1)     # (batch,)
                 else:
-                    # --- Standard DQN: Single-Network Max ---
-                    # The TARGET network both selects AND evaluates the best action.
-                    # This is prone to overestimation because max over noisy estimates
-                    # is a biased estimator of the true max value.
-                    target_max = target_net(b_next_obs).max(dim=1).values
+                    # the target network both selects and evaluates a*, which overestimates Q
+                    next_q_values = target_net(batch_next_observations).max(dim=1).values                          # (batch,)
+                td_target = batch_rewards + args.gamma * next_q_values * (1.0 - batch_terminated)
 
-                # Compute the TD target: r + γ * Q(s', a*) * (1 - done)
-                td_target = b_rewards + args.gamma * target_max * (1.0 - b_dones)
+            # Q(s, a) of the actions that were taken: (batch, num_actions) -> (batch,)
+            q_values_taken = q_net(batch_observations).gather(1, batch_actions.unsqueeze(1)).squeeze(1)
+            td_loss = F.mse_loss(q_values_taken, td_target)
 
-            # --- Compute Current Q-Values ---
-            # q_net(b_obs) returns Q-values for ALL actions, shape (batch_size, num_actions)
-            # .gather(1, ...) selects only the Q-value for the action that was actually taken
-            # This gives us Q(s, a) for the specific (state, action) pairs in our batch
-            old_val = q_net(b_obs).gather(1, b_actions.unsqueeze(1)).squeeze(1)
+            optimizer.zero_grad()
+            td_loss.backward()
+            torch.nn.utils.clip_grad_norm_(q_net.parameters(), MAX_GRADIENT_NORM)
+            optimizer.step()
 
-            # --- Compute Loss ---
-            # MSE Loss: mean of (Q(s,a) - y)^2 across the batch
-            # This measures how far our Q-value predictions are from the TD targets
-            loss = F.mse_loss(old_val, td_target)
+            last_td_loss = float(td_loss.item())
+            last_mean_q = float(q_values_taken.mean().item())
+            last_max_q = float(q_values_taken.max().item())
 
-            # --- Backpropagation and Weight Update ---
-            optimizer.zero_grad()   # Clear old gradients from the previous step
-            loss.backward()         # Compute gradients of the loss w.r.t. network weights
-            # Clip gradients to prevent "exploding gradients" (very large weight updates
-            # that destabilize training). Max gradient norm of 10.0.
-            torch.nn.utils.clip_grad_norm_(q_net.parameters(), 10.0)
-            optimizer.step()        # Update the network weights using the Adam optimizer
-
-            last_loss = float(loss.item())
-            last_q = float(old_val.mean().item())
-            last_max_q = float(old_val.max().item())
-
-        # ---- TARGET NETWORK UPDATE ----
-        # Periodically copy q_net's weights to target_net (hard update).
-        # This keeps the target network's Q-value estimates slowly tracking the
-        # improving q_net, while remaining stable enough to provide good targets.
+        # ---- refresh the target network ----
         if global_step % args.target_network_frequency == 0:
             target_net.load_state_dict(q_net.state_dict())
 
-        # ---- PERIODIC LOGGING ----
-        if global_step % args.log_interval == 0:
-            metric_writer.writerow(
-                {
-                    "global_step": global_step,
-                    "epsilon": epsilon,
-                    "td_loss": last_loss,
-                    "q_value": last_q,
-                    "max_q": last_max_q,
-                    "stuck_rate": float(np.mean(recent_stuck)) if recent_stuck else 0.0,
-                    "mean_penalty": float(np.mean(recent_penalty)) if recent_penalty else 0.0,
-                    **(penalty_learner.stats() if penalty_learner is not None else {}),
-                }
-            )
+        # ---- periodic metrics ----
+        if global_step % LOG_INTERVAL == 0:
+            metric_row = {
+                "global_step": global_step,
+                "epsilon": epsilon,
+                "td_loss": last_td_loss,
+                "q_value": last_mean_q,
+                "max_q": last_max_q,
+                "stuck_rate": float(np.mean(recent_stuck)) if recent_stuck else 0.0,
+                "mean_penalty": float(np.mean(recent_penalty)) if recent_penalty else 0.0,
+            }
+            if penalty_type == "learned":
+                metric_row["penalty_prob_stuck"] = float(np.mean(recent_score_stuck)) if recent_score_stuck else ""
+                metric_row["penalty_prob_move"] = float(np.mean(recent_score_moved)) if recent_score_moved else ""
+                metric_row["head_loss"] = penalty_trainer.last_head_loss
+                if args.penalty_learning == "meta":
+                    metric_row["true_q_loss"] = penalty_trainer.last_true_q_loss
+                else:
+                    metric_row["head_wasted_fraction"] = penalty_trainer.last_wasted_fraction
+            metric_writer.writerow(metric_row)
             metric_file.flush()
-            writer.add_scalar("losses/td_loss", last_loss, global_step)
-            writer.add_scalar("losses/q_values", last_q, global_step)
-            writer.add_scalar("losses/max_q", last_max_q, global_step)
-            writer.add_scalar("charts/epsilon", epsilon, global_step)
+            tensorboard.add_scalar("losses/td_loss", last_td_loss, global_step)
+            tensorboard.add_scalar("losses/q_values", last_mean_q, global_step)
+            tensorboard.add_scalar("losses/max_q", last_max_q, global_step)
+            tensorboard.add_scalar("charts/epsilon", epsilon, global_step)
 
-    # --- Cleanup ---
-    # Save the trained Q-Network weights so we can load them later for evaluation
-    if args.save_model:
-        torch.save(q_net.state_dict(), run_dir / "q_net.pt")
-        if penalty_learner is not None:
-            torch.save(penalty_learner.net.state_dict(), run_dir / "penalty_net.pt")
-
-    episode_file.close()
-    metric_file.close()
-    # Save the cumulative state-action counts
+    # ---- save ----
+    torch.save(q_net.state_dict(), run_dir / "q_net.pt")
+    if penalty_type == "learned":
+        torch.save(penalty_head.state_dict(), run_dir / "penalty_net.pt")
     np.save(run_dir / "state_action_counts.npy", state_action_counts)
     np.save(run_dir / "state_action_counts_last_half.npy", state_action_counts_last_half)
     np.save(run_dir / "state_action_counts_last_quarter.npy", state_action_counts_last_quarter)
-
-    writer.close()
+    episode_file.close()
+    metric_file.close()
+    tensorboard.close()
     env.close()
     print(f"Done. Results: {run_dir}")
-
-    # --- Return final performance ---
-    # Read the episode log back and compute mean goal_reached over the last 20% of training.
-    # This is the objective Optuna will maximize.
-    import csv as _csv
-    episode_rows = []
-    with open(run_dir / "episodes.csv", newline="") as ef:
-        for row in _csv.DictReader(ef):
-            episode_rows.append(float(row["goal_reached"]))
-    if len(episode_rows) == 0:
-        return 0.0
-    cutoff = min(len(episode_rows) - 1, int(len(episode_rows) * 0.80))
-    return float(np.mean(episode_rows[cutoff:]))

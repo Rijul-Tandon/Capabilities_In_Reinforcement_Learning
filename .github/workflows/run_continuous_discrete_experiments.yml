@@ -55,7 +55,7 @@ jobs:
       fail-fast: false
       matrix:
         # dqn_atari_vqvae_masked.py uses Double DQN targets for both DDQN entries.
-        agent: [ddqn_baseline, ddqn_vqvae_masked, ppo_baseline, ppo_vqvae_masked]
+        agent: [ddqn_baseline, ddqn_vqvae_masked]
         seed: ${{ fromJSON(needs.seeds.outputs.list) }}
 
     steps:
@@ -76,18 +76,12 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Run DDQN or PPO Agent
+      - name: Run DDQN Agent
         run: |
           ENV_ID="${{ github.event.inputs.env_id || 'ALE/DemonAttack-v5' }}"
           TIMESTEPS="${{ github.event.inputs.total_timesteps || '10000000' }}"
 
-          if [[ "${{ matrix.agent }}" == ppo_* ]]; then
-            SCRIPT="src/ppo_atari_vqvae_masked.py"
-          else
-            SCRIPT="src/dqn_atari_vqvae_masked.py"
-          fi
-
-          python "$SCRIPT" \
+          python src/dqn_atari_vqvae_masked.py \
             --env-id "$ENV_ID" \
             --full-action-space \
             --agent "${{ matrix.agent }}" \
@@ -148,6 +142,6 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
           git add plots/
-          git commit -m "Auto-generated Atari DDQN and PPO comparison plots" || echo "No changes to commit"
+          git commit -m "Auto-generated Atari DDQN comparison plots" || echo "No changes to commit"
           git pull --rebase origin main
           git push origin main

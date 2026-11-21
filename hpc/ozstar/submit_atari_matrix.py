@@ -14,10 +14,7 @@ ENVIRONMENTS = [
 AGENTS = [
     "ddqn_baseline",
     "ddqn_vqvae_masked",
-    "ppo_baseline",
-    "ppo_vqvae_masked",
     "dqn_baseline_standard",
-    "ppo_baseline_standard",
 ]
 
 
@@ -26,7 +23,6 @@ def short_name(value: str) -> str:
         value
         .replace("ddqn_", "d")
         .replace("dqn_", "q")
-        .replace("ppo_", "p")
         .replace("vqvae_masked", "mask")
         .replace("baseline_standard", "std")
         .replace("baseline", "base")

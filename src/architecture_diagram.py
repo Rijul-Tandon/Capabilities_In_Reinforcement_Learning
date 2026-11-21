@@ -1,24 +1,5 @@
-"""Architecture figure for the VQ-VAE action-masking agent, rendered twice from ONE scene description.
-
-  plots/architecture/architecture.png / .pdf   (matplotlib: 300 dpi raster + vector, for the paper)
-  plots/architecture/architecture.drawio       (diagrams.net file with the same elements, for hand editing)
-
-Layout (two stacked halves + a loss band):
-  I   Discretisation into events (encoder only, no decoder):
-        observation -> CNN -> z_e tensor -> codebook 1 (nearest embedding per cell) -> code-id grid M
-        -> embed & pool -> g_t -> codebook 2 (nearest of N prototype grids) -> event e_t
-  II  Event-transition head and agent (the loop runs clockwise):
-        e_t -> one-layer perceptron W (N x N, a weight vector per event) -> softmax over the next events -> the score at
-        the observed e_{t+1} is the penalty -> shaped reward -> DQN agent -> a_t -> environment -> x_{t+1} back to I
-        (the action never enters the head: the Q-network credits the shaped reward to the action it took)
-  L   Total loss = task term (replaces reconstruction) + codebook-1 terms + codebook-2 terms
-
-Every drawn element is a primitive in SCENE (rect, circle, line, arrow, text, image, cuboid, tag); both renderers
-walk the same list, so the two outputs cannot drift apart.  Coordinates are layout units with y UP; draw.io gets
-PX pixels per unit with y flipped.
-
-Run from the repository root:  python src/architecture_diagram.py
-"""
+"""Draws the architecture figure of the VQ-VAE action-masking agent from one scene description, as PNG / PDF
+(matplotlib) and as an editable draw.io file in plots/architecture/.  Run from the repository root."""
 
 import base64
 import os
@@ -36,7 +17,8 @@ import numpy as np
 
 OUT_DIR = Path("plots/architecture")
 FRAME_PNG = OUT_DIR / "frame_rgb.png"
-W, H, PX = 176, 118, 8                        # layout units (y up); draw.io pixels per unit
+CANVAS_WIDTH, CANVAS_HEIGHT = 176, 118        # layout units, y pointing up
+PIXELS_PER_UNIT = 8                           # draw.io pixels per layout unit
 FIG_WIDTH_IN = 7.4
 
 # ── palette ───────────────────────────────────────────────────────────────────
@@ -105,9 +87,9 @@ def brace(x0, x1, y, d=1.5):
 
 def mini_grid(x, y, cell, colours, stroke="white"):
     """3 x 3 grid of coloured cells with bottom-left corner (x, y)."""
-    for r in range(3):
-        for c in range(3):
-            rect(x + c * cell, y + (2 - r) * cell, cell, cell, colours[(r * 3 + c) % len(colours)], stroke, lw=0.35, z=3.6)
+    for row in range(3):
+        for column in range(3):
+            rect(x + column * cell, y + (2 - row) * cell, cell, cell, colours[(row * 3 + column) % len(colours)], stroke, lw=0.35, z=3.6)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -144,8 +126,8 @@ def build_scene():
         rect(31 + i * (col_w + gap), col_y, col_w, col_h, VIOLET_FILL, VIOLET_LINE, lw=0.5, z=3.5)
     for i in range(3):
         rect(61 - (3 - i) * (col_w + gap) + gap, col_y, col_w, col_h, VIOLET_FILL, VIOLET_LINE, lw=0.5, z=3.5)
-    for k in (-1, 0, 1):
-        circle(49.3 + k * 1.6, col_y + col_h / 2, 0.45, VIOLET_LINE, z=3.5)
+    for dot in (-1, 0, 1):
+        circle(49.3 + dot * 1.6, col_y + col_h / 2, 0.45, VIOLET_LINE, z=3.5)
     circle(45, 87, 1.5, ARROW, z=4)
     arrow(None, curve=((46, 98), (49.5, 94), (45.7, 88.6)))
     text(47, 84.6, r"$\arg\min_k\|z_e-e_k\|$", "argmin<sub>k</sub> ‖<i>z</i><sub>e</sub> − <i>e</i><sub>k</sub>‖", size=4.8, colour=INK_SOFT, va="top")
@@ -155,11 +137,11 @@ def build_scene():
 
     # code-id grid M
     cell = 4.2
-    x0, y0 = 53.7, 80.9
-    for r_, row in enumerate(MATRIX):
-        for c_, v in enumerate(row):
-            rect(x0 + c_ * cell, y0 + (2 - r_) * cell, cell, cell, BLUE_FILL, BLUE_LINE, lw=0.6, z=3)
-            text(x0 + (c_ + 0.5) * cell, y0 + (2.5 - r_) * cell, str(v), size=6.4, z=4)
+    grid_left, grid_bottom = 53.7, 80.9
+    for row_index, row in enumerate(MATRIX):
+        for column_index, code_id in enumerate(row):
+            rect(grid_left + column_index * cell, grid_bottom + (2 - row_index) * cell, cell, cell, BLUE_FILL, BLUE_LINE, lw=0.6, z=3)
+            text(grid_left + (column_index + 0.5) * cell, grid_bottom + (2.5 - row_index) * cell, str(code_id), size=6.4, z=4)
     text(60, 79.4, r"code-id grid $M\in\{1..K\}^{G\times G}$", "code-id grid <i>M</i> ∈ {1..K}<sup>G×G</sup>", size=5.6, va="top")
     arrow([(66.6, 87), (75.6, 87)])
     text(71.1, 88.5, r"pool($z_q$)", "pool(<i>z</i><sub>q</sub>)", size=5.0, colour=INK_SOFT, va="bottom")
@@ -179,10 +161,10 @@ def build_scene():
     text(97, 109.6, r"Codebook 2 (grid level):  $N$ prototype grids $c_1\ldots c_N\in\mathbb{R}^{D'}$",
          "Codebook 2 (grid level):  <i>N</i> prototype grids <i>c</i><sub>1</sub> … <i>c</i><sub>N</sub> ∈ ℝ<sup>D′</sup>", size=5.5, va="top")
     proto_x = [75.5 + i * 5.4 for i in range(6)] + [112.5]
-    for i, gx in enumerate(proto_x):
-        mini_grid(gx, 101.4, 1.1, [CODE_COLOURS[j] for j in rng.permutation(len(CODE_COLOURS))])
-    for k in (-1, 0, 1):
-        circle(108.7 + k * 1.3, 103.05, 0.4, VIOLET_LINE, z=3.5)
+    for prototype_x in proto_x:
+        mini_grid(prototype_x, 101.4, 1.1, [CODE_COLOURS[j] for j in rng.permutation(len(CODE_COLOURS))])
+    for dot in (-1, 0, 1):
+        circle(108.7 + dot * 1.3, 103.05, 0.4, VIOLET_LINE, z=3.5)
     text(77.15, 100.6, r"$c_1$", "<i>c</i><sub>1</sub>", size=4.6, colour=INK_SOFT, va="top")
     text(114.15, 100.6, r"$c_N$", "<i>c</i><sub>N</sub>", size=4.6, colour=INK_SOFT, va="top")
     text(124.5, 104, "$N$ = size of codebook 2\n= bound on the number of\ndistinct discrete states (events)",
@@ -241,29 +223,29 @@ def build_scene():
 
     # the MLP: one-hot event in, softmax over the N next events out; the action never enters the head
     rect(95, 18, 57, 41, "white", ORANGE_LINE, lw=0.9, r=1.6, z=2.2)
-    e_x = o_x = [112, 115.75, 119.5, 123.25, 130.75]
+    input_node_x = output_node_x = [112, 115.75, 119.5, 123.25, 130.75]
     y_in, y_out, y_base = 50, 37, 27.5
-    active_e = 119.5
-    for ex in e_x:                                      # wires first (below the nodes)
-        for ox in o_x:
-            on = ex == active_e
-            line([(ex, y_in - 1.2), (ox, y_out + 1.2)], WIRE_ACTIVE_E if on else WIRE, lw=0.7 if on else 0.35, z=2.4)
-    for ex in e_x:
-        circle(ex, y_in, 1.2, VIOLET_DARK if ex == active_e else "white", VIOLET_DARK, lw=0.7, z=3.5)
-    for k in (-1, 0, 1):
-        circle(127 + k * 0.9, y_in, 0.28, VIOLET_DARK, z=3.5)
-    for ox in o_x:
-        circle(ox, y_out, 1.2, "white", ORANGE_DARK, lw=0.7, z=3.5)
-    for k in (-1, 0, 1):
-        circle(127 + k * 0.9, y_out, 0.28, ORANGE_DARK, z=3.5)
+    active_input_x = 119.5
+    for input_x in input_node_x:                                      # wires first (below the nodes)
+        for output_x in output_node_x:
+            is_active = input_x == active_input_x
+            line([(input_x, y_in - 1.2), (output_x, y_out + 1.2)], WIRE_ACTIVE_E if is_active else WIRE, lw=0.7 if is_active else 0.35, z=2.4)
+    for input_x in input_node_x:
+        circle(input_x, y_in, 1.2, VIOLET_DARK if input_x == active_input_x else "white", VIOLET_DARK, lw=0.7, z=3.5)
+    for dot in (-1, 0, 1):
+        circle(127 + dot * 0.9, y_in, 0.28, VIOLET_DARK, z=3.5)
+    for output_x in output_node_x:
+        circle(output_x, y_out, 1.2, "white", ORANGE_DARK, lw=0.7, z=3.5)
+    for dot in (-1, 0, 1):
+        circle(127 + dot * 0.9, y_out, 0.28, ORANGE_DARK, z=3.5)
     text(127.5, 53.3, r"current event, one-hot over the $N$ events", "current event, one-hot over the <i>N</i> events", size=5.2, colour=INK_SOFT)
     text(110.3, y_in, r"$e_1$", "<i>e</i><sub>1</sub>", size=4.8, colour=INK_SOFT, ha="right")
     text(132.6, y_in, r"$e_N$", "<i>e</i><sub>N</sub>", size=4.8, colour=INK_SOFT, ha="left")
     text(110.3, y_out, r"next event $e_{t+1}$", "next event <i>e</i><sub>t+1</sub>", size=4.8, colour=INK_SOFT, ha="right")
     line([(109.5, y_base), (133.5, y_base)], INK_MUTED, lw=0.5, z=3)
     best = int(np.argmax(SOFTMAX))
-    for i, (ox, p) in enumerate(zip(o_x, SOFTMAX)):
-        rect(ox - 1.2, y_base, 2.4, 7.0 * p, ORANGE_DARK if i == best else ORANGE_FILL, ORANGE_DARK, lw=0.5, z=3.4)
+    for i, (output_x, probability) in enumerate(zip(output_node_x, SOFTMAX)):
+        rect(output_x - 1.2, y_base, 2.4, 7.0 * probability, ORANGE_DARK if i == best else ORANGE_FILL, ORANGE_DARK, lw=0.5, z=3.4)
     text(121.5, 25.2, r"softmax:  $p(e_{t+1}\mid e_t)$ over the $N$ events;  the bar at the observed $e_{t+1}$ is the penalty",
          "softmax:  p(<i>e</i><sub>t+1</sub> | <i>e</i><sub>t</sub>) over the <i>N</i> events;  the bar at the observed <i>e</i><sub>t+1</sub> is the penalty", size=5.0, colour=INK_SOFT)
     text(123.5, 21.3, r"one-layer perceptron $W\in\mathbb{R}^{N\times N}$:  one weight vector per event",
@@ -306,58 +288,61 @@ def build_scene():
 def mpl_render(frame):
     plt.rcParams.update({"font.family": "sans-serif", "font.sans-serif": ["Helvetica", "Arial", "DejaVu Sans"], "pdf.fonttype": 42,
                          "mathtext.fontset": "dejavusans"})
-    fig, ax = plt.subplots(figsize=(FIG_WIDTH_IN, FIG_WIDTH_IN * H / W))
-    ax.set_xlim(0, W); ax.set_ylim(0, H); ax.set_aspect("equal"); ax.axis("off")
+    fig, ax = plt.subplots(figsize=(FIG_WIDTH_IN, FIG_WIDTH_IN * CANVAS_HEIGHT / CANVAS_WIDTH))
+    ax.set_xlim(0, CANVAS_WIDTH)
+    ax.set_ylim(0, CANVAS_HEIGHT)
+    ax.set_aspect("equal")
+    ax.axis("off")
     dash = (0, (3, 2))
-    for p in sorted(SCENE, key=lambda p: p["z"]):
-        k = p["kind"]
-        if k == "rect":
-            if p["r"]:
-                ax.add_patch(mpatches.FancyBboxPatch((p["x"], p["y"]), p["w"], p["h"], boxstyle=f"round,pad=0,rounding_size={p['r']}",
-                                                     fc=p["fill"], ec=p["stroke"], lw=p["lw"], ls=dash if p["dashed"] else "-", zorder=p["z"]))
+    for shape in sorted(SCENE, key=lambda shape: shape["z"]):     # draw from back to front
+        kind = shape["kind"]
+        if kind == "rect":
+            if shape["r"]:
+                ax.add_patch(mpatches.FancyBboxPatch((shape["x"], shape["y"]), shape["w"], shape["h"], boxstyle=f"round,pad=0,rounding_size={shape['r']}",
+                                                     fc=shape["fill"], ec=shape["stroke"], lw=shape["lw"], ls=dash if shape["dashed"] else "-", zorder=shape["z"]))
             else:
-                ax.add_patch(mpatches.Rectangle((p["x"], p["y"]), p["w"], p["h"], fc=p["fill"], ec=p["stroke"], lw=p["lw"],
-                                                ls=dash if p["dashed"] else "-", zorder=p["z"]))
-        elif k == "circle":
-            ax.add_patch(mpatches.Circle((p["cx"], p["cy"]), p["r"], fc=p["fill"], ec=p["stroke"], lw=p["lw"], zorder=p["z"]))
-        elif k == "line":
-            xs, ys = zip(*p["pts"])
-            ax.add_line(Line2D(xs, ys, color=p["stroke"], lw=p["lw"], ls=dash if p["dashed"] else "-", zorder=p["z"], alpha=p["alpha"], solid_capstyle="round"))
-        elif k == "arrow":
-            style = dict(color=p["stroke"], lw=p["lw"], ls=dash if p["dashed"] else "-", zorder=p["z"])
-            if p["curve"]:
-                a, c, b = p["curve"]
-                path = MplPath([a, c, b], [MplPath.MOVETO, MplPath.CURVE3, MplPath.CURVE3])
-                ax.add_patch(mpatches.FancyArrowPatch(path=path, arrowstyle="-|>", mutation_scale=7, fc=p["stroke"], **style))
+                ax.add_patch(mpatches.Rectangle((shape["x"], shape["y"]), shape["w"], shape["h"], fc=shape["fill"], ec=shape["stroke"], lw=shape["lw"],
+                                                ls=dash if shape["dashed"] else "-", zorder=shape["z"]))
+        elif kind == "circle":
+            ax.add_patch(mpatches.Circle((shape["cx"], shape["cy"]), shape["r"], fc=shape["fill"], ec=shape["stroke"], lw=shape["lw"], zorder=shape["z"]))
+        elif kind == "line":
+            xs, ys = zip(*shape["pts"])
+            ax.add_line(Line2D(xs, ys, color=shape["stroke"], lw=shape["lw"], ls=dash if shape["dashed"] else "-", zorder=shape["z"], alpha=shape["alpha"], solid_capstyle="round"))
+        elif kind == "arrow":
+            style = dict(color=shape["stroke"], lw=shape["lw"], ls=dash if shape["dashed"] else "-", zorder=shape["z"])
+            if shape["curve"]:
+                start, control, end = shape["curve"]
+                path = MplPath([start, control, end], [MplPath.MOVETO, MplPath.CURVE3, MplPath.CURVE3])
+                ax.add_patch(mpatches.FancyArrowPatch(path=path, arrowstyle="-|>", mutation_scale=7, fc=shape["stroke"], **style))
             else:
-                pts = p["pts"]
-                for q0, q1 in zip(pts[:-2], pts[1:-1]):
-                    ax.add_line(Line2D([q0[0], q1[0]], [q0[1], q1[1]], solid_capstyle="round", **style))
-                ax.add_patch(mpatches.FancyArrowPatch(pts[-2], pts[-1], arrowstyle="-|>", mutation_scale=7, shrinkA=0, shrinkB=0, fc=p["stroke"], **style))
-        elif k == "text":
-            ax.text(p["x"], p["y"], p["mpl"], fontsize=p["size"], color=p["colour"], ha=p["ha"], va=p["va"],
-                    fontweight="bold" if p["bold"] else "normal", zorder=p["z"], linespacing=1.15)
-        elif k == "image":
-            ax.imshow(frame, extent=[p["x"], p["x"] + p["w"], p["y"], p["y"] + p["h"]], zorder=p["z"], interpolation="nearest")
-            ax.add_patch(mpatches.Rectangle((p["x"], p["y"]), p["w"], p["h"], fc="none", ec=INK_SOFT, lw=0.6, zorder=p["z"] + 0.1))
-        elif k == "cuboid":
-            x, y, w, h, d, g = p["x"], p["y"], p["w"], p["h"], p["d"], p["grid"]
-            ax.add_patch(mpatches.Polygon([(x, y + h), (x + d, y + h + d * 0.8), (x + w + d, y + h + d * 0.8), (x + w, y + h)], closed=True,
-                                          fc=GREEN_FILL, ec=GREEN_LINE, lw=0.6, zorder=p["z"]))
-            ax.add_patch(mpatches.Polygon([(x + w, y), (x + w + d, y + d * 0.8), (x + w + d, y + h + d * 0.8), (x + w, y + h)], closed=True,
-                                          fc=GREEN_SIDE, ec=GREEN_LINE, lw=0.6, zorder=p["z"]))
-            ax.add_patch(mpatches.Rectangle((x, y), w, h, fc=GREEN_FILL, ec=GREEN_LINE, lw=0.7, zorder=p["z"] + 0.5))
-            for i in range(1, g):
-                ax.add_line(Line2D([x + i * w / g] * 2, [y, y + h], color=GREEN_LINE, lw=0.45, zorder=p["z"] + 0.6))
-                ax.add_line(Line2D([x, x + w], [y + i * h / g] * 2, color=GREEN_LINE, lw=0.45, zorder=p["z"] + 0.6))
-                ax.add_line(Line2D([x + i * w / g, x + i * w / g + d], [y + h, y + h + d * 0.8], color=GREEN_LINE, lw=0.35, zorder=p["z"] + 0.6))
-        elif k == "brace":
-            x0, x1, y, d = p["x0"], p["x1"], p["y"], p["d"]
-            xm = (x0 + x1) / 2
-            verts = [(x0, y + d), (x0, y), (x0 + d, y), (xm - d, y), (xm, y), (xm, y - d), (xm, y), (xm + d, y), (x1 - d, y), (x1, y), (x1, y + d)]
+                pts = shape["pts"]
+                for segment_start, segment_end in zip(pts[:-2], pts[1:-1]):
+                    ax.add_line(Line2D([segment_start[0], segment_end[0]], [segment_start[1], segment_end[1]], solid_capstyle="round", **style))
+                ax.add_patch(mpatches.FancyArrowPatch(pts[-2], pts[-1], arrowstyle="-|>", mutation_scale=7, shrinkA=0, shrinkB=0, fc=shape["stroke"], **style))
+        elif kind == "text":
+            ax.text(shape["x"], shape["y"], shape["mpl"], fontsize=shape["size"], color=shape["colour"], ha=shape["ha"], va=shape["va"],
+                    fontweight="bold" if shape["bold"] else "normal", zorder=shape["z"], linespacing=1.15)
+        elif kind == "image":
+            ax.imshow(frame, extent=[shape["x"], shape["x"] + shape["w"], shape["y"], shape["y"] + shape["h"]], zorder=shape["z"], interpolation="nearest")
+            ax.add_patch(mpatches.Rectangle((shape["x"], shape["y"]), shape["w"], shape["h"], fc="none", ec=INK_SOFT, lw=0.6, zorder=shape["z"] + 0.1))
+        elif kind == "cuboid":
+            x, y, w, h, depth, grid_lines = shape["x"], shape["y"], shape["w"], shape["h"], shape["d"], shape["grid"]
+            ax.add_patch(mpatches.Polygon([(x, y + h), (x + depth, y + h + depth * 0.8), (x + w + depth, y + h + depth * 0.8), (x + w, y + h)], closed=True,
+                                          fc=GREEN_FILL, ec=GREEN_LINE, lw=0.6, zorder=shape["z"]))
+            ax.add_patch(mpatches.Polygon([(x + w, y), (x + w + depth, y + depth * 0.8), (x + w + depth, y + h + depth * 0.8), (x + w, y + h)], closed=True,
+                                          fc=GREEN_SIDE, ec=GREEN_LINE, lw=0.6, zorder=shape["z"]))
+            ax.add_patch(mpatches.Rectangle((x, y), w, h, fc=GREEN_FILL, ec=GREEN_LINE, lw=0.7, zorder=shape["z"] + 0.5))
+            for i in range(1, grid_lines):
+                ax.add_line(Line2D([x + i * w / grid_lines] * 2, [y, y + h], color=GREEN_LINE, lw=0.45, zorder=shape["z"] + 0.6))
+                ax.add_line(Line2D([x, x + w], [y + i * h / grid_lines] * 2, color=GREEN_LINE, lw=0.45, zorder=shape["z"] + 0.6))
+                ax.add_line(Line2D([x + i * w / grid_lines, x + i * w / grid_lines + depth], [y + h, y + h + depth * 0.8], color=GREEN_LINE, lw=0.35, zorder=shape["z"] + 0.6))
+        elif kind == "brace":
+            x_left, x_right, y, depth = shape["x0"], shape["x1"], shape["y"], shape["d"]
+            x_middle = (x_left + x_right) / 2
+            verts = [(x_left, y + depth), (x_left, y), (x_left + depth, y), (x_middle - depth, y), (x_middle, y), (x_middle, y - depth), (x_middle, y), (x_middle + depth, y), (x_right - depth, y), (x_right, y), (x_right, y + depth)]
             codes = [MplPath.MOVETO, MplPath.CURVE3, MplPath.CURVE3, MplPath.LINETO, MplPath.CURVE3, MplPath.CURVE3,
                      MplPath.CURVE3, MplPath.CURVE3, MplPath.LINETO, MplPath.CURVE3, MplPath.CURVE3]
-            ax.add_patch(mpatches.PathPatch(MplPath(verts, codes), fc="none", ec=ARROW, lw=0.8, zorder=p["z"]))
+            ax.add_patch(mpatches.PathPatch(MplPath(verts, codes), fc="none", ec=ARROW, lw=0.8, zorder=shape["z"]))
     fig.subplots_adjust(0, 0, 1, 1)
     for ext in ("png", "pdf"):
         save_with_retry(fig, OUT_DIR / f"architecture.{ext}", dpi=300)
@@ -381,80 +366,85 @@ def save_with_retry(fig, path, attempts=6, **kwargs):
 # ══════════════════════════════════════════════════════════════════════════════
 # draw.io renderer
 # ══════════════════════════════════════════════════════════════════════════════
-def pt(x, y):
-    return round(x * PX, 1), round((H - y) * PX, 1)
+def to_pixels(x, y):
+    """Layout point -> draw.io pixel point (the y axis of draw.io points down)."""
+    return round(x * PIXELS_PER_UNIT, 1), round((CANVAS_HEIGHT - y) * PIXELS_PER_UNIT, 1)
 
 
-def geom(x, y, w, h):
-    return round(x * PX, 1), round((H - y - h) * PX, 1), round(w * PX, 1), round(h * PX, 1)
+def to_pixel_box(x, y, w, h):
+    """Layout box with bottom-left corner (x, y) -> draw.io (left, top, width, height) in pixels."""
+    return (round(x * PIXELS_PER_UNIT, 1), round((CANVAS_HEIGHT - y - h) * PIXELS_PER_UNIT, 1),
+            round(w * PIXELS_PER_UNIT, 1), round(h * PIXELS_PER_UNIT, 1))
 
 
-def vtx(cid, value, style, x, y, w, h):
-    return (f'<mxCell id="{cid}" value="{escape(value, {chr(34): "&quot;"})}" style="{style}" vertex="1" parent="1">'
+def drawio_vertex(cell_id, value, style, x, y, w, h):
+    return (f'<mxCell id="{cell_id}" value="{escape(value, {chr(34): "&quot;"})}" style="{style}" vertex="1" parent="1">'
             f'<mxGeometry x="{x}" y="{y}" width="{w}" height="{h}" as="geometry"/></mxCell>')
 
 
-def edg(eid, value, style, a, b, points=None):
+def drawio_edge(cell_id, value, style, a, b, points=None):
     inner = f'<mxPoint x="{a[0]}" y="{a[1]}" as="sourcePoint"/><mxPoint x="{b[0]}" y="{b[1]}" as="targetPoint"/>'
     if points:
         inner += '<Array as="points">' + "".join(f'<mxPoint x="{x}" y="{y}"/>' for x, y in points) + "</Array>"
-    return (f'<mxCell id="{eid}" value="{escape(value, {chr(34): "&quot;"})}" style="{style}" edge="1" parent="1">'
+    return (f'<mxCell id="{cell_id}" value="{escape(value, {chr(34): "&quot;"})}" style="{style}" edge="1" parent="1">'
             f'<mxGeometry relative="1" as="geometry">{inner}</mxGeometry></mxCell>')
 
 
 def drawio_render():
     font = "fontFamily=Helvetica;"
     cells = []
-    for i, p in enumerate(sorted(SCENE, key=lambda p: p["z"])):
-        k, cid = p["kind"], f"c{i}"
-        if k == "rect":
-            style = (f"rounded={1 if p['r'] else 0};whiteSpace=wrap;html=1;fillColor={p['fill']};strokeColor={p['stroke']};"
-                     f"strokeWidth={max(0.5, p['lw'])};{'dashed=1;' if p['dashed'] else ''}")
-            if p["r"]:
-                style += f"arcSize={min(50, round(100 * p['r'] / max(1e-6, min(p['w'], p['h']))))};"
-            cells.append(vtx(cid, "", style, *geom(p["x"], p["y"], p["w"], p["h"])))
-        elif k == "circle":
-            cells.append(vtx(cid, "", f"ellipse;aspect=fixed;fillColor={p['fill']};strokeColor={p['stroke']};strokeWidth={p['lw']};",
-                             *geom(p["cx"] - p["r"], p["cy"] - p["r"], 2 * p["r"], 2 * p["r"])))
-        elif k == "line":
-            pts = [pt(*q) for q in p["pts"]]
-            cells.append(edg(cid, "", f"endArrow=none;html=1;strokeColor={p['stroke']};strokeWidth={p['lw'] * 1.6:.2f};edgeStyle=none;"
-                                      f"{'dashed=1;' if p['dashed'] else ''}opacity={round(100 * p['alpha'])};", pts[0], pts[-1], pts[1:-1]))
-        elif k == "arrow":
-            base = f"endArrow=blockThin;endFill=1;html=1;strokeColor={p['stroke']};strokeWidth={p['lw'] * 1.6:.2f};{'dashed=1;' if p['dashed'] else ''}"
-            if p["curve"]:
-                a, c, b = p["curve"]
-                cells.append(edg(cid, "", base + "edgeStyle=none;curved=1;", pt(*a), pt(*b), [pt(*c)]))
+    for i, shape in enumerate(sorted(SCENE, key=lambda shape: shape["z"])):
+        kind = shape["kind"]
+        cell_id = f"c{i}"
+        if kind == "rect":
+            style = (f"rounded={1 if shape['r'] else 0};whiteSpace=wrap;html=1;fillColor={shape['fill']};strokeColor={shape['stroke']};"
+                     f"strokeWidth={max(0.5, shape['lw'])};{'dashed=1;' if shape['dashed'] else ''}")
+            if shape["r"]:
+                style += f"arcSize={min(50, round(100 * shape['r'] / max(1e-6, min(shape['w'], shape['h']))))};"
+            cells.append(drawio_vertex(cell_id, "", style, *to_pixel_box(shape["x"], shape["y"], shape["w"], shape["h"])))
+        elif kind == "circle":
+            cells.append(drawio_vertex(cell_id, "", f"ellipse;aspect=fixed;fillColor={shape['fill']};strokeColor={shape['stroke']};strokeWidth={shape['lw']};",
+                             *to_pixel_box(shape["cx"] - shape["r"], shape["cy"] - shape["r"], 2 * shape["r"], 2 * shape["r"])))
+        elif kind == "line":
+            pts = [to_pixels(*point) for point in shape["pts"]]
+            cells.append(drawio_edge(cell_id, "", f"endArrow=none;html=1;strokeColor={shape['stroke']};strokeWidth={shape['lw'] * 1.6:.2f};edgeStyle=none;"
+                                      f"{'dashed=1;' if shape['dashed'] else ''}opacity={round(100 * shape['alpha'])};", pts[0], pts[-1], pts[1:-1]))
+        elif kind == "arrow":
+            base = f"endArrow=blockThin;endFill=1;html=1;strokeColor={shape['stroke']};strokeWidth={shape['lw'] * 1.6:.2f};{'dashed=1;' if shape['dashed'] else ''}"
+            if shape["curve"]:
+                start, control, end = shape["curve"]
+                cells.append(drawio_edge(cell_id, "", base + "edgeStyle=none;curved=1;", to_pixels(*start), to_pixels(*end), [to_pixels(*control)]))
             else:
-                pts = [pt(*q) for q in p["pts"]]
-                cells.append(edg(cid, "", base + ("edgeStyle=orthogonalEdgeStyle;rounded=1;" if len(pts) > 2 else "edgeStyle=none;"), pts[0], pts[-1], pts[1:-1]))
-        elif k == "text":
-            plain = p["mpl"].replace("$", "").replace("\\", "")
+                pts = [to_pixels(*point) for point in shape["pts"]]
+                cells.append(drawio_edge(cell_id, "", base + ("edgeStyle=orthogonalEdgeStyle;rounded=1;" if len(pts) > 2 else "edgeStyle=none;"), pts[0], pts[-1], pts[1:-1]))
+        elif kind == "text":
+            plain = shape["mpl"].replace("$", "").replace("\\", "")
             lines = plain.split("\n")
-            w = p["w"] or (max(len(s) for s in lines) * 0.62 * p["size"] / 6.5 + 1.5)
-            h = len(lines) * 2.6 * p["size"] / 6.5 + 0.4
-            x = {"left": p["x"], "center": p["x"] - w / 2, "right": p["x"] - w}[p["ha"]]
-            y = {"bottom": p["y"], "center": p["y"] - h / 2, "top": p["y"] - h}[p["va"]]
+            w = shape["w"] or (max(len(s) for s in lines) * 0.62 * shape["size"] / 6.5 + 1.5)
+            h = len(lines) * 2.6 * shape["size"] / 6.5 + 0.4
+            x = {"left": shape["x"], "center": shape["x"] - w / 2, "right": shape["x"] - w}[shape["ha"]]
+            y = {"bottom": shape["y"], "center": shape["y"] - h / 2, "top": shape["y"] - h}[shape["va"]]
             # no whiteSpace=wrap: labels stay on one line (explicit <br> still breaks) and may overflow their cell
-            style = (f"text;html=1;overflow=visible;align={p['ha']};verticalAlign={'middle' if p['va'] == 'center' else p['va']};"
-                     f"fontSize={round(p['size'] * 2.7)};fontColor={p['colour']};{font}{'fontStyle=1;' if p['bold'] else ''}spacing=0;")
-            cells.append(vtx(cid, p["html"], style, *geom(x, y, w, h)))
-        elif k == "image":
+            style = (f"text;html=1;overflow=visible;align={shape['ha']};verticalAlign={'middle' if shape['va'] == 'center' else shape['va']};"
+                     f"fontSize={round(shape['size'] * 2.7)};fontColor={shape['colour']};{font}{'fontStyle=1;' if shape['bold'] else ''}spacing=0;")
+            cells.append(drawio_vertex(cell_id, shape["html"], style, *to_pixel_box(x, y, w, h)))
+        elif kind == "image":
             b64 = base64.b64encode(FRAME_PNG.read_bytes()).decode()
-            cells.append(vtx(cid, "", f"shape=image;imageAspect=0;strokeColor={INK_SOFT};imageBorder={INK_SOFT};image=data:image/png,{b64};",
-                             *geom(p["x"], p["y"], p["w"], p["h"])))
-        elif k == "cuboid":
-            cells.append(vtx(cid, "", f"shape=cube;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;darkOpacity=0.05;darkOpacity2=0.1;"
-                                      f"size={round(p['d'] * PX)};fillColor={GREEN_FILL};strokeColor={GREEN_DARK};",
-                             *geom(p["x"], p["y"], p["w"] + p["d"], p["h"] + p["d"] * 0.8)))
-        elif k == "brace":
-            x0, x1, y = p["x0"], p["x1"], p["y"]
-            span, thick = x1 - x0, 3.5
-            cells.append(vtx(cid, "", f"shape=curlyBracket;rounded=1;rotation=90;html=1;strokeColor={ARROW};size=0.5;",
-                             *geom((x0 + x1) / 2 - thick / 2, y - p["d"] - span / 2 + thick / 2 + 0.2, thick, span)))
+            cells.append(drawio_vertex(cell_id, "", f"shape=image;imageAspect=0;strokeColor={INK_SOFT};imageBorder={INK_SOFT};image=data:image/png,{b64};",
+                             *to_pixel_box(shape["x"], shape["y"], shape["w"], shape["h"])))
+        elif kind == "cuboid":
+            cells.append(drawio_vertex(cell_id, "", f"shape=cube;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;darkOpacity=0.05;darkOpacity2=0.1;"
+                                      f"size={round(shape['d'] * PIXELS_PER_UNIT)};fillColor={GREEN_FILL};strokeColor={GREEN_DARK};",
+                             *to_pixel_box(shape["x"], shape["y"], shape["w"] + shape["d"], shape["h"] + shape["d"] * 0.8)))
+        elif kind == "brace":
+            x_left, x_right, y = shape["x0"], shape["x1"], shape["y"]
+            span = x_right - x_left
+            thick = 3.5
+            cells.append(drawio_vertex(cell_id, "", f"shape=curlyBracket;rounded=1;rotation=90;html=1;strokeColor={ARROW};size=0.5;",
+                             *to_pixel_box((x_left + x_right) / 2 - thick / 2, y - shape["d"] - span / 2 + thick / 2 + 0.2, thick, span)))
     xml = ('<mxfile host="app.diagrams.net" type="device"><diagram id="vqvae-masking" name="Architecture">'
            f'<mxGraphModel dx="1400" dy="900" grid="1" gridSize="8" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" '
-           f'pageScale="1" pageWidth="{W * PX + 40}" pageHeight="{H * PX + 40}" math="0" shadow="0"><root><mxCell id="0"/><mxCell id="1" parent="0"/>'
+           f'pageScale="1" pageWidth="{CANVAS_WIDTH * PIXELS_PER_UNIT + 40}" pageHeight="{CANVAS_HEIGHT * PIXELS_PER_UNIT + 40}" math="0" shadow="0"><root><mxCell id="0"/><mxCell id="1" parent="0"/>'
            + "".join(cells) + "</root></mxGraphModel></diagram></mxfile>")
     (OUT_DIR / "architecture.drawio").write_text(xml, encoding="utf-8")
     return xml
